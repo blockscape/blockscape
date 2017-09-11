@@ -11,6 +11,7 @@ build:
     - apt update && apt -y install cmake
   script: 
     - mkdir build
+    - cd build
     - cmake ..
   # depending on your build setup it's most likely a good idea to cache outputs to reduce the build time
   cache:
