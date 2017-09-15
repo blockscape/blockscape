@@ -13,7 +13,6 @@ build:
       - "target"
 
 pages:
-  stage: deploy
   script:
     - cargo doc
   artifacts:
