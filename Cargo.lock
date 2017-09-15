@@ -1,0 +1,14 @@
+[root]
+name = "blockscape_core"
+version = "0.0.1"
+dependencies = [
+ "serde 1.0.14 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "serde"
+version = "1.0.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[metadata]
+"checksum serde 1.0.14 (registry+https://github.com/rust-lang/crates.io-index)" = "bcb6a7637a47663ee073391a139ed07851f27ed2532c2abc88c6bf27a16cdf34"

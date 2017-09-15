@@ -1,0 +1,7 @@
+[package]
+name = "blockscape_core"
+version = "0.0.1"
+authors = ["Daniel Beal <git@danb.email.com>", "Matthew Conover <matt@xram.co>"]
+
+[dependencies]
+serde = "^1.0.14"

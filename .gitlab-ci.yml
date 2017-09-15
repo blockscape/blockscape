@@ -7,19 +7,23 @@ build:
   stage: build
   # instead of calling g++ directly you can also use some build toolkit like make
   # install the necessary build tools when needed
-  before_script: 
-    - apt update && apt -y install cmake protobuf-compiler
-  script: 
-    - mkdir build
-    - cd build
-    - cmake ..
+  before_script:
+    - apt update && apt -y install rust
+  script:
+    - cargo build
+
   # depending on your build setup it's most likely a good idea to cache outputs to reduce the build time
   cache:
     paths:
-      - "*.o"
+      - "target"
+
+docs:
+  stage: docs
+  script:
+    - cargo doc
 
 # run tests using the binary built before
-#test:
-#  stage: test
-#  script:
-#    - ./runmytests.sh
+test:
+  stage: test
+  script:
+    - cargo test
