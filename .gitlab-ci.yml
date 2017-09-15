@@ -18,9 +18,14 @@ build:
       - "target"
 
 docs:
-  stage: docs
+  stage: deploy
   script:
     - cargo doc
+  artifacts:
+    paths:
+      - target/doc
+  only:
+    - master
 
 # run tests using the binary built before
 test:
