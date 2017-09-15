@@ -15,9 +15,11 @@ build:
 pages:
   script:
     - cargo doc
+    - mkdir public
+    - cp -R target/doc/* public
   artifacts:
     paths:
-      - target/doc
+      - public
   only:
     - master
 
