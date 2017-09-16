@@ -4,4 +4,7 @@ version = "0.0.1"
 authors = ["Daniel Beal <git@danb.email.com>", "Matthew Conover <matt@xram.co>"]
 
 [dependencies]
+rust-crypto= "^0.2"
 serde = "^1.0.14"
+u256 = "*"
+bytes = { version = "^0.4", features = ["serde"] }
