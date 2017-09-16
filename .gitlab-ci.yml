@@ -1,14 +1,9 @@
-# use the official gcc image, based on debian
-# can use verions as well, like gcc:5.2
-# see https://hub.docker.com/_/gcc/
-image: gcc
+# use the official rust image, based on debian
+# see https://hub.docker.com/_/rust
+image: rust:1.20
 
 build:
   stage: build
-  # instead of calling g++ directly you can also use some build toolkit like make
-  # install the necessary build tools when needed
-  before_script:
-    - apt update && apt -y install rust
   script:
     - cargo build
 
@@ -17,10 +12,16 @@ build:
     paths:
       - "target"
 
-docs:
-  stage: docs
+pages:
   script:
     - cargo doc
+    - mkdir public
+    - cp -R target/doc/* public
+  artifacts:
+    paths:
+      - public
+  only:
+    - master
 
 # run tests using the binary built before
 test:
