@@ -9,8 +9,8 @@ extern crate serde_derive;
 
 
 #[cfg(test)]
-mod block;
-mod u256;
+pub mod block;
+pub mod u256;
 
 
 pub fn do_stuff(x: i32) -> i32 {
