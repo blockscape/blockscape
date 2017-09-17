@@ -11,6 +11,5 @@ extern crate serde_derive;
 pub mod block;
 pub mod transaction;
 pub mod network;
-mod test;
 pub mod u256;
 pub mod time;
