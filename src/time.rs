@@ -1,5 +1,5 @@
 use timelib::at;
-use timelib::Tm;
+use timelib::strftime;
 use timelib::Timespec;
 
 use std::fmt;
@@ -16,9 +16,16 @@ impl fmt::Debug for Time {
             sec: &self.0 / 1000,
             nsec: (&self.0 % 1000) as i32 * 1000000,
         };
-        let t = at(ts);
-        write!(f, "{:?}", t)
+        
+        write!(f, "{}", strftime("%m-%d-%y %H:%M:%S", &at(ts)).unwrap())
     }
 }
 
-// TODO: Implement test now!
+
+
+#[test]
+fn debug_print() {
+    let t = Time(1505679102000);
+
+    assert_eq!(format!("{:?}", t), "09-17-17 13:11:42");
+}

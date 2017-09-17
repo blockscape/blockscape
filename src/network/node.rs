@@ -1,6 +1,3 @@
-use serde::Serialize;
-use serde::Deserialize;
-
 use std::net::SocketAddr;
 
 /// All the information needed to make contact with a remote node

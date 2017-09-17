@@ -25,7 +25,7 @@ enum Message {
     NewTransaction { txn: Transaction },
     NewBlock { block: Block },
 
-    SyncBlocks { lastBlockHash: U256 },
+    SyncBlocks { last_block_hash: U256 },
     QueryData { hashes: U256 },
     DataList {
         blocks: Vec<Block>,
@@ -34,9 +34,12 @@ enum Message {
 }
 
 pub struct Session {
+    socket: UdpSocket,
     node: Node,
 }
 
 impl Session {
-    fn recv(packet: Packet) {}
+    fn recv(packet: Packet) {
+        
+    }
 }
