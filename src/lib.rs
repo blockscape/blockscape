@@ -8,12 +8,12 @@ extern crate time as timelib;
 #[macro_use]
 extern crate serde_derive;
 
-mod block;
-mod transaction;
-mod network;
+pub mod block;
+pub mod transaction;
+pub mod network;
 mod test;
-mod u256;
-mod time;
+pub mod u256;
+pub mod time;
 
 pub fn do_stuff(x: i32) -> i32 {
     x * 5
