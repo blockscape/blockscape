@@ -9,11 +9,12 @@ use super::super::time::Time;
 
 #[derive(Serialize, Deserialize)]
 struct Packet {
-    msg: Message,
+    msg: Message
 }
 
 #[derive(Serialize, Deserialize)]
 enum Message {
+
     Introduce { node: Node },
 
     Ping { time: Time },
@@ -27,16 +28,15 @@ enum Message {
 
     SyncBlocks { lastBlockHash: U256 },
     QueryData { hashes: U256 },
-    DataList {
-        blocks: Vec<Block>,
-        transactions: Vec<Transaction>,
-    },
+    DataList { blocks: Vec<Block>, transactions: Vec<Transaction> }
 }
 
 pub struct Session {
-    node: Node,
+    node: Node
 }
 
 impl Session {
-    fn recv(packet: Packet) {}
+    fn recv(packet: Packet) {
+
+    }
 }

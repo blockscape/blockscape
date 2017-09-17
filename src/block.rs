@@ -1,16 +1,18 @@
-use u256::U256;
-use std::collections::BTreeSet;
-use crypto::sha3::Sha3;
+use bincode::{serialize, deserialize, Infinite};
+
+use bytes::LittleEndian;
 use crypto::digest::Digest;
-use bytes::{BytesMut, BufMut, LittleEndian};
+use crypto::sha3::Sha3;
+use std::collections::BTreeSet;
+use super::u256::U256;
 
 
 type DefaultByteOrder = LittleEndian;
 
 
 /// The main infromation about a block. This noteably excludes the list of transactions.
-#[derive(Copy, Clone, PartialEq, Eq)]
-struct BlockHeader {
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlockHeader {
     pub version: u16,
     pub timestamp: u64,
     pub hash_previous_block: U256,
@@ -18,14 +20,15 @@ struct BlockHeader {
 }
 
 /// The core unit of the blockchain.
-struct Block {
+#[derive(Serialize, Deserialize)]
+pub struct Block {
     pub header: BlockHeader,
     pub transactions: BTreeSet<U256>,
 }
 
 
 
-trait HasBlockHeader {
+pub trait HasBlockHeader {
     fn get_header(&self) -> &BlockHeader;
 }
 
@@ -43,24 +46,14 @@ impl HasBlockHeader for Block {
 }
 
 
-impl Block {
+impl BlockHeader {
     fn hash(&self) -> U256 {
-        unimplemented!("Hash has not yet been completed");
-        // let mut raw: [u8; 80] = [0; 80];
-        let mut raw = BytesMut::with_capacity(80);
-        raw.put_u16::<DefaultByteOrder>(self.header.version);
-        raw.put_u64::<DefaultByteOrder>(self.header.timestamp);
-        //TODO: somehow write U256 values to the buffer
-        //TODO: calculate merkeyl tree of transactions
+        unimplemented!("Hash has not yet been completed!");
+    }
+}
 
-        let mut hasher = Sha3::sha3_256();
-
-        assert!(raw.capacity() >= 8);
-        unsafe {
-            hasher.input(raw.bytes_mut());
-            hasher.result(raw.bytes_mut());
-        }
-
-        U256::from(&raw[0..8])
+impl Block {
+    fn calculate_merkle_root(&self) -> U256 {
+        unimplemented!("Calculate merkle root has not yet been completed!");
     }
 }

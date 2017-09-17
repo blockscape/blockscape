@@ -10,11 +10,11 @@ pub struct NodeEndpoint {
     pub addr: SocketAddr,
 
     /// Port for UDP communication of node
-    pub port: u16,
+    pub port: u16
 }
 
 /// Detailed information about a node
 #[derive(Serialize, Deserialize)]
 pub struct Node {
-    pub endpoint: NodeEndpoint,
+    pub endpoint: NodeEndpoint
 }

@@ -5,6 +5,9 @@ authors = ["Daniel Beal <git@danb.email.com>", "Matthew Conover <matt@xram.co>"]
 
 [dependencies]
 rust-crypto= "^0.2"
-serde = "^1.0.14"
-u256 = "*"
+serde = "^1.0"
+serde_json = "^1.0"
+serde_derive = "^1.0"
+bincode = "^0.8"
 bytes = { version = "^0.4", features = ["serde"] }
+time = "0.1.38"
