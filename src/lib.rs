@@ -10,7 +10,6 @@ extern crate serde_derive;
 
 #[cfg(test)]
 mod block;
-mod test;
 mod u256;
 
 
