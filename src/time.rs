@@ -1,4 +1,4 @@
-use timelib::at;
+use timelib::at_utc;
 use timelib::strftime;
 use timelib::Timespec;
 
@@ -16,8 +16,8 @@ impl fmt::Debug for Time {
             sec: &self.0 / 1000,
             nsec: (&self.0 % 1000) as i32 * 1000000,
         };
-        
-        write!(f, "{}", strftime("%m-%d-%y %H:%M:%S", &at(ts)).unwrap())
+
+        write!(f, "{}", strftime("%m-%d-%y %H:%M:%S", &at_utc(ts)).unwrap())
     }
 }
 
@@ -27,5 +27,5 @@ impl fmt::Debug for Time {
 fn debug_print() {
     let t = Time(1505679102000);
 
-    assert_eq!(format!("{:?}", t), "09-17-17 13:11:42");
+    assert_eq!(format!("{:?}", t), "09-17-17 20:11:42");
 }
