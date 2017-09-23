@@ -1,9 +1,8 @@
 use bytes::{ByteOrder, BigEndian, LittleEndian};
-use crypto::digest::Digest;
-use crypto::sha3::{Sha3, Sha3Mode};
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
+use bincode;
 
 /// A simple 256-bit storage unit that acts sort of like an integer.
 /// Note: internally, the lowest significance u64 is in the lowest index,
@@ -79,9 +78,10 @@ impl PartialOrd for U256 {
 impl From<u64> for U256 {
     /// Converts a u64 into a U256, it will be placed in the least-significant position.
     fn from(v: u64) -> U256 {
-        U256([0, 0, 0, v])
+        U256([v, 0, 0, 0])
     }
 }
+
 
 impl Hash for U256 {
     /// Calculate the hash value of the little-endian stored bytes using a Hasher.
@@ -93,24 +93,6 @@ impl Hash for U256 {
 }
 
 impl U256 {
-    /// Returns the maximum of two U256 values.
-    pub fn max(self, rhs: Self) -> Self {
-        match self.cmp(&rhs) {
-            Ordering::Less => rhs,
-            Ordering::Equal => self,
-            Ordering::Greater => self,
-        }
-    }
-
-    /// Returns the minimum of two U256 values.
-    pub fn min(self, rhs: Self) -> Self {
-        match self.cmp(&rhs) {
-            Ordering::Less => self,
-            Ordering::Equal => self,
-            Ordering::Greater => rhs,
-        }
-    }
-
     /// Checks if the value is zero.
     pub fn is_zero(&self) -> bool {
         *self == U256_ZERO
@@ -163,49 +145,9 @@ impl U256 {
             BigEndian::write_u64(s, self.0[3-i]);
         }
     }
-
-    /// Support for rust-crypto. Take a `Digest` object and feed it the little-endian bytes
-    /// of this data.
-    pub fn crypto_digest<D: Digest>(&self, state: &mut D) {
-        let mut buf = [0u8; 32];
-        self.to_little_endian(&mut buf);
-        state.input(&buf);
-    }
-
-    /// Calculate the sha3-256 value for this object using the little-endian bytes.
-    /// Note: This is less efficient when calculting many hashes than using `crypto_digest`.
-    pub fn sha3_256(&self) -> U256 {
-        let mut buf = [0u8; 32];
-        let mut hasher = Sha3::new(Sha3Mode::Sha3_256);
-        self.crypto_digest::<Sha3>(&mut hasher);
-        hasher.result(&mut buf);
-        U256::from_little_endian(&buf)
-    }
 }
 
 
-
-#[test]
-fn max() {
-    let a = U256_MAX;
-    let b = U256_ZERO;
-    let c = U256([0u64, 69732u64, 324u64, 8574u64]);
-    assert_eq!(a.max(b), a);
-    assert_eq!(b.max(a), a);
-    assert_eq!(c.max(a), a);
-    assert_eq!(c.max(b), c);
-}
-
-#[test]
-fn min() {
-    let a = U256_MAX;
-    let b = U256_ZERO;
-    let c = U256([0u64, 0u64, 1u64, 0u64]);
-    assert_eq!(a.min(b), b);
-    assert_eq!(b.min(a), b);
-    assert_eq!(c.min(a), c);
-    assert_eq!(c.min(b), b);
-}
 
 #[test]
 fn debug() {
@@ -228,7 +170,7 @@ fn cmp() {
 #[test]
 fn from_u64() {
     let a = 986543u64;
-    let b = U256([0u64, 0u64, 0u64, a]);
+    let b = U256([a, 0u64, 0u64, 0u64]);
     assert_eq!(U256::from(a), b);
 }
 
@@ -317,4 +259,18 @@ fn endian_conversions() {
     
     b.to_little_endian(&mut buf);
     assert_eq!(start, buf);
+}
+
+#[test]
+fn serialization() {
+    let start: [u8; 32] = [0xCC, 0xE1, 0xD1, 0xC5, 0x16, 0xF7, 0x1B, 0xBB,
+                           0xE3, 0xF1, 0xB9, 0x19, 0x04, 0x39, 0x28, 0xB7,
+                           0x51, 0x7B, 0x71, 0xC3, 0x86, 0xF0, 0xCF, 0x2A,
+                           0x34, 0xFA, 0x9C, 0x18, 0x04, 0x6B, 0xF6, 0x36];
+    let u = U256::from_little_endian(&start);
+    let s = bincode::serialize(&u, bincode::Bounded(32)).unwrap();
+    assert_eq!(s.len(), 32);
+    let v = bincode::deserialize(&s).unwrap();
+    assert_eq!(&s, &start);
+    assert_eq!(u, v);
 }
