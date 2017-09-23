@@ -1,10 +1,10 @@
-use bincode::{serialize, deserialize, Infinite};
+use bincode::{serialize, deserialize, Bounded};
 
 use bytes::LittleEndian;
 use crypto::digest::Digest;
 use crypto::sha3::Sha3;
 use std::collections::BTreeSet;
-use super::u256::U256;
+use super::u256::{U256, U256_ZERO};
 
 
 type DefaultByteOrder = LittleEndian;
@@ -26,8 +26,6 @@ pub struct Block {
     pub transactions: BTreeSet<U256>,
 }
 
-
-
 pub trait HasBlockHeader {
     fn get_header(&self) -> &BlockHeader;
 }
@@ -46,14 +44,8 @@ impl HasBlockHeader for Block {
 }
 
 
-impl BlockHeader {
-    fn hash(&self) -> U256 {
-        unimplemented!("Hash has not yet been completed!");
-    }
-}
-
 impl Block {
-    fn calculate_merkle_root(&self) -> U256 {
+    pub fn calculate_merkle_root(&self) -> U256 {
         unimplemented!("Calculate merkle root has not yet been completed!");
     }
 }
