@@ -32,16 +32,16 @@ impl From<i64> for Time {
 }
 
 impl Time {
-    fn from_milliseconds(ms: i64) -> Time {
+    pub fn from_milliseconds(ms: i64) -> Time {
         Time(ms)
     }
 
-    fn from_seconds(s: i64) -> Time {
+    pub fn from_seconds(s: i64) -> Time {
         Time::from_milliseconds(s * 1000i64)
     }
 
     /// Return the current time in ms since the epoch. Later this can be switched to use NTP.
-    fn current() -> Time {
+    pub fn current() -> Time {
         let duration_since_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let seconds_contrib = (duration_since_epoch.as_secs() as i64) * 1_000i64;
         let nseconds_contrib = (duration_since_epoch.subsec_nanos() as i64) / 1_000_000i64;
