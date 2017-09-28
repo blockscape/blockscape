@@ -2,15 +2,17 @@
 # see https://hub.docker.com/_/rust
 image: rust:1.20
 
+
+cache:
+  paths:
+    - "target"
+
 build:
   stage: build
   script:
     - cargo build
 
   # depending on your build setup it's most likely a good idea to cache outputs to reduce the build time
-  cache:
-    paths:
-      - "target"
 
 pages:
   script:
