@@ -4,6 +4,9 @@ version = "0.0.1"
 authors = ["Daniel Beal <git@danb.email.com>", "Matthew Conover <matt@xram.co>"]
 
 [dependencies]
+log = "0.3"
+env_logger = "0.3"
+isatty = "0.1"
 blockscape_core = { path = "core" }
 
 [[bin]]

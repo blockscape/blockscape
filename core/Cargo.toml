@@ -6,6 +6,7 @@ authors = ["Daniel Beal <git@danb.email.com>", "Matthew Conover <matt@xram.co>"]
 [dependencies]
 bincode = "^0.8"
 bytes = { version = "^0.4", features = ["serde"] }
+log = "^0.3"
 openssl = "^0.9"
 rust-crypto= "^0.2"
 serde = "^1.0"

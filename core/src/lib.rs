@@ -9,12 +9,16 @@ extern crate time as timelib;
 #[macro_use]
 extern crate serde_derive;
 
+#[macro_use]
+extern crate log;
+
 pub mod block;
 pub mod txn;
 pub mod network;
 pub mod u256;
 pub mod u160;
 pub mod time;
+pub mod env;
 
 use crypto::digest::Digest;
 use crypto::sha3::Sha3;
