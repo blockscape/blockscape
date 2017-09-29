@@ -14,6 +14,7 @@ extern crate log;
 
 pub mod block;
 pub mod txn;
+pub mod mutation;
 pub mod network;
 pub mod u256;
 pub mod u160;
