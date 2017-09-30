@@ -24,7 +24,7 @@ pub struct NodeEndpoint {
 }
 
 /// Detailed information about a node
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct Node {
     /// Information on the address and port which can be used to open a connection to this node
     pub endpoint: NodeEndpoint,
@@ -36,8 +36,8 @@ pub struct Node {
     pub name: String
 }
 
-#[derive(PartialEq, Eq, Clone, Serialize, Deserialize)]
-struct LocalNode {
+#[derive(PartialEq, Eq, Clone, Serialize, Deserialize, Debug)]
+pub struct LocalNode {
     pub node: Node,
     pub score: u16
 }
@@ -65,11 +65,10 @@ impl PartialOrd for LocalNode {
     }
 }
 
+#[derive(Debug)]
 pub struct NodeRepository {
     available_nodes: HashMap<U160, LocalNode>,
-    sorted_nodes: Vec<U160>,
-
-    last_skip_pos: u32
+    sorted_nodes: Vec<U160>
 }
 
 /// Contains and manages a sorted list of connectable nodes and full information about them
@@ -77,10 +76,20 @@ impl NodeRepository {
 
     const max_map_score: u8 = 100;
 
+    pub fn new() -> NodeRepository {
+        let mut nr = NodeRepository {
+            available_nodes: HashMap::new(),
+            sorted_nodes: Vec::new()
+        };
+
+        nr.build(&vec![]); // initialize empty, which will cause the seed nodes to be populated
+        nr
+    }
+
     /// Based on the local score of nodes, get a list of the best ones to connect to
     /// This is primarily intended for startup, or when there are no nodes connected for whatever reason, and a connection is needed.
-    pub fn get_nodes(&self) -> &Node {
-        &self.available_nodes.get(&self.sorted_nodes[0]).unwrap().node
+    pub fn get_nodes(&self, idx: usize) -> &Node {
+        &self.available_nodes.get(&self.sorted_nodes[idx]).unwrap().node
     }
 
     /// Notify the repository of updated or new node information. Will automatically add or change an existing node as appropriate based on the key in the repository
@@ -140,11 +149,42 @@ impl NodeRepository {
         true
     }
 
-    fn build(&mut self, nodes: &Vec<LocalNode>) {
+    pub fn build(&mut self, nodes: &Vec<LocalNode>) {
         self.available_nodes = HashMap::new();
         self.sorted_nodes = Vec::new();
 
-        for node in nodes {
+        let seed_node_vec = vec![LocalNode {
+            node: Node {
+                endpoint: NodeEndpoint {
+                    host: String::from("seed-1.blockscape"),
+                    port: 42224
+                },
+                key: U160::from(1),
+                version: 1,
+                name: String::from("Seed Node 1")
+            },
+            score: 10
+        },
+        LocalNode {
+            node: Node {
+                endpoint: NodeEndpoint {
+                    host: String::from("seed-2.blockscape"),
+                    port: 42224
+                },
+                key: U160::from(2),
+                version: 1,
+                name: String::from("Seed Node 2")
+            },
+            score: 10
+        }];
+
+        let imported = match nodes.len() {
+            // I would put the below stuff into a constant, but making method calls (however constructive) is not allowed, so I must put it here.
+            0 => &seed_node_vec,
+            _ => nodes
+        };
+
+        for node in imported {
             let n = LocalNode::clone(node);
 
             self.sorted_nodes.push(node.node.key);
@@ -213,4 +253,80 @@ impl NodeRepository {
             |a,b| an.get(b).unwrap().score.cmp(&an.get(a).unwrap().score)
         )
     }
+}
+
+#[test]
+fn populated_seed_nodes() {
+    let nr = NodeRepository::new();
+
+    assert_eq!(nr.get_nodes(0).name, "Seed Node 1");
+    assert_eq!(nr.get_nodes(1).name, "Seed Node 2");
+}
+
+#[test]
+fn custom_node_vec() {
+    let mut nr = NodeRepository::new();
+
+    nr.build(&vec![
+        LocalNode {
+            node: Node {
+                endpoint: NodeEndpoint {
+                    host: String::from("supertest-1.blockscape"),
+                    port: 42224
+                },
+                key: U160::from(1),
+                version: 1,
+                name: String::from("SuperTest Node 1")
+            },
+            score: 1
+        },
+        LocalNode {
+            node: Node {
+                endpoint: NodeEndpoint {
+                    host: String::from("supertest-2.blockscape"),
+                    port: 42224
+                },
+                key: U160::from(2),
+                version: 1,
+                name: String::from("SuperTest Node 2")
+            },
+            score: 4
+        },
+        LocalNode {
+            node: Node {
+                endpoint: NodeEndpoint {
+                    host: String::from("supertest-3.blockscape"),
+                    port: 42224
+                },
+                key: U160::from(3),
+                version: 1,
+                name: String::from("SuperTest Node 3")
+            },
+            score: 2
+        }
+    ]);
+
+    // first one should be the supertest 2 because it has a higher score
+    assert_eq!(nr.get_nodes(0).name, "SuperTest Node 2");
+    assert_eq!(nr.get_nodes(1).name, "SuperTest Node 3");
+    assert_eq!(nr.get_nodes(2).name, "SuperTest Node 1");
+
+    // should still work if we add another node and score it up a bit
+    nr.apply(Node {
+        endpoint: NodeEndpoint {
+            host: String::from("supertest-4.blockscape"),
+            port: 42224
+        },
+        key: U160::from(4),
+        version: 1,
+        name: String::from("SuperTest Node 4")
+    });
+    nr.upScore(U160::from(4));
+    nr.upScore(U160::from(4));
+    nr.upScore(U160::from(4));
+
+    assert_eq!(nr.get_nodes(0).name, "SuperTest Node 2");
+    assert_eq!(nr.get_nodes(1).name, "SuperTest Node 4");
+    assert_eq!(nr.get_nodes(2).name, "SuperTest Node 3");
+    assert_eq!(nr.get_nodes(3).name, "SuperTest Node 1");
 }

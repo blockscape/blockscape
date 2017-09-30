@@ -63,7 +63,7 @@ impl<'a> Client<'a> {
                 };
 
                 // Form connections to some known nodes
-                let nodes = self.node_repo.get_nodes();
+                let nodes = self.node_repo.get_nodes(0);
 
                 Ok(())
             },
