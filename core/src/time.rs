@@ -3,7 +3,7 @@ use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Represents an instant in time, defined by the number of milliseconds since the UNIX Epoch
-#[derive(Serialize, Deserialize, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Serialize, Deserialize, PartialEq, PartialOrd, Eq, Ord, Copy, Clone)]
 pub struct Time(i64);
 
 impl fmt::Debug for Time {

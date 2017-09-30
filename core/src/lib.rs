@@ -30,7 +30,8 @@ use serde::Serialize;
 use u256::U256;
 use u160::U160;
 
-const RSA_KEY_SIZE: u32 = 4096;
+/// The size of any new RSA Keys; other sizes should still be supported.
+const RSA_KEY_SIZE: usize = 4096;
 
 /// Hash bytes of data and then return the result as a U256.
 /// This uses a double sha3-256 hash.
@@ -137,7 +138,7 @@ mod test {
         let data2 = b"This is I message that will be signed; it could instead be a random blob of data...";
         // could just use a private key as public key, but want to be sure it works without that.
         let (private_key, public_key) = {
-            let rsa = openssl::rsa::Rsa::generate(super::RSA_KEY_SIZE).unwrap();
+            let rsa = openssl::rsa::Rsa::generate(super::RSA_KEY_SIZE as u32).unwrap();
             let private = PKey::from_rsa(rsa).unwrap();
             let public_pem = private.public_key_to_pem().unwrap();
             let public = PKey::public_key_from_pem(&public_pem).unwrap();
@@ -145,7 +146,7 @@ mod test {
         };
 
         let sig = super::sign_bytes(data1, &private_key);
-        assert_eq!(sig.len(), super::RSA_KEY_SIZE as usize / 8);
+        assert_eq!(sig.len(), super::RSA_KEY_SIZE / 8);
         assert!(super::verify_bytes(data1, &sig, &private_key));
         assert!(super::verify_bytes(data1, &sig, &public_key));
         assert!(!super::verify_bytes(data2, &sig, &private_key));
