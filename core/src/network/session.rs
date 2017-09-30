@@ -1,7 +1,8 @@
 use super::node::Node;
 
 use super::U256;
-use super::Block;
+use super::U160;
+use super::block::Block;
 use super::super::txn::Txn;
 use super::super::time::Time;
 
@@ -59,6 +60,9 @@ pub struct Session {
 }
 
 impl Session {
+
+    pub const PROTOCOL_VERSION: u16 = 1;
+
     fn recv(packet: Packet) {
         
     }
