@@ -18,7 +18,7 @@ fn main() {
     env::prepare_storage_dir();
 
     // Open network, start peer protocol
-    let client = Client::new();
+    //let client = Client::new();
 
     // Open RPC interface
 

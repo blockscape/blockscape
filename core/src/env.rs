@@ -29,6 +29,11 @@ pub fn get_storage_dir() -> Option<PathBuf> {
     }
 }
 
+pub fn get_client_name() -> String {
+    // TODO: Make more intelligent
+    "Blockscape Official v".to_owned() + env!("CARGO_PKG_VERSION")
+}
+
 fn ensure_mkdir(p: &Path) {
     if !p.is_dir() {
 

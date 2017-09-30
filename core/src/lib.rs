@@ -4,6 +4,7 @@ extern crate crypto;
 extern crate openssl;
 extern crate serde_json;
 extern crate serde;
+extern crate rand;
 extern crate time as timelib;
 
 #[macro_use]
