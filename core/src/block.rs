@@ -4,7 +4,8 @@ use bytes::LittleEndian;
 use crypto::digest::Digest;
 use crypto::sha3::Sha3;
 use std::collections::BTreeSet;
-use super::u256::{U256, U256_ZERO};
+use u256::{U256, U256_ZERO};
+use time::Time;
 
 
 type DefaultByteOrder = LittleEndian;
@@ -14,7 +15,7 @@ type DefaultByteOrder = LittleEndian;
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockHeader {
     pub version: u16,
-    pub timestamp: u64,
+    pub timestamp: Time,
     pub hash_previous_block: U256,
     pub hash_merkle_root: U256,
 }
