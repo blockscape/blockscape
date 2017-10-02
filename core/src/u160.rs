@@ -83,6 +83,12 @@ impl From<u64> for U160 {
     }
 }
 
+impl From<String> for U160 {
+    /// STUB
+    fn from(v: String) -> U160 {
+        U160::from(0)
+    }
+}
 
 impl Hash for U160 {
     /// Calculate the hash value of the little-endian stored bytes using a Hasher.
