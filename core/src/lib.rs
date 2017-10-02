@@ -6,6 +6,7 @@ extern crate serde_json;
 extern crate serde;
 extern crate rand;
 extern crate time as timelib;
+extern crate rocksdb;
 
 #[macro_use]
 extern crate serde_derive;
@@ -21,6 +22,7 @@ pub mod u256;
 pub mod u160;
 pub mod time;
 pub mod env;
+pub mod database;
 
 use crypto::digest::Digest;
 use crypto::sha3::Sha3;
