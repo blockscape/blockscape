@@ -3,7 +3,6 @@ use std::path::{Path,PathBuf};
 use std::env::home_dir;
 use rocksdb::DB;
 use rocksdb::Error as DBError;
-use std::error::Error;
 
 /// Create the storage directory structure if it does not exist, and make sure it is valid if it
 /// does.

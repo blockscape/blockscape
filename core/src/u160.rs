@@ -3,7 +3,6 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use bincode;
-use std::num::ParseIntError;
 use std::str::FromStr;
 use std::cmp;
 
