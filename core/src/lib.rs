@@ -1,6 +1,7 @@
 extern crate bincode;
 extern crate bytes;
 extern crate crypto;
+extern crate dns_lookup;
 extern crate openssl;
 extern crate serde_json;
 extern crate serde;
@@ -15,88 +16,18 @@ extern crate log;
 
 pub mod block;
 pub mod txn;
+pub mod hash;
 pub mod mutation;
 pub mod network;
+pub mod signer;
 pub mod u256;
 pub mod u160;
 pub mod time;
 pub mod env;
 
-use crypto::digest::Digest;
-use crypto::sha3::Sha3;
-use crypto::ripemd160::Ripemd160;
-use openssl::{sign, pkey, hash};
-use pkey::PKey;
 use serde::Serialize;
 use u256::U256;
 use u160::U160;
-
-/// The size of any new RSA Keys; other sizes should still be supported.
-const RSA_KEY_SIZE: usize = 4096;
-
-/// Hash bytes of data and then return the result as a U256.
-/// This uses a double sha3-256 hash.
-fn hash_bytes(bytes: &[u8]) -> U256 {
-    let mut buf = [0u8; 32];
-    let mut hasher = Sha3::sha3_256();
-
-    hasher.input(bytes);
-    hasher.result(&mut buf); //don't care about first hash, only the second
-    hasher.reset();
-
-    hasher.input(&buf);
-    hasher.result(&mut buf);
-    U256::from_big_endian(&mut buf)
-}
-
-/// Hash a public key and return the result as a U160. This uses the SHA3-256
-/// hashing function followed by the Ripemd-160 hashing function.
-fn hash_pub_key(bytes: &[u8]) -> U160 {
-    let mut buf = [0u8; 32];
-    let mut hasher1 = Sha3::sha3_256();
-    let mut hasher2 = Ripemd160::new();
-    
-    hasher1.input(bytes);
-    hasher1.result(&mut buf);
-    hasher2.input(&buf);
-    hasher2.result(&mut buf);
-    U160::from_big_endian(&mut buf)
-}
-
-/// Sign some bytes with a private key.
-fn sign_bytes(bytes: &[u8], private_key: &PKey) -> Vec<u8> {
-    let mut signer = sign::Signer::new(hash::MessageDigest::sha256(), &private_key).unwrap();
-    signer.update(bytes).unwrap();
-    signer.finish().unwrap()
-}
-
-/// Verify the bytes have not been tampered with given a signature and public key.
-fn verify_bytes(bytes: &[u8], signature: &[u8], public_key: &PKey) -> bool {
-    let mut verifier = sign::Verifier::new(hash::MessageDigest::sha256(), public_key).unwrap();
-    verifier.update(bytes).unwrap();
-    verifier.finish(&signature).unwrap()
-}
-
-/// Hash a serilizable object by serialzing it with bincode, and then hashing the bytes.
-/// This uses a doulbe sha3-256 hash.
-fn hash_obj<S: Serialize>(obj: &S) -> U256 {
-    let encoded : Vec<u8> = bincode::serialize(&obj, bincode::Infinite).unwrap();
-    hash_bytes(&encoded)
-}
-
-/// Sign an object with a private key.
-fn sign_obj<S: Serialize>(obj: &S, private_key: &PKey) -> Vec<u8> {
-    let encoded: Vec<u8> = bincode::serialize(&obj, bincode::Infinite).unwrap();
-    sign_bytes(&encoded, private_key)
-}
-
-/// Verify the object has not been tampered with given the signature and public key.
-fn verify_obj<S: Serialize>(obj: &S, signature: &[u8], public_key: &PKey) -> bool {
-    let encoded: Vec<u8> = bincode::serialize(&obj, bincode::Infinite).unwrap();
-    verify_bytes(&encoded, signature, public_key)
-}
-
-
 
 #[cfg(test)]
 mod test {

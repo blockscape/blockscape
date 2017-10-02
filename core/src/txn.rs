@@ -3,7 +3,8 @@ use u256::U256;
 use time::Time;
 use mutation::Mutation;
 use bincode;
-use super::PKey;
+use openssl::pkey::PKey;
+use signer::sign_bytes;
 
 // Expand and divide shard transactions
 // Positive reputation transaction ?
@@ -38,7 +39,7 @@ pub const ADMIN_TXN: u8 = 9;
 fn sign_data(mutations: &Vec<Mutation>, data: &[u8], pkey: &PKey) -> Vec<u8> {
     let mut raw = bincode::serialize(mutations, bincode::Infinite).unwrap();
     raw.extend_from_slice(&data);
-    super::sign_bytes(&raw, pkey)
+    sign_bytes(&raw, pkey)
 }
 
 impl Txn {
