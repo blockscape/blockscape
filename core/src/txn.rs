@@ -1,10 +1,10 @@
 use std::vec::Vec;
-use u256::U256;
 use time::Time;
 use mutation::Mutation;
 use bincode;
 use openssl::pkey::PKey;
 use signer::sign_bytes;
+use signer::sign_obj;
 
 // Expand and divide shard transactions
 // Positive reputation transaction ?
@@ -19,8 +19,7 @@ pub struct Txn {
     pub timestamp: Time,
     pub txn_type: u8,
     pub pubkey: Vec<u8>,  // stored as a DER format
-    pub mutations: Vec<Mutation>,
-    pub data: Vec<u8>,
+    pub mutation: Mutation,
     pub signature: Vec<u8>,
 }
 
@@ -36,23 +35,17 @@ pub const ADMIN_TXN: u8 = 9;
 
 
 
-fn sign_data(mutations: &Vec<Mutation>, data: &[u8], pkey: &PKey) -> Vec<u8> {
-    let mut raw = bincode::serialize(mutations, bincode::Infinite).unwrap();
-    raw.extend_from_slice(&data);
-    sign_bytes(&raw, pkey)
-}
-
 impl Txn {
     /// Assume default values for a number of features and manually set the data, mutations, and
     /// transaction type. Everything else is Either a default or derived.
-    fn new_txn(txn_type: u8, pkey: &PKey, mutations: Vec<Mutation>, data: Vec<u8>) -> Txn {
-        let signature = sign_data(&mutations, &data, pkey);
+    fn new_txn(txn_type: u8, pkey: &PKey, mutation: Mutation) -> Txn {
+        let signature = sign_obj(&mutation, pkey);
 
         Txn {
             timestamp: Time::current(),
             txn_type,
             pubkey: pkey.public_key_to_der().unwrap(),
-            mutations, data, signature
+            mutation, signature
         }
     }
 
@@ -61,20 +54,16 @@ impl Txn {
     /// beyond that.
     /// TODO: create needed mutations
     pub fn new_expanding_txn(pkey: &PKey) -> Txn {
-        let mutations: Vec<Mutation> = vec![];
-        let data: Vec<u8> = vec![];
-        
-        Self::new_txn(EXPANDING_TXN, pkey, mutations, data)
+        let mutation = Mutation;
+        Self::new_txn(EXPANDING_TXN, pkey, mutation)
     }
 
     /// A transaction which divides a shard into multiple new shards breaking up the work required
     /// to compute it. The shard with this transaction will be turned into a parent shard.
     /// TODO: create needed mutations.
     pub fn new_split_txn(pkey: &PKey) -> Txn {
-        let mutations: Vec<Mutation> = vec![];
-        let data: Vec<u8> = vec![];
-        
-        Self::new_txn(SPLIT_TXN, pkey, mutations, data)
+        let mutation = Mutation;
+        Self::new_txn(SPLIT_TXN, pkey, mutation)
     }
 
     /// A transaction which adds a new validator (or player) to the network. This type of
@@ -82,20 +71,16 @@ impl Txn {
     /// new accounts to gain reputation faster.
     /// TODO: create needed mutations
     pub fn new_validator_txn(pkey: &PKey) -> Txn {
-        let mutations: Vec<Mutation> = vec![];
-        let data: Vec<u8> = vec![];
-        
-        Self::new_txn(ADD_VALIDATOR_TXN, pkey, mutations, data)
+        let mutation = Mutation;
+        Self::new_txn(ADD_VALIDATOR_TXN, pkey, mutation)
     }
 
     /// Update the reference to a child-shard's current block in the chain. This should only happen
     /// if the reference has not been stored before (aka avoid duplicate references).
     /// TODO: create needed mutations
     pub fn new_child_block_ref_txn(pkey: &PKey) -> Txn {
-        let mutations: Vec<Mutation> = vec![];
-        let data: Vec<u8> = vec![];
-        
-        Self::new_txn(CHILD_BLOCK_REF_TXN, pkey, mutations, data)
+        let mutation = Mutation;
+        Self::new_txn(CHILD_BLOCK_REF_TXN, pkey, mutation)
     }
 
     /// Create a transaction which indicates a mutation to two different shards. This information
@@ -103,20 +88,19 @@ impl Txn {
     /// TODO: create needed mutations
     pub fn new_shard_transfer_txn(pkey: &PKey) -> Txn {
         // Will need a `from` and `to` shard along with the changes.
-        let mutations: Vec<Mutation> = vec![];
-        let data: Vec<u8> = vec![];
-        
-        Self::new_txn(SHARD_TRANSFER_TXN, pkey, mutations, data)
+        let mutation = Mutation;
+        Self::new_txn(SHARD_TRANSFER_TXN, pkey, mutation)
     }
 
     /// Create a transaction to reward those who voted for only this block and chastise those who
-    /// voted for a competing block. Note that those who vote for more than one block, a slashing
+    /// voted for a competing block. Note that those who vote for more than one block,    pub data: Vec<u8>, a slashing
     /// transaction should instead be made and they should not be included in a ballot txn.
     /// TODO: create needed mutations
     pub fn new_ballot_txn(pkey: &PKey) -> Txn {
         // (Can only reward/punish for votes on whether this block should be accepted)
         // List of nodes who backed correct chain:
-        //      Who it was
+        //      Who it wasbroken into more than one creation function depending on the
+        // change that is to be made.
         //      (I do not believe we need to keep evidence given the honest majority assumption,
         //       will need to make sure that the proof of a positive vote can be requested in
         //       case they choose to selectively send their votes to different nodes)
@@ -124,10 +108,8 @@ impl Txn {
         //      Who it was
         //      Record of their action
         //      Their signature for the action
-        let mutations: Vec<Mutation> = vec![];
-        let data: Vec<u8> = vec![];
-        
-        Self::new_txn(BALLOT_TXN, pkey, mutations, data)
+        let mutation = Mutation;
+        Self::new_txn(BALLOT_TXN, pkey, mutation)
     }
 
     /// Create a transaction designed to significantly hurt the reputation of someone who acted can
@@ -138,10 +120,8 @@ impl Txn {
         // list of:
         //      misbehaving node
         //      evidence in the form of their signed actions
-        let mutations: Vec<Mutation> = vec![];
-        let data: Vec<u8> = vec![];
-        
-        Self::new_txn(SLASH_TXN, pkey, mutations, data)
+        let mutation = Mutation;
+        Self::new_txn(SLASH_TXN, pkey, mutation)
     }
 
     /// Create a new generic data blob which can store things like network state or game state.
@@ -149,10 +129,8 @@ impl Txn {
     /// favor of recalculating state from genesis.
     /// TODO: create needed mutations
     pub fn new_state_txn(pkey: &PKey) -> Txn {
-        let mutations: Vec<Mutation> = vec![];
-        let data: Vec<u8> = vec![];
-        
-        Self::new_txn(SLASH_TXN, pkey, mutations, data)
+        let mutation = Mutation;
+        Self::new_txn(SLASH_TXN, pkey, mutation)
     }
 
     /// Create a new transaction which has mostly unchecked power. The primary requirement is that

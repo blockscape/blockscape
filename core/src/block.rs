@@ -1,14 +1,6 @@
-use bincode::{serialize, deserialize, Bounded};
-
-use bytes::LittleEndian;
-use crypto::digest::Digest;
-use crypto::sha3::Sha3;
 use std::collections::BTreeSet;
-use u256::{U256, U256_ZERO};
+use u256::U256;
 use time::Time;
-
-
-type DefaultByteOrder = LittleEndian;
 
 
 /// The main infromation about a block. This noteably excludes the list of transactions.

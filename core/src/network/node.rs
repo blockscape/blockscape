@@ -307,7 +307,7 @@ fn custom_node_vec() {
                     host: String::from("supertest-1.blockscape"),
                     port: 42224
                 },
-                key: U160::from(1),
+                key: vec![1],
                 version: 1,
                 name: String::from("SuperTest Node 1")
             },
@@ -319,7 +319,7 @@ fn custom_node_vec() {
                     host: String::from("supertest-2.blockscape"),
                     port: 42224
                 },
-                key: U160::from(2),
+                key: vec![2],
                 version: 1,
                 name: String::from("SuperTest Node 2")
             },
@@ -331,7 +331,7 @@ fn custom_node_vec() {
                     host: String::from("supertest-3.blockscape"),
                     port: 42224
                 },
-                key: U160::from(3),
+                key: vec![3],
                 version: 1,
                 name: String::from("SuperTest Node 3")
             },
@@ -350,13 +350,16 @@ fn custom_node_vec() {
             host: String::from("supertest-4.blockscape"),
             port: 42224
         },
-        key: U160::from(4),
+        key: vec![4],
         version: 1,
         name: String::from("SuperTest Node 4")
     });
-    nr.upScore(U160::from(4));
-    nr.upScore(U160::from(4));
-    nr.upScore(U160::from(4));
+
+    let mykey = hash_pub_key(&[4]);
+
+    nr.upScore(&mykey);
+    nr.upScore(&mykey);
+    nr.upScore(&mykey);
 
     assert_eq!(nr.get_nodes(0).name, "SuperTest Node 2");
     assert_eq!(nr.get_nodes(1).name, "SuperTest Node 4");

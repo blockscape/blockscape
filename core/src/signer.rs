@@ -39,3 +39,24 @@ pub fn generate_private_key() -> PKey {
     let rsa = openssl::rsa::Rsa::generate(RSA_KEY_SIZE as u32).unwrap();
     PKey::from_rsa(rsa).unwrap()
 }
+
+#[test]
+fn signing() {
+    let data1 = b"This is a message that will be signed; it could instead be a random blob of data...";
+    let data2 = b"This is I message that will be signed; it could instead be a random blob of data...";
+    // could just use a private key as public key, but want to be sure it works without that.
+    let (private_key, public_key) = {
+        let rsa = openssl::rsa::Rsa::generate(RSA_KEY_SIZE as u32).unwrap();
+        let private = PKey::from_rsa(rsa).unwrap();
+        let public_pem = private.public_key_to_pem().unwrap();
+        let public = PKey::public_key_from_pem(&public_pem).unwrap();
+        (private, public)
+    };
+
+    let sig = sign_bytes(data1, &private_key);
+    assert_eq!(sig.len(), RSA_KEY_SIZE / 8);
+    assert!(verify_bytes(data1, &sig, &private_key));
+    assert!(verify_bytes(data1, &sig, &public_key));
+    assert!(!verify_bytes(data2, &sig, &private_key));
+    assert!(!verify_bytes(data2, &sig, &public_key));
+}

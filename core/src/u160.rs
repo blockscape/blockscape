@@ -3,6 +3,8 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use bincode;
+use std::str::FromStr;
+use std::cmp;
 
 /// A simple 160-bit storage unit that acts sort of like an integer.
 /// Note: internally, the lowest significance u32 is in the lowest index,
@@ -16,11 +18,18 @@ pub const U160_ZERO: U160 = U160([0u32; 5]);
 pub const U160_MAX: U160 = U160([(-1i32) as u32; 5]);
 
 impl fmt::Debug for U160 {
-    /// Print the integer as an aligned hex value
+    /// Print the integer as an aligned hex value.
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
+impl fmt::Display for U160 {
+    /// Print the hex value as lowercase with a prefix 0x.
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "0x{:08X}{:08X}{:08X}{:08X}{:08X}",
+            "0x{:08x}{:08x}{:08x}{:08x}{:08x}",
             self.0[4],
             self.0[3],
             self.0[2],
@@ -83,19 +92,56 @@ impl From<u64> for U160 {
     }
 }
 
-impl From<String> for U160 {
-    /// STUB
-    fn from(v: String) -> U160 {
-        U160::from(0)
-    }
-}
-
 impl Hash for U160 {
     /// Calculate the hash value of the little-endian stored bytes using a Hasher.
     fn hash<H: Hasher>(&self, state: &mut H) {
         let mut buf = [0u8; 20];
         self.to_little_endian(&mut buf);
         state.write(&buf);
+    }
+}
+
+impl FromStr for U160 {
+    type Err = String;
+    
+    /// Convert a hex string to a U160 value
+    /// # Errors
+    /// * If the value is larger than 40 digits (ignoring 0x).
+    /// * If the string is empty.
+    /// * If any character is invalid.
+    fn from_str(v: &str) -> Result<U160, Self::Err> {
+        let mut i: i32 = v.len() as i32; // i is one beyond the end
+        let mut result = U160([0; 5]);
+        
+        // Remove front 0x if there is one
+        let mut s: &str = v;
+        if (i >= 3) && (&v[0..2] == "0x") {
+            s = &v[2..];
+            i -= 2;
+        }
+        if i > 40 {
+            return Err(String::from("Value is too long."));
+        }
+
+        // Convert the individual segments to u32 s and add to the data.
+        let mut chunk: usize = 0;
+        while i > 0 {
+            assert!(chunk < 5); // should never happen if earlier checks are correct
+            // grab a u32's width of hex digits
+            let str_range = (cmp::max(i - 8, 0) as usize)..(i as usize);
+            let str_segment: &str = &s[str_range];
+            // convert the u32 hex digits to a u32
+            let str_value = u32::from_str_radix(str_segment, 16);
+            match str_value {
+                Ok(value) => result.0[chunk] = value,
+                Err(e) => return Err(e.to_string())
+            }
+            // increment our position
+            chunk += 1;
+            i -= 8;
+        }
+
+        Ok(result)
     }
 }
 
@@ -159,7 +205,7 @@ impl U160 {
 #[test]
 fn debug() {
     let u = U160([0x0A34DBC3u32, 0x07E6B7BAu32, 0x99821201u32, 0x000271F2u32, 0x95EF424Bu32]);
-    assert_eq!(format!("{:?}", u), "0x95EF424B000271F29982120107E6B7BA0A34DBC3");
+    assert_eq!(format!("{:?}", u), "0x95ef424b000271f29982120107e6b7ba0a34dbc3");
 }
 
 #[test]
@@ -247,6 +293,26 @@ fn endian_conversions() {
     
     b.to_little_endian(&mut buf);
     assert_eq!(start, buf);
+}
+
+#[test]
+fn from_str() {
+    let a = "0xD602B80E32145A890FE49EB2CEE670020E30A580";
+    let b = "0x1908199d0ac25cf2ce7942d62dd25bd63c98a66f";
+    let c = "2b6f917dc1bab3a3e73c71a6d7a84376577bb144";
+    let d = "5C237AD641B42B79B78E1ADF42AEFDFE529E4CA1";
+    let e = "2DD8D60B7FD";
+    let f = "c7b3c";
+    let g = "10000000000000000000000000000000000000000";
+    let h = "89347590879087ag";
+    assert_eq!(a.parse::<U160>().unwrap(), U160([0x0E30A580, 0xCEE67002, 0x0FE49EB2, 0x32145A89, 0xD602B80E]));
+    assert_eq!(b.parse::<U160>().unwrap(), U160([0x3c98a66f, 0x2dd25bd6, 0xce7942d6, 0x0ac25cf2, 0x1908199d]));
+    assert_eq!(c.parse::<U160>().unwrap(), U160([0x577bb144, 0xd7a84376, 0xe73c71a6, 0xc1bab3a3, 0x2b6f917d]));
+    assert_eq!(d.parse::<U160>().unwrap(), U160([0x529E4CA1, 0x42AEFDFE, 0xB78E1ADF, 0x41B42B79, 0x5C237AD6]));
+    assert_eq!(e.parse::<U160>().unwrap(), U160([0x8D60B7FD, 0x000002DD, 0x00000000, 0x00000000, 0x00000000]));
+    assert_eq!(f.parse::<U160>().unwrap(), U160([0x000c7b3c, 0x00000000, 0x00000000, 0x00000000, 0x00000000]));
+    assert!(g.parse::<U160>().is_err());
+    assert!(h.parse::<U160>().is_err());
 }
 
 #[test]

@@ -3,6 +3,8 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use bincode;
+use std::cmp;
+use std::str::FromStr;
 
 /// A simple 256-bit storage unit that acts sort of like an integer.
 /// Note: internally, the lowest significance u64 is in the lowest index,
@@ -16,11 +18,18 @@ pub const U256_ZERO: U256 = U256([0u64; 4]);
 pub const U256_MAX: U256 = U256([(-1i64) as u64; 4]);
 
 impl fmt::Debug for U256 {
-    /// Print the integer as an aligned hex value
+    /// Print the integer as an aligned hex value.
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
+impl fmt::Display for U256 {
+    /// Print the hex value as lowercase with a prefix 0x.
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "0x{:016X}{:016X}{:016X}{:016X}",
+            "0x{:016x}{:016x}{:016x}{:016x}",
             self.0[3],
             self.0[2],
             self.0[1],
@@ -92,6 +101,50 @@ impl Hash for U256 {
     }
 }
 
+impl FromStr for U256 {
+    type Err = String;
+    
+    /// Convert a hex string to a U256 value
+    /// # Errors
+    /// * If the value is larger than 64 digits (ignoring 0x).
+    /// * If the string is empty.
+    /// * If any character is invalid.
+    fn from_str(v: &str) -> Result<U256, Self::Err> {
+        let mut i: i32 = v.len() as i32; // i is one beyond the end
+        let mut result = U256([0; 4]);
+        
+        // Remove front 0x if there is one
+        let mut s: &str = v;
+        if (i >= 3) && (&v[0..2] == "0x") {
+            s = &v[2..];
+            i -= 2;
+        }
+        if i > 64 {
+            return Err(String::from("Value is too long."));
+        }
+
+        // Convert the individual segments to u64 s and add to the data.
+        let mut chunk: usize = 0;
+        while i > 0 {
+            assert!(chunk < 4); // should never happen if earlier checks are correct
+            // grab a u64's width of hex digits
+            let str_range = (cmp::max(i - 16, 0) as usize)..(i as usize);
+            let str_segment: &str = &s[str_range];
+            // convert the u64 hex digits to a u64
+            let str_value = u64::from_str_radix(str_segment, 16);
+            match str_value {
+                Ok(value) => result.0[chunk] = value,
+                Err(e) => return Err(e.to_string())
+            }
+            // increment our position
+            chunk += 1;
+            i -= 16;
+        }
+
+        Ok(result)
+    }
+}
+
 impl U256 {
     /// Checks if the value is zero.
     pub fn is_zero(&self) -> bool {
@@ -152,7 +205,7 @@ impl U256 {
 #[test]
 fn debug() {
     let u = U256([0x0A34DBC36A8EBA78u64, 0x07E6B7BA2207330Au64, 0x95EF424B99821201u64, 0x000271F22FE33752u64]);
-    assert_eq!(format!("{:?}", u), "0x000271F22FE3375295EF424B9982120107E6B7BA2207330A0A34DBC36A8EBA78");
+    assert_eq!(format!("{:?}", u), "0x000271f22fe3375295ef424b9982120107e6b7ba2207330a0a34dbc36a8eba78");
 }
 
 #[test]
@@ -259,6 +312,22 @@ fn endian_conversions() {
     
     b.to_little_endian(&mut buf);
     assert_eq!(start, buf);
+}
+
+#[test]
+fn from_str() {
+    let a = "0xDACABDF35FD172F2751CBD1EB6F47C17D55910FF7703E1F7C3E00FA30FF38705";
+    let b = "973f9c10cafd48073d94ea7725cd3bbfd0cda9b06791fabe1aa169375d15bb0f";
+    let c = "0x45084d36018eea1c7c";
+    let d = "6c11";
+    let e = "10000000000000000000000000000000000000000000000000000000000000000";
+    let f = "87345987j";
+    assert_eq!(a.parse::<U256>().unwrap(), U256([0xC3E00FA30FF38705, 0xD55910FF7703E1F7, 0x751CBD1EB6F47C17, 0xDACABDF35FD172F2]));
+    assert_eq!(b.parse::<U256>().unwrap(), U256([0x1aa169375d15bb0f, 0xd0cda9b06791fabe, 0x3d94ea7725cd3bbf, 0x973f9c10cafd4807]));
+    assert_eq!(c.parse::<U256>().unwrap(), U256([0x084d36018eea1c7c, 0x0000000000000045, 0x0000000000000000, 0x0000000000000000]));
+    assert_eq!(d.parse::<U256>().unwrap(), U256([0x0000000000006c11, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000]));
+    assert!(e.parse::<U256>().is_err());
+    assert!(f.parse::<U256>().is_err());
 }
 
 #[test]
