@@ -1,5 +1,6 @@
 use std::net::{SocketAddr,IpAddr};
 use super::U160;
+use std::sync::Arc;
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -108,12 +109,12 @@ impl NodeRepository {
 
     /// Based on the local score of nodes, get a list of the best ones to connect to
     /// This is primarily intended for startup, or when there are no nodes connected for whatever reason, and a connection is needed.
-    pub fn get_nodes(&self, idx: usize) -> &Node {
-        &self.available_nodes.get(&self.sorted_nodes[idx % self.sorted_nodes.len()]).unwrap().node
+    pub fn get_nodes(&self, idx: usize) -> Arc<Node> {
+        Arc::new(self.available_nodes.get(&self.sorted_nodes[idx % self.sorted_nodes.len()]).cloned().unwrap().node)
     }
 
-    pub fn get(&self, node: &U160) -> Option<&Node> {
-        self.available_nodes.get(node).map(|n| &n.node)
+    pub fn get(&self, node: &U160) -> Option<Arc<Node>> {
+        self.available_nodes.get(node).map(|n| Arc::new(n.node.clone()))
     }
 
     /// Notify the repository of updated or new node information. Will automatically add or change an existing node as appropriate based on the key in the repository

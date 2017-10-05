@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::net::UdpSocket;
 use std::io::Error;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use std::time::Duration;
 
@@ -26,9 +27,7 @@ pub struct DataStore;
 
 #[derive(Serialize, Deserialize)]
 struct RawPacket {
-    from: U160,
-    payload: Packet,
-    sig: Option<Vec<u8>>
+    payload: Packet
 }
 
 //#[derive(Debug)]
@@ -60,12 +59,12 @@ pub struct Client<'a> {
     config: ClientConfig,
 
     /// Independant "connections" to each of the other NodeEndpoints we interact with
-    sessions: HashMap<U160, Session<'a>>,
+    sessions: HashMap<SocketAddr, Session>,
 
     recv_buf: HashMap<SocketAddr, Vec<u8>>,
 
     /// The node object which represents my own system
-    my_node: Node,
+    my_node: Arc<Node>,
 
     node_repo: &'a mut NodeRepository,
 
@@ -89,12 +88,12 @@ impl<'a> Client<'a> {
         
         Client {
             db: db,
-            my_node: Node {
+            my_node: Arc::new(Node {
                 key: config.private_key.public_key_to_der().unwrap(), // TODO: Should be public key only!
                 version: Session::PROTOCOL_VERSION,
                 endpoint: NodeEndpoint { host: String::from(""), port: 0 },
                 name: get_client_name()
-            },
+            }),
             config: config,
             node_repo: node_repo,
             connected_networks: Vec::new(),
@@ -108,20 +107,13 @@ impl<'a> Client<'a> {
         // Build my node object
     }
 
-    pub fn open(&mut self, addr: String, port: u16) -> Result<(), Error> {
-        let addr_port = format!("{}:{}", addr, port);
-        match UdpSocket::bind(addr_port) {
+    pub fn open(&mut self) -> Result<(), Error> {
+        match UdpSocket::bind(self.my_node.endpoint.clone().as_socketaddr().unwrap()) {
             Ok(s) => {
 
                 s.set_read_timeout(Some(Duration::from_millis(10)));
 
                 self.socket = Some(s);
-
-                // create a node endpoint and apply it to my node
-                self.my_node.endpoint = NodeEndpoint {
-                    host: addr,
-                    port: port
-                };
 
                 // Form connections to some known nodes
                 let nodes = self.node_repo.get_nodes(0);
@@ -132,46 +124,54 @@ impl<'a> Client<'a> {
         }
     }
 
-    fn node_scan(&'a mut self) {
-        // TODO: DOS attack from this?
+    fn node_scan(&mut self) {
+        let mut removed_nodes = Vec::new();
+
+        let mut node_repo = &mut self.node_repo;
+
         if self.sessions.len() < self.config.min_nodes as usize {
             // try to connect a couple more nodes
             'node_search: for i in 0..3 {
 
-                let mut peer = self.node_repo.get_nodes(self.node_idx);
+                let mut peer = node_repo.get_nodes(self.node_idx);
                 let pkh = hash_pub_key(&peer.key[..]);
-                
-                self.node_idx = self.node_idx + 1;
-
-                let mut n = 0;
-                while self.sessions.contains_key(&pkh) {
-                    peer = self.node_repo.get_nodes(self.node_idx);
-                    self.node_idx = self.node_idx + 1;
-                    n = n + 1;
-
-                    // we have to prevent infinite looping here due to if all the nodes in the DB are conneted to (which is rare)
-                    if n > self.sessions.len() {
-                        // we must be conneted to all nodes
-                        // this should basically only happen if the network itself is so fragmented and too small
-                        warn!("Node Repository lacks additional nodes to connect to; node shortage detected.");
-                        break 'node_search;
-                    }
-                }
-
-                // now we can create a new session
                 let saddr = peer.endpoint.clone().as_socketaddr();
 
+                // now we can look into creating a new session
                 if let Some(addr) = saddr {
-                    let sess = Session::new(self, &self.my_node, peer, addr);
-                    self.sessions.insert(pkh, sess);
+
+                    self.node_idx = self.node_idx + 1;
+
+                    let mut n = 0;
+                    while self.sessions.contains_key(&addr) {
+                        peer = node_repo.get_nodes(self.node_idx);
+                        self.node_idx = self.node_idx + 1;
+                        n = n + 1;
+
+                        // we have to prevent infinite looping here due to if all the nodes in the DB are conneted to (which is rare)
+                        if n > self.sessions.len() {
+                            // we must be conneted to all nodes
+                            // this should basically only happen if the network itself is so fragmented and too small
+                            warn!("Node Repository lacks additional nodes to connect to; node shortage detected.");
+                            break 'node_search;
+                        }
+                    }
+
+                    // ready to connect
+                    let sess = Session::new(self.my_node.clone(), peer, addr);
+                    self.sessions.insert(addr, sess);
                 }
                 else {
                     // We have bogus data
                     warn!("Could not resolve hostname for node: {:?}", peer.endpoint);
                     // Remove the bogus data
-                    self.node_repo.remove(&pkh);
+                    removed_nodes.push(pkh);
                 }
             }
+        }
+
+        for r in removed_nodes {
+            node_repo.remove(&r);
         }
     }
 
@@ -184,11 +184,16 @@ impl<'a> Client<'a> {
         loop {
             let mut cont = true;
 
-            match self.socket.unwrap().recv_from(&mut buf) {
+            match self.socket.as_ref().unwrap().recv_from(&mut buf) {
                 Ok((n, addr)) => {
 
                     let mut remove = false;
-                    if let Some(b) = self.recv_buf.get_mut(&addr) {
+                    let mut recv_buf = &mut self.recv_buf;
+
+                    let recv_len = recv_buf.len();
+
+                    let mut newb: Option<(SocketAddr, Vec<u8>)> = None;
+                    if let Some(b) = recv_buf.get_mut(&addr) {
                         if b.len() > Client::MAX_PACKET_SIZE {
                             // cannot accept more packet data from this client
                             warn!("Client exceeded max packet size, dumping: {:?}", addr);
@@ -200,23 +205,27 @@ impl<'a> Client<'a> {
                     }
                     else {
                         // new peer, can we take more?
-                        if self.recv_buf.len() <= self.config.max_nodes as usize {
+                        if recv_len <= self.config.max_nodes as usize {
                             // allocate
-                            let mut v = Vec::with_capacity(Client::MAX_PACKET_SIZE);
+                            let mut v: Vec<u8> = Vec::with_capacity(Client::MAX_PACKET_SIZE);
                             v.extend_from_slice(&buf[..n]);
-                            self.recv_buf.insert(addr, v);
+                            newb = Some((addr, v));
                         }
                         else {
                             continue;
                         }
                     }
 
+                    if let Some((addr, v)) = newb {
+                        recv_buf.insert(addr, v);
+                    }
+
                     if remove {
-                        self.recv_buf.remove(&addr);
+                        recv_buf.remove(&addr);
                     }
 
                     // have we received all the data yet?
-                    let b = self.recv_buf.get_mut(&addr).unwrap();
+                    let b = recv_buf.get_mut(&addr).unwrap();
                     let len: usize = deserialize::<u32>(&b[0..4]).unwrap() as usize;
 
                     if b.len() - 4 >= len {
@@ -239,34 +248,21 @@ impl<'a> Client<'a> {
         packet_vec
     }
 
-    pub fn run(&'a mut self) {
+    pub fn run(&mut self) {
         // connection management
         if self.last_peer_seek.millis() < Time::current().millis() - 3 * 1000 {
             self.node_scan();
             self.last_peer_seek = Time::current();
         }
 
-        // Socket should be available that this point, so we can unwrap
-        let mut s = &self.socket.unwrap();
-
         let packet_vec = self.read_packets();
 
         // process each packet one at a time
+        let mut inserted_sessions: Vec<(SocketAddr, Session)> = Vec::new();
         for (p, addr) in packet_vec {
-            match self.sessions.get_mut(&p.from) {
+            match self.sessions.get_mut(&addr) {
                 Some(sess) => {
-                    let signed = match p.sig {
-                        Some(_) => {
-                            if !Client::verify_packet(&p, &sess.get_remote_node()) {
-                                continue;
-                            }
-
-                            true
-                        },
-                        None => false
-                    };
-
-                    sess.recv(&p.payload, signed);
+                    sess.recv(&p.payload);
                 },
                 None => {
                     // session needs to be created
@@ -274,9 +270,6 @@ impl<'a> Client<'a> {
                     // if it is not an introduce packet, then this ends here.
                     // TODO: Make sure that the p.from is not bogus before we start trusting it
                     if let Message::Introduce { ref node } = p.payload.msg {
-                        if !Client::verify_packet(&p, &node) {
-                            continue;
-                        }
 
                         // Here we must check that p.from is who we think it is, otherwise session could be hijacked
 
@@ -284,47 +277,33 @@ impl<'a> Client<'a> {
                         self.node_repo.apply(node.clone());
 
                         // now we can create a new session
-                        let mut sess = Session::new(self, &self.my_node, self.node_repo.get(&p.from).unwrap(), addr);
+                        let mut sess = Session::new(self.my_node.clone(), self.node_repo.get(&hash_pub_key(&node.key)).unwrap(), addr);
 
-                        self.sessions.insert(p.from, sess);
+                        inserted_sessions.push((addr, sess));
                     }
                 }
             }
         }
 
+        for (addr, sess) in inserted_sessions {
+            self.sessions.insert(addr, sess);
+        }
+
         // send some pending packages in each connection
+        let s = &mut self.socket.as_ref().unwrap();
         // TODO: Consider rate limiting, which might work well here
-        for (key, mut sess) in self.sessions {
-            while let Some((p, signed)) = sess.pop_send_queue() {
+        for (key, mut sess) in &mut self.sessions {
+            while let Some(p) = sess.pop_send_queue() {
 
                 let mut rawp = RawPacket {
-                    from: key,
-                    payload: p,
-                    sig: None
+                    payload: p
                 };
-
-                if signed {
-                    rawp.sig = Some(sign_obj(&rawp.payload, &self.config.private_key));
-                }
 
                 // TODO: Is it bad that I call this in 2 separate calls, or are they just buffered together?
                 let raw = serialize(&rawp, Bounded(Client::MAX_PACKET_SIZE as u64)).unwrap();
                 s.send_to(&serialize(&raw.len(), Bounded(4)).unwrap()[..], sess.get_remote_addr());
                 s.send_to(&raw[..], sess.get_remote_addr());
             }
-        }
-    }
-
-    fn verify_packet(packet: &RawPacket, node: &Node) -> bool {
-        if let Some(ref s) = packet.sig {
-            // do the signature verification on the payload of the packet
-            // TODO: Serializing within the verify_obj function is inefficient since we just deserialized
-            // TODO: Double check, could we ever crash the program with a bogus key from here? By unwrapping?
-            verify_obj(&packet.payload, &s[..], &PKey::public_key_from_der(&node.key[..]).unwrap())
-        }
-        else {
-            return true; // no signature to check, although this might be a panci condition
-            // TODO: Should this return false instead?
         }
     }
 

@@ -1,5 +1,6 @@
 use std::collections::linked_list::LinkedList;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use super::node::{Node, NodeEndpoint};
 
@@ -61,16 +62,13 @@ pub enum Message {
     }
 }
 
-pub struct Session<'a> {
-
-    /// The network client which runs this session
-    client: &'a Client<'a>,
+pub struct Session {
 
     /// Information about the node on the other end. If this is unset, then the connection is not really fully initialized yet
-    remote_peer: &'a Node,
+    remote_peer: Arc<Node>,
 
     /// Information about our own node
-    local_peer: &'a Node,
+    local_peer: Arc<Node>,
 
     /// Latest address information on the remote client (different from NodeEndpoint)
     remote_addr: SocketAddr,
@@ -82,16 +80,17 @@ pub struct Session<'a> {
     latency: Time,
 
     /// A queue of packets which should be sent to the client soon
-    send_queue: LinkedList<(Packet, bool)>
+    send_queue: LinkedList<Packet>
 }
 
-impl<'a> Session<'a> {
+impl Session {
 
     pub const PROTOCOL_VERSION: u16 = 1;
 
-    pub fn new(client: &'a mut Client, local_peer: &'a Node, remote_peer: &'a Node, remote_addr: SocketAddr) -> Session<'a> {
+    pub fn new(local_peer: Arc<Node>, remote_peer: Arc<Node>, remote_addr: SocketAddr) -> Session {
+        let introduce_n = local_peer.as_ref().clone();
+        
         let mut sess = Session {
-            client: client,
             remote_peer: remote_peer,
             local_peer: local_peer,
             remote_addr: remote_addr,
@@ -100,18 +99,18 @@ impl<'a> Session<'a> {
             send_queue: LinkedList::new()
         };
 
-        sess.send_queue.push_back((Packet {
+        sess.send_queue.push_back(Packet {
             seq: 0,
             msg: Message::Introduce {
-                node: local_peer.clone()
+                node: introduce_n
             }
-        }, true));
+        });
 
         sess
     }
 
-    pub fn get_remote_node(&self) -> &Node {
-        self.remote_peer
+    pub fn get_remote_node(&self) -> Arc<Node> {
+        self.remote_peer.clone()
     }
 
     pub fn get_remote_addr(&self) -> &SocketAddr {
@@ -119,7 +118,7 @@ impl<'a> Session<'a> {
     }
 
     /// Provide a packet which has been received for this session
-    pub fn recv(&mut self, packet: &Packet, signed: bool) {
+    pub fn recv(&mut self, packet: &Packet) {
         // handle all of the different packet types
         match packet.msg {
             Message::Introduce { ref node } => {
@@ -168,7 +167,7 @@ impl<'a> Session<'a> {
         }
     }
 
-    pub fn pop_send_queue(&mut self) -> Option<(Packet, bool)> {
+    pub fn pop_send_queue(&mut self) -> Option<Packet> {
         return self.send_queue.pop_front();
     }
 }
