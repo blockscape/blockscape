@@ -1,15 +1,21 @@
-use std::net::SocketAddr;
+use std::net::{SocketAddr,IpAddr};
 use super::U160;
+use std::sync::Arc;
 
 use std::collections::HashMap;
 use std::fs::File;
 use super::env::get_storage_dir;
+use dns_lookup::lookup_host;
 use serde_json;
+
+use openssl::pkey::PKey;
 
 use std::path::*;
 use std::cmp::*;
 
 use std::io::{Read, Write, Error};
+
+use hash::hash_pub_key;
 
 use rand;
 
@@ -23,13 +29,28 @@ pub struct NodeEndpoint {
     pub port: u16,
 }
 
+impl NodeEndpoint {
+    pub fn as_socketaddr(self) -> Option<SocketAddr> {
+        // DNS resolve if necessary
+        let mut ip = match self.host.parse::<IpAddr>() {
+            Ok(ip) => Some(ip),
+            Err(err) => lookup_host(self.host.as_str())
+                .ok()
+                .map(|r| r.first().cloned())
+                .unwrap_or(None)
+        };
+
+        ip.map(|p| SocketAddr::new(p, self.port))
+    }
+}
+
 /// Detailed information about a node
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct Node {
     /// Information on the address and port which can be used to open a connection to this node
     pub endpoint: NodeEndpoint,
     /// Public key hash derived used for signing messages
-    pub key: U160,
+    pub key: Vec<u8>,
     /// The version of the node's network communications. Incremented on any fundamental network change between releases
     pub version: u16,
     /// A description for the client, consisting typically of the name of the client, plus the version code
@@ -88,37 +109,48 @@ impl NodeRepository {
 
     /// Based on the local score of nodes, get a list of the best ones to connect to
     /// This is primarily intended for startup, or when there are no nodes connected for whatever reason, and a connection is needed.
-    pub fn get_nodes(&self, idx: usize) -> &Node {
-        &self.available_nodes.get(&self.sorted_nodes[idx]).unwrap().node
+    pub fn get_nodes(&self, idx: usize) -> Arc<Node> {
+        Arc::new(self.available_nodes.get(&self.sorted_nodes[idx % self.sorted_nodes.len()]).cloned().unwrap().node)
+    }
+
+    pub fn get(&self, node: &U160) -> Option<Arc<Node>> {
+        self.available_nodes.get(node).map(|n| Arc::new(n.node.clone()))
     }
 
     /// Notify the repository of updated or new node information. Will automatically add or change an existing node as appropriate based on the key in the repository
     pub fn apply(&mut self, node: Node) -> bool {
+        let hpk = hash_pub_key(&node.key[..]);
         {
             let mut an = &mut self.available_nodes;
-            if an.contains_key(&node.key) {
-                let score = an.get(&node.key).unwrap().score;
+            if an.contains_key(&hpk) {
+                let score = an.get(&hpk).unwrap().score;
 
                 // node already exists, so we must simply update in place
-                let k = node.key;
-                return an.insert(k, LocalNode {
+                return an.insert(hpk, LocalNode {
                     node: node,
                     score: score
-                }).unwrap().node == an.get(&k).unwrap().node; // check to see if it was changed
+                }).unwrap().node == an.get(&hpk).unwrap().node; // check to see if it was changed
             }
         }
 
         let n = LocalNode::new(node);
         
-        self.sorted_nodes.push(n.node.key);
-        self.available_nodes.insert(n.node.key, n);
+        self.sorted_nodes.push(hpk);
+        self.available_nodes.insert(hpk, n);
 
         true
     }
 
+    /// Remove the given node from the repository. This should only be done if the node data is
+    /// found to be bogus
+    pub fn remove(&mut self, node: &U160) {
+        self.available_nodes.remove(node);
+        self.sorted_nodes.retain(|n| n != node);
+    }
+
     /// Increment the connection score for the given node ID. Does nothing if the node does not exist in the repo, so call after apply() if the node is new.
     /// Returns whether or not a change was made to the repo
-    pub fn upScore(&mut self, node: U160) -> bool {
+    pub fn upScore(&mut self, node: &U160) -> bool {
         if let Some(n) = self.available_nodes.get_mut(&node) {
             n.score += 1;
         }
@@ -132,7 +164,7 @@ impl NodeRepository {
 
     /// Decrement the connection score for the given node ID. Does nothing if the node does not exist in the repo
     /// Returns whether or not a change was made to the repo
-    pub fn downScore(&mut self, node: U160) -> bool {
+    pub fn downScore(&mut self, node: &U160) -> bool {
         if let Some(n) = self.available_nodes.get_mut(&node) {
             if n.score > 0 {
                 n.score /= 2;
@@ -159,7 +191,7 @@ impl NodeRepository {
                     host: String::from("seed-1.blockscape"),
                     port: 42224
                 },
-                key: U160::from(1),
+                key: vec![1],
                 version: 1,
                 name: String::from("Seed Node 1")
             },
@@ -171,7 +203,7 @@ impl NodeRepository {
                     host: String::from("seed-2.blockscape"),
                     port: 42224
                 },
-                key: U160::from(2),
+                key: vec![2],
                 version: 1,
                 name: String::from("Seed Node 2")
             },
@@ -186,9 +218,10 @@ impl NodeRepository {
 
         for node in imported {
             let n = LocalNode::clone(node);
+            let hpk = hash_pub_key(&n.node.key[..]);
 
-            self.sorted_nodes.push(node.node.key);
-            self.available_nodes.insert(node.node.key, n);
+            self.sorted_nodes.push(hpk);
+            self.available_nodes.insert(hpk, n);
         }
 
         self.resort();
@@ -274,7 +307,7 @@ fn custom_node_vec() {
                     host: String::from("supertest-1.blockscape"),
                     port: 42224
                 },
-                key: U160::from(1),
+                key: vec![1],
                 version: 1,
                 name: String::from("SuperTest Node 1")
             },
@@ -286,7 +319,7 @@ fn custom_node_vec() {
                     host: String::from("supertest-2.blockscape"),
                     port: 42224
                 },
-                key: U160::from(2),
+                key: vec![2],
                 version: 1,
                 name: String::from("SuperTest Node 2")
             },
@@ -298,7 +331,7 @@ fn custom_node_vec() {
                     host: String::from("supertest-3.blockscape"),
                     port: 42224
                 },
-                key: U160::from(3),
+                key: vec![3],
                 version: 1,
                 name: String::from("SuperTest Node 3")
             },
@@ -317,13 +350,16 @@ fn custom_node_vec() {
             host: String::from("supertest-4.blockscape"),
             port: 42224
         },
-        key: U160::from(4),
+        key: vec![4],
         version: 1,
         name: String::from("SuperTest Node 4")
     });
-    nr.upScore(U160::from(4));
-    nr.upScore(U160::from(4));
-    nr.upScore(U160::from(4));
+
+    let mykey = hash_pub_key(&[4]);
+
+    nr.upScore(&mykey);
+    nr.upScore(&mykey);
+    nr.upScore(&mykey);
 
     assert_eq!(nr.get_nodes(0).name, "SuperTest Node 2");
     assert_eq!(nr.get_nodes(1).name, "SuperTest Node 4");

@@ -1,7 +1,10 @@
 use std::vec::Vec;
 use time::Time;
 use mutation::Mutation;
-use super::PKey;
+use bincode;
+use openssl::pkey::PKey;
+use signer::sign_bytes;
+use signer::sign_obj;
 
 // Expand and divide shard transactions
 // Positive reputation transaction ?
@@ -36,7 +39,7 @@ impl Txn {
     /// Assume default values for a number of features and manually set the data, mutations, and
     /// transaction type. Everything else is Either a default or derived.
     fn new_txn(txn_type: u8, pkey: &PKey, mutation: Mutation) -> Txn {
-        let signature = super::sign_obj(&mutation, pkey);
+        let signature = sign_obj(&mutation, pkey);
 
         Txn {
             timestamp: Time::current(),

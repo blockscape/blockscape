@@ -48,6 +48,10 @@ impl Time {
         let milliseconds = seconds_contrib + nseconds_contrib;
         Time(milliseconds)
     }
+
+    pub fn millis(&self) -> i64 {
+        self.0
+    }
 }
 
 
