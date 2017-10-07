@@ -54,7 +54,7 @@ impl Txn {
     /// beyond that.
     /// TODO: create needed mutations
     pub fn new_expanding_txn(pkey: &PKey) -> Txn {
-        let mutation = Mutation;
+        let mutation = Mutation::new();
         Self::new_txn(EXPANDING_TXN, pkey, mutation)
     }
 
@@ -62,7 +62,7 @@ impl Txn {
     /// to compute it. The shard with this transaction will be turned into a parent shard.
     /// TODO: create needed mutations.
     pub fn new_split_txn(pkey: &PKey) -> Txn {
-        let mutation = Mutation;
+        let mutation = Mutation::new();
         Self::new_txn(SPLIT_TXN, pkey, mutation)
     }
 
@@ -71,7 +71,7 @@ impl Txn {
     /// new accounts to gain reputation faster.
     /// TODO: create needed mutations
     pub fn new_validator_txn(pkey: &PKey) -> Txn {
-        let mutation = Mutation;
+        let mutation = Mutation::new();
         Self::new_txn(ADD_VALIDATOR_TXN, pkey, mutation)
     }
 
@@ -79,7 +79,7 @@ impl Txn {
     /// if the reference has not been stored before (aka avoid duplicate references).
     /// TODO: create needed mutations
     pub fn new_child_block_ref_txn(pkey: &PKey) -> Txn {
-        let mutation = Mutation;
+        let mutation = Mutation::new();
         Self::new_txn(CHILD_BLOCK_REF_TXN, pkey, mutation)
     }
 
@@ -88,7 +88,7 @@ impl Txn {
     /// TODO: create needed mutations
     pub fn new_shard_transfer_txn(pkey: &PKey) -> Txn {
         // Will need a `from` and `to` shard along with the changes.
-        let mutation = Mutation;
+        let mutation = Mutation::new();
         Self::new_txn(SHARD_TRANSFER_TXN, pkey, mutation)
     }
 
@@ -108,7 +108,7 @@ impl Txn {
         //      Who it was
         //      Record of their action
         //      Their signature for the action
-        let mutation = Mutation;
+        let mutation = Mutation::new();
         Self::new_txn(BALLOT_TXN, pkey, mutation)
     }
 
@@ -120,7 +120,7 @@ impl Txn {
         // list of:
         //      misbehaving node
         //      evidence in the form of their signed actions
-        let mutation = Mutation;
+        let mutation = Mutation::new();
         Self::new_txn(SLASH_TXN, pkey, mutation)
     }
 
@@ -129,7 +129,7 @@ impl Txn {
     /// favor of recalculating state from genesis.
     /// TODO: create needed mutations
     pub fn new_state_txn(pkey: &PKey) -> Txn {
-        let mutation = Mutation;
+        let mutation = Mutation::new();
         Self::new_txn(SLASH_TXN, pkey, mutation)
     }
 

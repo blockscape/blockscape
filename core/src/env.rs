@@ -1,8 +1,6 @@
 use std::fs;
 use std::path::{Path,PathBuf};
 use std::env::home_dir;
-use rocksdb::DB;
-use rocksdb::Error as DBError;
 
 /// Create the storage directory structure if it does not exist, and make sure it is valid if it
 /// does.
@@ -23,6 +21,8 @@ pub fn prepare_storage_dir() {
 }
 
 /// This returns the storage directory for blockscape on unix.
+/// TODO: handle failure condition here, because if we cannot open the storage directory, then the
+/// program cannot really run.
 #[cfg(not(target_os = "windows"))]
 pub fn get_storage_dir() -> Option<PathBuf> {
     let d = home_dir();
@@ -53,13 +53,6 @@ fn ensure_mkdir(p: &Path) {
             Err(why) => panic!("Could not create storage directory! Please check {} for access and try again. {:?}", p.display(), why.kind())
         }
     }
-}
-
-/// Open the RocksDB database
-pub fn open_db() -> Result<DB, DBError> {
-    let mut dir = get_storage_dir().unwrap();
-    dir.push("db");
-    DB::open_default(dir)
 }
 
 // NOTE: Build currently fails on windows until we tell it how to save
