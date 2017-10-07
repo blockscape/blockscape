@@ -5,8 +5,6 @@ use crypto::digest::Digest;
 use crypto::sha3::Sha3;
 use crypto::ripemd160::Ripemd160;
 
-use openssl::pkey::PKey;
-
 use serde::Serialize;
 use bincode;
 

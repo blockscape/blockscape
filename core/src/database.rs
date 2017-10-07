@@ -9,7 +9,7 @@ trait MutationRule {
     fn is_valid(&self, mutation: &Mutation, database: &DB) -> bool;
 }
 
-struct Database {
+pub struct Database {
     db: DB,
     rules: LinkedList<Box<MutationRule>>,
 }
