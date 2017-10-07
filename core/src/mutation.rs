@@ -44,7 +44,7 @@ impl Hash for Change {
 /// certain actions on contras will fail by assertion, I believe any such error should be a result
 /// of a coding mistake and should not need to be determined at runtime.
 /// TODO: consider storing a HashSet<Rc<Change>> to save on cloning.
-#[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Mutation {
     contra: bool, // true iff it is a normal mutation, else it is a contra mutation.
     pub changes: Vec<Change>

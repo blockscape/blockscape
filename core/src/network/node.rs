@@ -1,10 +1,10 @@
 use std::net::{SocketAddr,IpAddr};
-use super::U160;
+use u160::*;
 use std::sync::Arc;
 
 use std::collections::HashMap;
 use std::fs::File;
-use super::env::get_storage_dir;
+use env::get_storage_dir;
 use dns_lookup::lookup_host;
 use serde_json;
 
@@ -12,6 +12,7 @@ use openssl::pkey::PKey;
 
 use std::path::*;
 use std::cmp::*;
+use std::sync::RwLock;
 
 use std::io::{Read, Write, Error};
 
@@ -34,7 +35,7 @@ impl NodeEndpoint {
         // DNS resolve if necessary
         let mut ip = match self.host.parse::<IpAddr>() {
             Ok(ip) => Some(ip),
-            Err(err) => lookup_host(self.host.as_str())
+            Err(_) => lookup_host(self.host.as_str())
                 .ok()
                 .map(|r| r.first().cloned())
                 .unwrap_or(None)
@@ -88,14 +89,15 @@ impl PartialOrd for LocalNode {
 
 #[derive(Debug)]
 pub struct NodeRepository {
-    available_nodes: HashMap<U160, LocalNode>,
+    available_nodes: HashMap<U160, RwLock<LocalNode>>,
     sorted_nodes: Vec<U160>
 }
 
 /// Contains and manages a sorted list of connectable nodes and full information about them
 impl NodeRepository {
 
-    const max_map_score: u8 = 100;
+    const MAX_MAP_SCORE: u16 = 100;
+    const SAVED_NODES_COUNT: usize = 100;
 
     pub fn new() -> NodeRepository {
         let mut nr = NodeRepository {
@@ -110,35 +112,42 @@ impl NodeRepository {
     /// Based on the local score of nodes, get a list of the best ones to connect to
     /// This is primarily intended for startup, or when there are no nodes connected for whatever reason, and a connection is needed.
     pub fn get_nodes(&self, idx: usize) -> Arc<Node> {
-        Arc::new(self.available_nodes.get(&self.sorted_nodes[idx % self.sorted_nodes.len()]).cloned().unwrap().node)
+        Arc::new(self.available_nodes.get(&self.sorted_nodes[idx % self.sorted_nodes.len()]).map(|n| n.read().unwrap().clone()).unwrap().node)
     }
 
     pub fn get(&self, node: &U160) -> Option<Arc<Node>> {
-        self.available_nodes.get(node).map(|n| Arc::new(n.node.clone()))
+        self.available_nodes.get(node).map(|n| Arc::new(n.read().unwrap().node.clone()))
     }
 
     /// Notify the repository of updated or new node information. Will automatically add or change an existing node as appropriate based on the key in the repository
-    pub fn apply(&mut self, node: Node) -> bool {
+    pub fn apply(&self, node: Node) -> bool {
         let hpk = hash_pub_key(&node.key[..]);
         {
-            let mut an = &mut self.available_nodes;
-            if an.contains_key(&hpk) {
-                let score = an.get(&hpk).unwrap().score;
+            if let Some(n) = self.available_nodes.get(&hpk) {
 
-                // node already exists, so we must simply update in place
-                return an.insert(hpk, LocalNode {
-                    node: node,
-                    score: score
-                }).unwrap().node == an.get(&hpk).unwrap().node; // check to see if it was changed
+                let mut myn = n.write().unwrap();
+                if myn.node != node {
+                    myn.node = node;
+                    return true;
+                }
             }
         }
 
+        false
+    }
+
+    pub fn new_node(&mut self, node: Node) {
+
+        let hpk = hash_pub_key(&node.key[..]);
+        // sanity check
+        if self.available_nodes.contains_key(&hpk) {
+            self.apply(node);
+            return;
+        }
         let n = LocalNode::new(node);
         
         self.sorted_nodes.push(hpk);
-        self.available_nodes.insert(hpk, n);
-
-        true
+        self.available_nodes.insert(hpk, RwLock::new(n));
     }
 
     /// Remove the given node from the repository. This should only be done if the node data is
@@ -150,9 +159,10 @@ impl NodeRepository {
 
     /// Increment the connection score for the given node ID. Does nothing if the node does not exist in the repo, so call after apply() if the node is new.
     /// Returns whether or not a change was made to the repo
-    pub fn upScore(&mut self, node: &U160) -> bool {
-        if let Some(n) = self.available_nodes.get_mut(&node) {
-            n.score += 1;
+    pub fn up_score(&mut self, node: &U160) -> bool {
+        if let Some(n) = self.available_nodes.get(&node) {
+            let mut n2 = n.write().unwrap();
+            n2.score = n2.score + 1;
         }
         else {
             return false;
@@ -164,10 +174,11 @@ impl NodeRepository {
 
     /// Decrement the connection score for the given node ID. Does nothing if the node does not exist in the repo
     /// Returns whether or not a change was made to the repo
-    pub fn downScore(&mut self, node: &U160) -> bool {
-        if let Some(n) = self.available_nodes.get_mut(&node) {
-            if n.score > 0 {
-                n.score /= 2;
+    pub fn down_score(&mut self, node: &U160) -> bool {
+        if let Some(n) = self.available_nodes.get(&node) {
+            let mut n2 = n.write().unwrap();
+            if n2.score > 0 {
+                n2.score /= 2;
             }
             else {
                 return false;
@@ -179,6 +190,10 @@ impl NodeRepository {
 
         self.resort();
         true
+    }
+
+    pub fn len(&self) -> usize {
+        self.sorted_nodes.len()
     }
 
     pub fn build(&mut self, nodes: &Vec<LocalNode>) {
@@ -217,8 +232,8 @@ impl NodeRepository {
         };
 
         for node in imported {
-            let n = LocalNode::clone(node);
-            let hpk = hash_pub_key(&n.node.key[..]);
+            let hpk = hash_pub_key(&node.node.key[..]);
+            let n = RwLock::new(LocalNode::clone(node));
 
             self.sorted_nodes.push(hpk);
             self.available_nodes.insert(hpk, n);
@@ -228,21 +243,20 @@ impl NodeRepository {
     }
 
     pub fn trim(&mut self) {
-        let SAVED_NODES_COUNT = 100;
-        let nodes: Vec<LocalNode> = self.available_nodes.values().take(SAVED_NODES_COUNT).cloned().collect();
+        let nodes: Vec<LocalNode> = self.available_nodes.values().take(NodeRepository::SAVED_NODES_COUNT).map(|n| n.read().unwrap().clone()).collect();
         self.build(&nodes);
     }
 
     pub fn save(&self) -> Result<u32, Error> {
 
-        let saved: Vec<&LocalNode> = self.available_nodes.values().collect();
+        let saved: Vec<LocalNode> = self.available_nodes.values().map(|n| n.read().unwrap().clone()).collect();
         
         let serialized = serde_json::to_string_pretty(&saved).unwrap();
 
         // open a file, put serialized data into it
         match File::create(&self.node_store_path()) {
             Ok(mut f) => {
-                write!(f, "{}", serialized);
+                write!(f, "{}", serialized).expect("Could not save to open file");
                 Ok(saved.len() as u32)
             },
             Err(e) => Err(e)
@@ -281,9 +295,9 @@ impl NodeRepository {
 
     fn resort(&mut self) {
 
-        let mut an = &self.available_nodes;
+        let an = &self.available_nodes;
         self.sorted_nodes.sort_by(
-            |a,b| an.get(b).unwrap().score.cmp(&an.get(a).unwrap().score)
+            |a,b| an.get(b).unwrap().read().unwrap().score.cmp(&an.get(a).unwrap().read().unwrap().score)
         )
     }
 }
@@ -345,7 +359,7 @@ fn custom_node_vec() {
     assert_eq!(nr.get_nodes(2).name, "SuperTest Node 1");
 
     // should still work if we add another node and score it up a bit
-    nr.apply(Node {
+    nr.new_node(Node {
         endpoint: NodeEndpoint {
             host: String::from("supertest-4.blockscape"),
             port: 42224
@@ -357,9 +371,9 @@ fn custom_node_vec() {
 
     let mykey = hash_pub_key(&[4]);
 
-    nr.upScore(&mykey);
-    nr.upScore(&mykey);
-    nr.upScore(&mykey);
+    nr.up_score(&mykey);
+    nr.up_score(&mykey);
+    nr.up_score(&mykey);
 
     assert_eq!(nr.get_nodes(0).name, "SuperTest Node 2");
     assert_eq!(nr.get_nodes(1).name, "SuperTest Node 4");

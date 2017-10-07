@@ -1,29 +1,21 @@
+use bincode::{serialize, deserialize, Bounded};
+use block::*;
+use database::Database;
+use hash::hash_pub_key;
+use network::node::*;
+use network::session::*;
+use openssl::pkey::PKey;
+use signer::generate_private_key;
 use std::collections::{HashMap, VecDeque};
-use std::net::UdpSocket;
 use std::io::Error;
 use std::net::SocketAddr;
-use std::sync::Arc;
-
+use std::net::UdpSocket;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
-
-use bincode::{serialize, deserialize, Bounded};
-
-use openssl::pkey::PKey;
-
 use super::env::get_client_name;
-
-use u256::*;
-use u160::*;
-
-use network::session::*;
-use network::node::*;
-
-use signer::{verify_obj, sign_obj, generate_private_key};
-use hash::hash_pub_key;
-
 use time::Time;
-
-pub struct DataStore;
+use txn::*;
+use u256::*;
 
 #[derive(Serialize, Deserialize)]
 struct RawPacket {
@@ -39,7 +31,7 @@ pub struct ClientConfig {
     max_nodes: u16,
 
     /// A private key used to sign and identify our own node data
-    private_key: PKey
+    private_key: PKey, 
 }
 
 impl ClientConfig {
@@ -49,6 +41,31 @@ impl ClientConfig {
             private_key: generate_private_key(),
             min_nodes: 8,
             max_nodes: 16
+        }
+    }
+}
+
+pub struct NetworkContext<'a> {
+    /// Repository for nodes, for RO access
+    pub node_repo: &'a RwLock<HashMap<U256, NodeRepository>>,
+
+    /// The database for RO access
+    pub db: &'a Database,
+
+    /// Queue of transactions to import
+    pub import_txns: VecDeque<Txn>,
+
+    /// Queue of blocks to import
+    pub import_blocks: VecDeque<Block>
+}
+
+impl<'a> NetworkContext<'a> {
+    pub fn new(node_repo: &'a RwLock<HashMap<U256, NodeRepository>>, db: &'a Database) -> NetworkContext<'a> {
+        NetworkContext {
+            node_repo: node_repo,
+            db: db,
+            import_txns: VecDeque::new(),
+            import_blocks: VecDeque::new()
         }
     }
 }
@@ -66,9 +83,9 @@ pub struct Client<'a> {
     /// The node object which represents my own system
     my_node: Arc<Node>,
 
-    node_repo: &'a mut NodeRepository,
+    node_repo: RwLock<HashMap<U256, NodeRepository>>,
 
-    db: &'a mut DataStore,
+    db: &'a mut Database,
 
     /// List of all the networks we should be seeking node connections with
     connected_networks: Vec<U256>,
@@ -82,9 +99,10 @@ pub struct Client<'a> {
 
 impl<'a> Client<'a> {
 
-    const MAX_PACKET_SIZE: usize = 1024 * 128; // 128KB packet buffer storage for each client
+    /// The maximum amount of data that can be in a single message object (the object itself can still be in split into pieces at the datagram level)
+    const MAX_PACKET_SIZE: usize = 1024 * 128;
 
-    pub fn new(db: &'a mut DataStore, config: ClientConfig, node_repo: &'a mut NodeRepository) -> Client<'a> {
+    pub fn new(db: &'a mut Database, config: ClientConfig) -> Client<'a> {
         
         Client {
             db: db,
@@ -95,7 +113,7 @@ impl<'a> Client<'a> {
                 name: get_client_name()
             }),
             config: config,
-            node_repo: node_repo,
+            node_repo: RwLock::new(HashMap::new()),
             connected_networks: Vec::new(),
             sessions: HashMap::new(),
             socket: None,
@@ -111,12 +129,11 @@ impl<'a> Client<'a> {
         match UdpSocket::bind(self.my_node.endpoint.clone().as_socketaddr().unwrap()) {
             Ok(s) => {
 
-                s.set_read_timeout(Some(Duration::from_millis(10)));
+                // socket should read indefinitely
+                // this error will crash the program, but it should not fail in normal cases.
+                s.set_read_timeout(None).expect("Could not set socket read timeout");
 
                 self.socket = Some(s);
-
-                // Form connections to some known nodes
-                let nodes = self.node_repo.get_nodes(0);
 
                 Ok(())
             },
@@ -124,65 +141,76 @@ impl<'a> Client<'a> {
         }
     }
 
-    fn node_scan(&mut self) {
+    fn node_scan(&mut self, network_id: &U256) {
         let mut removed_nodes = Vec::new();
 
-        let mut node_repo = &mut self.node_repo;
+        if !self.node_repo.read().unwrap().contains_key(network_id) {
+            panic!("Tried to scan nodes on nonexistant shard network id: {}", network_id);
+        }
 
-        if self.sessions.len() < self.config.min_nodes as usize {
-            // try to connect a couple more nodes
-            'node_search: for i in 0..3 {
+        {
+            let l = self.node_repo.read().unwrap();
+            let node_repo = &l.get(network_id).unwrap();
+            if self.sessions.len() < self.config.min_nodes as usize {
+                // try to connect a couple more nodes
+                'node_search: for _ in 0..3 {
 
-                let mut peer = node_repo.get_nodes(self.node_idx);
-                let pkh = hash_pub_key(&peer.key[..]);
-                let saddr = peer.endpoint.clone().as_socketaddr();
+                    let mut peer = node_repo.get_nodes(self.node_idx);
+                    let pkh = hash_pub_key(&peer.key[..]);
+                    let saddr = peer.endpoint.clone().as_socketaddr();
 
-                // now we can look into creating a new session
-                if let Some(addr) = saddr {
+                    // now we can look into creating a new session
+                    if let Some(addr) = saddr {
 
-                    self.node_idx = self.node_idx + 1;
-
-                    let mut n = 0;
-                    while self.sessions.contains_key(&addr) {
-                        peer = node_repo.get_nodes(self.node_idx);
                         self.node_idx = self.node_idx + 1;
-                        n = n + 1;
 
-                        // we have to prevent infinite looping here due to if all the nodes in the DB are conneted to (which is rare)
-                        if n > self.sessions.len() {
-                            // we must be conneted to all nodes
-                            // this should basically only happen if the network itself is so fragmented and too small
-                            warn!("Node Repository lacks additional nodes to connect to; node shortage detected.");
-                            break 'node_search;
+                        let mut n = 0;
+                        while self.sessions.contains_key(&addr) {
+                            peer = node_repo.get_nodes(self.node_idx);
+                            self.node_idx = self.node_idx + 1;
+                            n = n + 1;
+
+                            // we have to prevent infinite looping here due to if all the nodes in the DB are conneted to (which is rare)
+                            if n > self.sessions.len() {
+                                // we must be conneted to all nodes
+                                // this should basically only happen if the network itself is so fragmented and too small
+                                warn!("Node Repository lacks additional nodes to connect to; node shortage detected.");
+                                break 'node_search;
+                            }
                         }
-                    }
 
-                    // ready to connect
-                    let sess = Session::new(self.my_node.clone(), peer, addr);
-                    self.sessions.insert(addr, sess);
-                }
-                else {
-                    // We have bogus data
-                    warn!("Could not resolve hostname for node: {:?}", peer.endpoint);
-                    // Remove the bogus data
-                    removed_nodes.push(pkh);
+                        // ready to connect
+                        let sess = Session::new(self.my_node.clone(), peer, addr, network_id.clone());
+                        self.sessions.insert(addr, sess);
+                    }
+                    else {
+                        // We have bogus data
+                        warn!("Could not resolve hostname for node: {:?}", peer.endpoint);
+                        // Remove the bogus data
+                        removed_nodes.push(pkh);
+                    }
                 }
             }
         }
 
-        for r in removed_nodes {
-            node_repo.remove(&r);
+        if !removed_nodes.is_empty() {
+            let mut l = self.node_repo.write().unwrap();
+            let node_repo = l.get_mut(network_id).unwrap();
+            for r in removed_nodes {
+                node_repo.remove(&r);
+            }
         }
     }
 
-    fn read_packets(&mut self) -> Vec<(RawPacket, SocketAddr)> {
+    /// Intended to be run in a single thread. Will receive packets, and react to them if necessary.
+    fn recv_loop(&mut self) {
         // Let the sessions work on received packets
         // One kilobyte buffer should handle many packets, but some research is needed
-        let mut packet_vec: Vec<(RawPacket, SocketAddr)> = Vec::new();
-        
         let mut buf: [u8; 1024] = [0; 1024];
         loop {
             let mut cont = true;
+
+            let mut received_packet: Option<(RawPacket, SocketAddr)> = None;
 
             match self.socket.as_ref().unwrap().recv_from(&mut buf) {
                 Ok((n, addr)) => {
@@ -231,7 +259,7 @@ impl<'a> Client<'a> {
                     if b.len() - 4 >= len {
                         // we have a full packet, move it into our packet list
                         match deserialize(&b[..]) {
-                            Ok(p) => packet_vec.push((p, addr)),
+                            Ok(p) => received_packet = Some((p, addr)),
                             Err(e) => {
                                 warn!("Packet decode failed from {}: {}", addr, e);
                                 // TODO: Note misbehaviors/errors
@@ -243,71 +271,87 @@ impl<'a> Client<'a> {
                 },
                 Err(err) => break
             }
-        }
 
-        packet_vec
+            if let Some((p, addr)) = received_packet {
+                self.process_packet(&p.payload, &addr);
+            }
+        };
     }
 
-    pub fn run(&mut self) {
-        // connection management
-        if self.last_peer_seek.millis() < Time::current().millis() - 3 * 1000 {
-            self.node_scan();
-            self.last_peer_seek = Time::current();
-        }
-
-        let packet_vec = self.read_packets();
-
-        // process each packet one at a time
-        let mut inserted_sessions: Vec<(SocketAddr, Session)> = Vec::new();
-        for (p, addr) in packet_vec {
-            match self.sessions.get_mut(&addr) {
-                Some(sess) => {
-                    sess.recv(&p.payload);
-                },
-                None => {
-                    // session needs to be created
-                    // special case! we will handle the introduce packet here
-                    // if it is not an introduce packet, then this ends here.
-                    // TODO: Make sure that the p.from is not bogus before we start trusting it
-                    if let Message::Introduce { ref node } = p.payload.msg {
-
-                        // Here we must check that p.from is who we think it is, otherwise session could be hijacked
-
-
-                        self.node_repo.apply(node.clone());
-
-                        // now we can create a new session
-                        let mut sess = Session::new(self.my_node.clone(), self.node_repo.get(&hash_pub_key(&node.key)).unwrap(), addr);
-
-                        inserted_sessions.push((addr, sess));
-                    }
+    /// Evaluate a single packet and route it to a session as necessary
+    fn process_packet(&mut self, p: &Packet, addr: &SocketAddr) {
+        let mut context = NetworkContext::new(&self.node_repo, &self.db);
+        let mut inserted: Option<(SocketAddr, Node, U256)> = None;
+        
+        match self.sessions.get_mut(&addr) {
+            Some(sess) => {
+                sess.recv(&p, &mut context);
+            },
+            None => {
+                // session needs to be created
+                // special case! we will handle the introduce packet here
+                // if it is not an introduce packet, then this ends here.
+                // TODO: Make sure that the p.from is not bogus before we start trusting it
+                if let Message::Introduce { ref node, ref network_id } = p.msg {
+                    inserted = Some((addr.clone(), node.clone(), network_id.clone()));
                 }
             }
         }
 
-        for (addr, sess) in inserted_sessions {
-            self.sessions.insert(addr, sess);
+        if let Some((addr, node, network_id)) = inserted {
+            if let Some(repo) = self.node_repo.write().unwrap().get_mut(&network_id) {
+                // Here we must check that p.from is who we think it is, otherwise session could be hijacked
+                repo.new_node(node.clone());
+
+                // now we can create a new session
+                let mut sess = Session::new(self.my_node.clone(), repo.get(&hash_pub_key(&node.key)).unwrap(), addr, network_id);
+                sess.recv(&p, &mut context);
+
+                self.sessions.insert(addr, sess);
+            }
+            // otherwise drop the connection request
         }
 
-        // send some pending packages in each connection
+        // process data in the context: do we have anything to import?
+        // NOTE: Order is important here! We want the data to be imported in order or else it is much harder to construct
+        while let Some(txn) = context.import_txns.pop_front() {
+            self.report_txn(txn);
+        }
+        
+        while let Some(block) = context.import_blocks.pop_front() {
+            self.report_block(block);
+        }
+
+        // send any packets pending on the connection
+        // session should always be valid at this point.
         let s = &mut self.socket.as_ref().unwrap();
+        let sess = self.sessions.get_mut(&addr).unwrap();
+
         // TODO: Consider rate limiting, which might work well here
-        for (key, mut sess) in &mut self.sessions {
-            while let Some(p) = sess.pop_send_queue() {
+        while let Some(p) = sess.pop_send_queue() {
 
-                let mut rawp = RawPacket {
-                    payload: p
-                };
+            let mut rawp = RawPacket {
+                payload: p
+            };
 
-                // TODO: Is it bad that I call this in 2 separate calls, or are they just buffered together?
-                let raw = serialize(&rawp, Bounded(Client::MAX_PACKET_SIZE as u64)).unwrap();
-                s.send_to(&serialize(&raw.len(), Bounded(4)).unwrap()[..], sess.get_remote_addr());
-                s.send_to(&raw[..], sess.get_remote_addr());
-            }
+            // TODO: Is it bad that I call this in 2 separate calls, or are they just buffered together?
+            let raw = serialize(&rawp, Bounded(Client::MAX_PACKET_SIZE as u64)).unwrap();
+            s.send_to(&serialize(&raw.len(), Bounded(4)).unwrap()[..], sess.get_remote_addr());
+            s.send_to(&raw[..], sess.get_remote_addr());
         }
     }
 
-    pub fn report_txn(&self) {
+    pub fn run(&mut self) {
+        // connection management
+        /*if self.last_peer_seek.millis() < Time::current().millis() - 3 * 1000 {
+            self.node_scan();
+            self.last_peer_seek = Time::current();
+        }*/
+
+        //let packet_vec = self.read_packets();
+    }
+
+    pub fn report_txn(&self, txn: Txn) {
         // do we already have this txn? if so, stop here
 
 
@@ -320,7 +364,7 @@ impl<'a> Client<'a> {
         // reliable flood, since this is a new txn
     }
 
-    pub fn report_block(&self) {
+    pub fn report_block(&self, block: Block) {
         // do we already have this block? if so, stop here
 
 

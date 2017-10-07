@@ -1,9 +1,7 @@
 use std::vec::Vec;
 use time::Time;
 use mutation::Mutation;
-use bincode;
 use openssl::pkey::PKey;
-use signer::sign_bytes;
 use signer::sign_obj;
 
 // Expand and divide shard transactions
@@ -13,7 +11,7 @@ use signer::sign_obj;
 // Any mutations to game state
 // Transfers between shards must be signed by a bunch of people
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 /// Represents a Transaction on the network.
 pub struct Txn {
     pub timestamp: Time,

@@ -33,7 +33,7 @@ const NETWORK_POSTFIX: &[u8] = b"n";
 /// To keep these regions separate, postfixes are appended before accessing the database, this will
 /// prevent conflicts between the different regions even if they are using non-secure hashing
 /// methods.
-struct Database {
+pub struct Database {
     db: RwLock<DB>,
     rules: RwLock<MutationRules>,
 }

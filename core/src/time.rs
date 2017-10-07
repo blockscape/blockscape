@@ -49,8 +49,19 @@ impl Time {
         Time(milliseconds)
     }
 
+    /// Return the time in milliseconds as a simple integer representation.
     pub fn millis(&self) -> i64 {
         self.0
+    }
+
+    /// Modify this time as a weighted average
+    pub fn apply_weight(&mut self, weight: &Time, factor: f32) {
+        let f = 1.0 / factor;
+        self.0 = (weight.0 as f64 * f as f64 + self.0 as f64 * (1.0 - f) as f64) as i64;
+    }
+
+    pub fn diff(&self, other: &Time) -> Time {
+        Time::from_milliseconds(other.0 - self.0)
     }
 }
 
