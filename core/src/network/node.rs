@@ -161,7 +161,8 @@ impl NodeRepository {
     /// Returns whether or not a change was made to the repo
     pub fn up_score(&mut self, node: &U160) -> bool {
         if let Some(n) = self.available_nodes.get(&node) {
-            n.write().unwrap().score += 1;
+            let mut n2 = n.write().unwrap();
+            n2.score = n2.score + 1;
         }
         else {
             return false;
@@ -358,7 +359,7 @@ fn custom_node_vec() {
     assert_eq!(nr.get_nodes(2).name, "SuperTest Node 1");
 
     // should still work if we add another node and score it up a bit
-    nr.apply(Node {
+    nr.new_node(Node {
         endpoint: NodeEndpoint {
             host: String::from("supertest-4.blockscape"),
             port: 42224
@@ -370,9 +371,9 @@ fn custom_node_vec() {
 
     let mykey = hash_pub_key(&[4]);
 
-    nr.upScore(&mykey);
-    nr.upScore(&mykey);
-    nr.upScore(&mykey);
+    nr.up_score(&mykey);
+    nr.up_score(&mykey);
+    nr.up_score(&mykey);
 
     assert_eq!(nr.get_nodes(0).name, "SuperTest Node 2");
     assert_eq!(nr.get_nodes(1).name, "SuperTest Node 4");
