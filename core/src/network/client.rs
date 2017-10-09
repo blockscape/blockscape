@@ -1,32 +1,30 @@
+use bincode::{serialize, deserialize, Bounded};
+use block::*;
+use database::Database;
+use hash::hash_pub_key;
+use network::node::*;
+use network::session::*;
+use openssl::pkey::PKey;
+use signer::generate_private_key;
 use std::collections::{HashMap, VecDeque};
-use std::net::UdpSocket;
 use std::io::Error;
-use std::net::SocketAddr;
+use std::net::{SocketAddr,UdpSocket};
 use std::sync::{Arc, RwLock, Mutex};
 use std::thread;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::Relaxed;
 
 use std::time::Duration;
-
-use bincode::{serialize, deserialize, Bounded};
-
-use openssl::pkey::PKey;
-
 use super::env::get_client_name;
 
 use u256::*;
 
 use block::*;
 use txn::*;
-use database::Database;
+use time::Time;
 
 use network::session::*;
 use network::node::*;
-
-use signer::generate_private_key;
-use hash::hash_pub_key;
-use time::Time;
 
 #[derive(Serialize, Deserialize)]
 struct RawPacket {
@@ -106,8 +104,6 @@ pub struct Client {
 
     last_peer_seek: Time,
 
-    node_idx: usize,
-
     /// Whether or not we are entered the exit state for the network interface
     done: AtomicBool
 }
@@ -134,7 +130,6 @@ impl Client {
             socket: None,
             socket_mux: Mutex::new(()),
             last_peer_seek: Time::from(0),
-            node_idx: 0,
             done: AtomicBool::new(false)
         }
 
@@ -171,19 +166,16 @@ impl Client {
                 // try to connect a couple more nodes
                 'node_search: for _ in 0..3 {
 
-                    let mut peer = node_repo.get_nodes(self.node_idx);
+                    let mut peer = node_repo.get_nodes(0);
                     let pkh = hash_pub_key(&peer.key[..]);
                     let saddr = peer.endpoint.clone().as_socketaddr();
 
                     // now we can look into creating a new session
                     if let Some(addr) = saddr {
 
-                        self.node_idx = self.node_idx + 1;
-
                         let mut n = 0;
                         while self.sessions.read().unwrap().contains_key(&addr) {
-                            peer = node_repo.get_nodes(self.node_idx);
-                            self.node_idx = self.node_idx + 1;
+                            peer = node_repo.get_nodes(0);
                             n = n + 1;
 
                             // we have to prevent infinite looping here due to if all the nodes in the DB are conneted to (which is rare)
@@ -301,7 +293,7 @@ impl Client {
     }
 
     /// Evaluate a single packet and route it to a session as necessary
-    fn process_packet(&mut self, p: &Packet, addr: &SocketAddr) {
+    fn process_packet(&self, p: &Packet, addr: &SocketAddr) {
         {
             let mut context = NetworkContext::new(&self.node_repo, &self.db);
             let mut inserted: Option<(SocketAddr, Node, U256)> = None;
@@ -354,13 +346,13 @@ impl Client {
     }
 
     /// Send all the packets queued for the given session
-    pub fn send_packets(&mut self, addr: &SocketAddr) -> usize {
+    pub fn send_packets(&self, addr: &SocketAddr) -> usize {
         let s = &self.socket.as_ref().unwrap();
         let mut count: usize = 0;
 
         let lock = self.socket_mux.lock();
-
-        let sess = self.sessions.write().unwrap().get_mut(addr).unwrap();
+        let mut sr = self.sessions.write().unwrap();
+        let sess = sr.get_mut(addr).unwrap();
 
         while let Some(p) = sess.pop_send_queue() {
 
