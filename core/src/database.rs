@@ -10,6 +10,8 @@ use std::fmt::Debug;
 use std::sync::RwLock;
 use txn::Txn;
 use bincode;
+use u256::U256;
+use hash::hash_obj;
 
 /// Generic definition of a rule regarding whether changes to the database are valid.
 /// Debug implementations should state what the rule means/requires.
@@ -172,19 +174,6 @@ impl Database {
         (*db_lock).write(batch).map_err(|e| e.to_string())
     }
 
-    /// Serialize and store game data in the database.
-    pub fn put<S: Storable>(&mut self, obj: &S) -> Result<(), String> {
-        let key = {
-            let mut k = obj.key();
-            k.extend_from_slice(GAME_POSTFIX); k
-        };
-
-        let value = bincode::serialize(obj, bincode::Infinite).expect("Error serializing game data");
-        
-        let db_lock = self.db.write().unwrap();
-        (*db_lock).put(&key, &value).map_err(|e| e.to_string())
-    }
-
     /// Retrieve and deserialize data from the database. This will return an error if either the
     /// database has an issue, or if the data cannot be deserialized. If the object is not present
     /// in the database, then None will be returned. Note that `instance_id` should be the object's
@@ -210,11 +199,58 @@ impl Database {
         }
     }
 
-    // pub fn get_block(hash: U256) -> Option<Block> {
+    /// Serialize and store game data in the database.
+    pub fn put<S: Storable>(&mut self, obj: &S) -> Result<(), String> {
+        let key = {
+            let mut k = obj.key();
+            k.extend_from_slice(GAME_POSTFIX); k
+        };
 
-    // }
+        let value = bincode::serialize(obj, bincode::Infinite).expect("Error serializing game data.");
+        
+        let db_lock = self.db.write().unwrap();
+        (*db_lock).put(&key, &value).map_err(|e| e.to_string())
+    }
 
-    // pub fn get_txn(hash: U256) -> Option<Txn> {
+    /// Retrieve a blockchain data from the database. Will return none if the data is not found, and
+    /// DBError if something goes wrong when attempting to retrieve the data. It also assume that
+    /// hashes will not collide.
+    /// # Panics
+    /// This assumes it will be able to deserialize the data should it find the hash.
+    pub fn get_blockchain_data<B>(&self, hash: &U256) -> Result<Option<B>, DBError>
+        where B: Serialize + DeserializeOwned
+    {
+        let key = {
+            let mut k = bincode::serialize(hash, bincode::Bounded(32)).unwrap();
+            k.extend_from_slice(BLOCKCHAIN_POSTFIX); k
+        };
 
-    // }
+        let db_lock = self.db.read().unwrap();
+        let opt = (*db_lock).get(&key)?;
+        
+        Ok(
+            opt.map(|data|
+                bincode::deserialize::<B>(&data)
+                .expect("Failure to deserialize block.")
+            )
+        )
+    }
+
+    /// Write a blockchain object into the database using its hash. Will return an error if the
+    /// database has troubles. 
+    pub fn put_blockchain_data<B>(&mut self, obj: &B) -> Result<(), DBError>
+        where B: Serialize + DeserializeOwned
+    {
+        let key = {
+            let mut k = bincode::serialize(&hash_obj(obj), bincode::Bounded(32)).unwrap();
+            k.extend_from_slice(BLOCKCHAIN_POSTFIX); k
+        };
+        let value = bincode::serialize(obj, bincode::Infinite)
+            .expect("Error serializing blochain data");
+
+        let db_lock = self.db.write().unwrap();
+        (*db_lock).put(&key, &value)?;
+        
+        Ok(())
+    }
 }
