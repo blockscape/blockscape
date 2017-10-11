@@ -213,7 +213,7 @@ impl Database {
     }
 
     /// Retrieve a blockchain data from the database. Will return none if the data is not found, and
-    /// DBError if something goes wrong when attempting to retrieve the data. It also assume that
+    /// DBError if something goes wrong when attempting to retrieve the data. It also assumes that
     /// hashes will not collide.
     /// # Panics
     /// This assumes it will be able to deserialize the data should it find the hash.
@@ -237,7 +237,7 @@ impl Database {
     }
 
     /// Write a blockchain object into the database using its hash. Will return an error if the
-    /// database has troubles. 
+    /// database has troubles. It also assumes that hashes will not collide.
     pub fn put_blockchain_data<B>(&mut self, obj: &B) -> Result<(), DBError>
         where B: Serialize + DeserializeOwned
     {
