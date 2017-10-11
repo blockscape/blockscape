@@ -28,11 +28,15 @@ pub trait MutationRule: Debug + Send + Sync {
 /// }
 ///
 /// impl Storable for Example {
+///     type DeserializeErr = String;
 ///     fn global_id() -> &'static [u8] { b"p" }
 ///     fn instance_id(&self) -> Vec<u8> { vec![self.a, self.b] }
 /// }
 /// ```
 pub trait Storable: Serialize + DeserializeOwned {
+    /// Error to be returned if it could not be deserialized correctly.
+    type DeserializeErr;
+
     /// Return a unique ID for the type, an example of this is b"plot", though the smallest
     /// reasonable values would be better, e.g. b"p" for plot. All storable types must return
     /// different IDs or there may be collisions.
@@ -168,6 +172,7 @@ impl Database {
         (*db_lock).write(batch).map_err(|e| e.to_string())
     }
 
+    /// Serialize and store game data in the database.
     pub fn put<S: Storable>(&mut self, obj: &S) -> Result<(), String> {
         let key = {
             let mut k = obj.key();
@@ -178,6 +183,31 @@ impl Database {
         
         let db_lock = self.db.write().unwrap();
         (*db_lock).put(&key, &value).map_err(|e| e.to_string())
+    }
+
+    /// Retrieve and deserialize data from the database. This will return an error if either the
+    /// database has an issue, or if the data cannot be deserialized. If the object is not present
+    /// in the database, then None will be returned. Note that `instance_id` should be the object's
+    /// ID/key which would normally be returned from calling `storable.instance_id()`.
+    pub fn get<S: Storable>(&self, instance_id: &[u8]) -> Result<Option<S>, String>
+    {
+        let key = {
+            let mut k = Vec::new();
+            k.extend_from_slice(S::global_id());
+            k.extend_from_slice(instance_id);
+            k.extend_from_slice(GAME_POSTFIX); k
+        };
+
+        let db_lock = self.db.read().unwrap();
+        let db_res = (*db_lock).get(&key).map_err(|e| e.to_string())?;
+
+        match db_res {
+            Some(data) => Ok(Some(
+                bincode::deserialize::<S>(&data)
+                .map_err(|e| e.to_string())?
+            )),
+            None => Ok(None),
+        }
     }
 
     // pub fn get_block(hash: U256) -> Option<Block> {
