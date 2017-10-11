@@ -1,17 +1,19 @@
+use bincode;
 use block::Block;
 use env;
+use hash::hash_obj;
 use mutation::{Change, Mutation};
 use rocksdb::{DB, WriteBatch};
-use rocksdb::Error as DBError;
-use serde::Serialize;
-use serde::de::DeserializeOwned;
+use rocksdb::Error as RocksDBError;
+use serde;
 use std::collections::LinkedList;
-use std::fmt::Debug;
+use std::error::Error as StdErr;
+use std::fmt;
+use std::fmt::{Debug, Display};
 use std::sync::RwLock;
 use txn::Txn;
-use bincode;
 use u256::U256;
-use hash::hash_obj;
+
 
 /// Generic definition of a rule regarding whether changes to the database are valid.
 /// Debug implementations should state what the rule means/requires.
@@ -35,7 +37,7 @@ pub trait MutationRule: Debug + Send + Sync {
 ///     fn instance_id(&self) -> Vec<u8> { vec![self.a, self.b] }
 /// }
 /// ```
-pub trait Storable: Serialize + DeserializeOwned {
+pub trait Storable: serde::Serialize + serde::de::DeserializeOwned {
     /// Error to be returned if it could not be deserialized correctly.
     type DeserializeErr;
 
@@ -45,7 +47,8 @@ pub trait Storable: Serialize + DeserializeOwned {
     fn global_id() -> &'static [u8];
 
     /// Calculate and return a unique ID for the instance of this storable value. In the case of a
-    /// plot, it would simply be the plot ID. Must be
+    /// plot, it would simply be the plot ID. It is for a block, then it would just be its Hash.
+    /// This must not change between saves and loads for it to work correctly.
     fn instance_id(&self) -> Vec<u8>;
 
     /// Calculate and return the key-value of this object based on its global and instance IDs.
@@ -58,11 +61,51 @@ pub trait Storable: Serialize + DeserializeOwned {
 }
 
 
+#[derive(Debug)]
+pub enum Error {
+    DB(RocksDBError), // when there is an error working with the database itself
+    NotFound(&'static [u8], &'static [u8], Vec<u8>), // when data is not found in the database
+    Deserialize(String), // when data cannot be deserialized
+    InvalidMut(String) // when a rule is broken by a mutation
+}
+
+impl StdErr for Error {
+    fn description(&self) -> &str {
+        match *self { //TODO: why can we just get a ref of the objects
+            Error::DB(ref e) => "RocksDB error: aka, not my fault ☺",
+            Error::NotFound(ref s, ref gid, ref iid) => "Could not find the data requested at that Hash (may not be an issue).",
+            Error::Deserialize(ref e) => "Deserialization error, the data stored could not be deserialized into the requested type.",
+            Error::InvalidMut(ref e) => "Invalid Mutation, a rule is violated by the mutation so it will not be applied."
+        }
+    }
+
+    fn cause(&self) -> Option<&StdErr> {
+        match *self {
+            Error::DB(ref e) => Some(e),
+            Error::NotFound(_, _, _) => None,
+            Error::Deserialize(_) => None,
+            Error::InvalidMut(_) => None,
+        }
+    }
+}
+
+impl From<RocksDBError> for Error {
+    fn from(e: RocksDBError) -> Self { Error::DB(e) }
+}
+
+impl Display for Error {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str(self.description())
+    }
+}
+
+
 /// A list of mutation rules
 pub type MutationRules = LinkedList<Box<MutationRule>>;
 
 
 const BLOCKCHAIN_POSTFIX: &[u8] = b"b";
+const CACHE_POSTFIX: &[u8] = b"c";
 const GAME_POSTFIX: &[u8] = b"g";
 const NETWORK_POSTFIX: &[u8] = b"n";
 
@@ -92,11 +135,14 @@ impl Database {
     }
 
     /// Open the RocksDB database based on the environment
-    pub fn open_db(rules: Option<MutationRules>) -> Result<Database, DBError> {
+    pub fn open_db(rules: Option<MutationRules>) -> Result<Database, RocksDBError> {
         let mut dir = env::get_storage_dir().unwrap();
         dir.push("db");
 
-        DB::open_default(dir).map(|db| Self::new(db, rules))
+        Ok(
+            DB::open_default(dir)
+            .map(|db| Self::new(db, rules))?
+        )
     }
 
     /// Add a new rule to the database regarding what network mutations are valid. This will only
@@ -117,7 +163,7 @@ impl Database {
     fn is_valid_given_lock(&self, db: &DB, mutation: &Mutation) -> Result<(), String> {
         let rules_lock = self.rules.read().unwrap();
         for rule in &*rules_lock {
-            // verify all rules are satisfied and return propagate error if not
+            // verify all rules are satisfied and return, propagate error if not
             rule.is_valid(db, mutation)?;
         }
         Ok(())
@@ -126,11 +172,11 @@ impl Database {
     /// Mutate the stored network state and return a contra mutation to be able to undo what was
     /// done. Note that changes to either blockchain state or gamestate must occur through other
     /// functions.
-    pub fn mutate(&mut self, mutation: &Mutation) -> Result<Mutation, String> {
+    pub fn mutate(&mut self, mutation: &Mutation) -> Result<Mutation, Error> {
         mutation.assert_not_contra();
         let db_lock = self.db.write().unwrap();
 
-        self.is_valid_given_lock(&*db_lock, mutation)?;
+        self.is_valid_given_lock(&*db_lock, mutation).map_err(|e| Error::InvalidMut(e))?;
 
         let mut contra = Mutation::new_contra();
         let mut batch = WriteBatch::default();
@@ -140,8 +186,8 @@ impl Database {
                 k.extend_from_slice(NETWORK_POSTFIX); k
             };
             
-            let prior_value = db_lock.get(&key) // Result<Option<DBVector>, DBError>
-                .map_err(|e| e.to_string())?
+            // Result<Option<DBVector>, DBError>
+            let prior_value = (*db_lock).get(&key)?
                 .map_or(Vec::new(), |v| v.to_vec());
             
             contra.changes.push(Change {
@@ -152,14 +198,14 @@ impl Database {
 
             batch.put(&key, &change.value).expect("Failure when adding to rocksdb batch.");
         }
-        (*db_lock).write(batch).map_err(|e| e.to_string())?;
+        (*db_lock).write(batch)?;
 
         contra.changes.reverse();
         Ok(contra)
     }
 
     /// Consumes a contra mutation to undo changes made by the corresponding mutation.
-    pub fn undo_mutate(&mut self, mutation: Mutation) -> Result<(), String> {
+    pub fn undo_mutate(&mut self, mutation: Mutation) -> Result<(), RocksDBError> {
         mutation.assert_contra();
         let mut batch = WriteBatch::default();
         let db_lock = self.db.read().unwrap();
@@ -171,86 +217,65 @@ impl Database {
             batch.put(&key, &change.value).expect("Failure when adding to rocksdb batch.");
         }
 
-        (*db_lock).write(batch).map_err(|e| e.to_string())
+        (*db_lock).write(batch)
     }
 
     /// Retrieve and deserialize data from the database. This will return an error if either the
     /// database has an issue, or if the data cannot be deserialized. If the object is not present
     /// in the database, then None will be returned. Note that `instance_id` should be the object's
     /// ID/key which would normally be returned from calling `storable.instance_id()`.
-    pub fn get<S: Storable>(&self, instance_id: &[u8]) -> Result<Option<S>, String>
-    {
+    fn get<S: Storable>(&self, instance_id: &[u8], postfix: &'static [u8]) -> Result<S, Error> {
         let key = {
             let mut k = Vec::new();
             k.extend_from_slice(S::global_id());
             k.extend_from_slice(instance_id);
-            k.extend_from_slice(GAME_POSTFIX); k
+            k.extend_from_slice(postfix); k
         };
 
         let db_lock = self.db.read().unwrap();
-        let db_res = (*db_lock).get(&key).map_err(|e| e.to_string())?;
 
-        match db_res {
-            Some(data) => Ok(Some(
+        match (*db_lock).get(&key)? {
+            Some(data) =>
                 bincode::deserialize::<S>(&data)
-                .map_err(|e| e.to_string())?
-            )),
-            None => Ok(None),
+                .map_err(|e| Error::Deserialize(e.to_string())),
+            None => Err(Error::NotFound(postfix, S::global_id(), Vec::from(instance_id)))
         }
     }
 
-    /// Serialize and store game data in the database.
-    pub fn put<S: Storable>(&mut self, obj: &S) -> Result<(), String> {
+    /// Serialize and store data in the database. This will return an error if the database has
+    /// an issue.
+    fn put<S: Storable>(&mut self, obj: &S, postfix: &[u8]) -> Result<(), Error> {
         let key = {
             let mut k = obj.key();
-            k.extend_from_slice(GAME_POSTFIX); k
+            k.extend_from_slice(postfix); k
         };
 
         let value = bincode::serialize(obj, bincode::Infinite).expect("Error serializing game data.");
         
         let db_lock = self.db.write().unwrap();
-        (*db_lock).put(&key, &value).map_err(|e| e.to_string())
+        // (*db_lock).put(&key, &value).map_err(|e| Error::DB(e))
+        Ok((*db_lock).put(&key, &value)?)
     }
 
-    /// Retrieve a blockchain data from the database. Will return none if the data is not found, and
-    /// DBError if something goes wrong when attempting to retrieve the data. It also assumes that
-    /// hashes will not collide.
-    /// # Panics
-    /// This assumes it will be able to deserialize the data should it find the hash.
-    pub fn get_blockchain_data<B>(&self, hash: &U256) -> Result<Option<B>, DBError>
-        where B: Serialize + DeserializeOwned
-    {
-        let key = {
-            let mut k = bincode::serialize(hash, bincode::Bounded(32)).unwrap();
-            k.extend_from_slice(BLOCKCHAIN_POSTFIX); k
-        };
+    /// Retrieve blockchain data from the database. Will return none if the data is not found, and
+    /// an error if something goes wrong when attempting to retrieve the data.
+    pub fn get_blockchain_data<S: Storable>(&self, hash: &U256) -> Result<S, Error> {
+        let mut id: [u8; 32] = [0u8; 32];
+        hash.to_little_endian(&mut id);
 
-        let db_lock = self.db.read().unwrap();
-        let opt = (*db_lock).get(&key)?;
-        
-        Ok(
-            opt.map(|data|
-                bincode::deserialize::<B>(&data)
-                .expect("Failure to deserialize block.")
-            )
-        )
+        self.get::<S>(&id, BLOCKCHAIN_POSTFIX)
     }
 
-    /// Write a blockchain object into the database using its hash. Will return an error if the
-    /// database has troubles. It also assumes that hashes will not collide.
-    pub fn put_blockchain_data<B>(&mut self, obj: &B) -> Result<(), DBError>
-        where B: Serialize + DeserializeOwned
-    {
-        let key = {
-            let mut k = bincode::serialize(&hash_obj(obj), bincode::Bounded(32)).unwrap();
-            k.extend_from_slice(BLOCKCHAIN_POSTFIX); k
-        };
-        let value = bincode::serialize(obj, bincode::Infinite)
-            .expect("Error serializing blochain data");
 
-        let db_lock = self.db.write().unwrap();
-        (*db_lock).put(&key, &value)?;
-        
-        Ok(())
+    /// Write a blockchain object into the database. Will return an error if the database has
+    /// troubles.
+    pub fn put_blockchain_data<S: Storable>(&mut self, obj: &S) -> Result<(), Error> {
+        self.put::<S>(obj, BLOCKCHAIN_POSTFIX)
+    }
+
+    /// Retrieve network data from the database. Will return none if the data is not found, and an
+    /// error if something goes wrong when attempting to retrieve the data.
+    pub fn get_network_data<S: Storable>(&self, instance_id: &[u8]) -> Result<S, Error> {
+        self.get::<S>(instance_id, NETWORK_POSTFIX)
     }
 }
