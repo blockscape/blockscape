@@ -15,6 +15,7 @@ pub fn prepare_storage_dir() {
             ensure_mkdir(dir.as_path());
             ensure_mkdir(dir.join("keys").as_path());
             ensure_mkdir(dir.join("db").as_path());
+            ensure_mkdir(dir.join("nodes").as_path());
         },
         None => panic!("Could not find storage directory! Please check your environment and try again.")
     }

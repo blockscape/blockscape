@@ -15,6 +15,9 @@ extern crate serde_derive;
 #[macro_use]
 extern crate log;
 
+#[macro_use]
+mod util;
+
 pub mod block;
 pub mod txn;
 pub mod hash;
