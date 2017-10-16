@@ -72,10 +72,10 @@ pub enum Error {
 impl StdErr for Error {
     fn description(&self) -> &str {
         match *self { //TODO: why can we just get a ref of the objects
-            Error::DB(ref e) => "RocksDB error: aka, not my fault ☺",
-            Error::NotFound(ref s, ref gid, ref iid) => "Could not find the data requested at that Hash (may not be an issue).",
-            Error::Deserialize(ref e) => "Deserialization error, the data stored could not be deserialized into the requested type.",
-            Error::InvalidMut(ref e) => "Invalid Mutation, a rule is violated by the mutation so it will not be applied."
+            Error::DB(_) => "RocksDB error: aka, not my fault ☺",
+            Error::NotFound(_, _, _) => "Could not find the data requested at that Hash (may not be an issue).",
+            Error::Deserialize(_) => "Deserialization error, the data stored could not be deserialized into the requested type.",
+            Error::InvalidMut(_) => "Invalid Mutation, a rule is violated by the mutation so it will not be applied."
         }
     }
 
@@ -169,7 +169,7 @@ impl Database {
         Ok(())
     }
 
-    /// Mutate the stored network state and return a contra mutation to be able to undo what was
+    /// Mutate the stored **network state** and return a contra mutation to be able to undo what was
     /// done. Note that changes to either blockchain state or gamestate must occur through other
     /// functions.
     pub fn mutate(&mut self, mutation: &Mutation) -> Result<Mutation, Error> {
@@ -204,7 +204,8 @@ impl Database {
         Ok(contra)
     }
 
-    /// Consumes a contra mutation to undo changes made by the corresponding mutation.
+    /// Consumes a contra mutation to undo changes made by the corresponding mutation to the
+    /// network state.
     pub fn undo_mutate(&mut self, mutation: Mutation) -> Result<(), RocksDBError> {
         mutation.assert_contra();
         let mut batch = WriteBatch::default();
@@ -220,10 +221,10 @@ impl Database {
         (*db_lock).write(batch)
     }
 
-    /// Retrieve and deserialize data from the database. This will return an error if either the
-    /// database has an issue, or if the data cannot be deserialized. If the object is not present
-    /// in the database, then None will be returned. Note that `instance_id` should be the object's
-    /// ID/key which would normally be returned from calling `storable.instance_id()`.
+    /// Retrieve and deserialize data from the database. This will return an error if the database
+    /// has an issue, if the data cannot be deserialized or if the object is not present in the
+    /// database. Note that `instance_id` should be the object's ID/key which would normally be
+    /// returned from calling `storable.instance_id()`.
     fn get<S: Storable>(&self, instance_id: &[u8], postfix: &'static [u8]) -> Result<S, Error> {
         let key = {
             let mut k = Vec::new();
@@ -257,8 +258,7 @@ impl Database {
         Ok((*db_lock).put(&key, &value)?)
     }
 
-    /// Retrieve blockchain data from the database. Will return none if the data is not found, and
-    /// an error if something goes wrong when attempting to retrieve the data.
+    /// Retrieve blockchain data from the database.
     pub fn get_blockchain_data<S: Storable>(&self, hash: &U256) -> Result<S, Error> {
         let mut id: [u8; 32] = [0u8; 32];
         hash.to_little_endian(&mut id);
@@ -267,15 +267,33 @@ impl Database {
     }
 
 
-    /// Write a blockchain object into the database. Will return an error if the database has
-    /// troubles.
+    /// Write a blockchain object into the database.
     pub fn put_blockchain_data<S: Storable>(&mut self, obj: &S) -> Result<(), Error> {
         self.put::<S>(obj, BLOCKCHAIN_POSTFIX)
     }
 
-    /// Retrieve network data from the database. Will return none if the data is not found, and an
-    /// error if something goes wrong when attempting to retrieve the data.
-    pub fn get_network_data<S: Storable>(&self, instance_id: &[u8]) -> Result<S, Error> {
-        self.get::<S>(instance_id, NETWORK_POSTFIX)
+    // /// Retrieve network data from the database.
+    // pub fn get_network_data<S: Storable>(&self, instance_id: &[u8]) -> Result<S, Error> {
+    //     self.get::<S>(instance_id, NETWORK_POSTFIX)
+    // }
+
+    /// Retrieve game data from the database.
+    pub fn get_game_data<S: Storable>(&self, instance_id: &[u8]) -> Result<S, Error> {
+        self.get::<S>(instance_id, GAME_POSTFIX)
+    }
+
+    /// Write a game data object into the database.
+    pub fn put_game_data<S: Storable>(&mut self, obj: &S) -> Result<(), Error> {
+        self.put::<S>(obj, GAME_POSTFIX)
+    }
+
+    /// Retrieve cache data from the database. This is for library use only.
+    pub fn get_cache_data<S: Storable>(&self, instance_id: &[u8]) -> Result<S, Error> {
+        self.get::<S>(instance_id, CACHE_POSTFIX)
+    }
+
+    /// Put cache data into the database. This is for library use only.
+    pub fn put_cache_data<S: Storable>(&mut self, obj: &S) -> Result<(), Error> {
+        self.put::<S>(obj, CACHE_POSTFIX)
     }
 }
