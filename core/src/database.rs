@@ -100,7 +100,7 @@ impl Database {
             
             let prior_value = db_lock.get(&key) // Result<Option<DBVector>, DBError>
                 .map_err(|e| e.to_string())?
-                .map_or(Vec::new(), |v| v.to_vec());
+                .map(|v| v.to_vec());
             
             contra.changes.push(Change {
                 key: key.clone(),
@@ -108,7 +108,13 @@ impl Database {
                 data: None,
             });
 
-            batch.put(&key, &change.value).expect("Failure when adding to rocksdb batch.");
+            if let Some(ref v) = change.value {
+                batch.put(&key, v).expect("Failure when adding to rocksdb batch.");
+            }
+            else {
+                // delete key
+                batch.delete(&key);
+            }
         }
         (*db_lock).write(batch).map_err(|e| e.to_string())?;
 
@@ -127,7 +133,14 @@ impl Database {
                 k.extend_from_slice(NETWORK_POSTFIX);
                 k
             };
-            batch.put(&key, &change.value).expect("Failure when adding to rocksdb batch.");
+
+            if let Some(ref v) = change.value {
+                batch.put(&key, v).expect("Failure when adding to rocksdb batch.");
+            }
+            else {
+                // delete key
+                batch.delete(&key);
+            }
         }
 
         (*db_lock).write(batch).map_err(|e| e.to_string())

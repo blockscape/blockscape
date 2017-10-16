@@ -8,7 +8,7 @@ use u256::U256;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Change {
     pub key: Vec<u8>,
-    pub value: Vec<u8>,
+    pub value: Option<Vec<u8>>,
     pub data: Option<Vec<u8>>,
 }
 

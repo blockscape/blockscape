@@ -27,6 +27,10 @@ use time::Time;
 
 use network::session::*;
 use network::node::*;
+use network::ntp::*;
+
+const NODE_SCAN_INTERVAL: i64 = 30000; // every 30 seconds
+const NODE_NTP_INTERVAL: i64 = 20 * 60000; // every 20 minutes
 
 #[derive(Serialize, Deserialize)]
 struct RawPacket {
@@ -41,13 +45,15 @@ struct RawPacket {
 //#[derive(Debug)]
 pub struct ClientConfig {
     /// Sets a threshold which, at sufficiently low connectivity of nodes (AKA, less than this number), new nodes will be seeked out
-    min_nodes: u16,
+    pub min_nodes: u16,
 
     /// Sets the maximum simultaneous node connections
-    max_nodes: u16,
+    pub max_nodes: u16,
+
+    pub ntp_servers: Vec<String>,
 
     /// A private key used to sign and identify our own node data
-    private_key: PKey, 
+    pub private_key: PKey, 
 }
 
 impl ClientConfig {
@@ -55,6 +61,7 @@ impl ClientConfig {
     pub fn new() -> ClientConfig {
         ClientConfig {
             private_key: generate_private_key(),
+            ntp_servers: vec!["pool.ntp.org".into()],
             min_nodes: 8,
             max_nodes: 16
         }
@@ -541,8 +548,39 @@ impl Client {
 
     /// Spawns the threads and puts the networking into a full working state
     pub fn run(this: Arc<Client>) {
+        let this2 = this.clone();
         // TODO: Do something about thread references! We need to be able to join to shut down the network thread
         thread::Builder::new().name("P2P Handler".into()).spawn(move || this.recv_loop());
+        thread::Builder::new().name("Net Discovery/Maintenance".into()).spawn(move || {
+            let mut last_ntp_scan = Time::from_seconds(0);
+            let mut last_node_scan = Time::from_seconds(0);
+
+            loop {
+                let n = Time::current_local();
+
+                if last_ntp_scan.diff(&n).millis() > NODE_NTP_INTERVAL && !this2.config.ntp_servers.is_empty() {
+                    // TODO: Choose a random NTP server rather than only the first
+                    match calc_ntp_drift(this2.config.ntp_servers[0].as_str()) {
+                        Ok(drift) => {
+                            Time::update_ntp(drift);
+                            debug!("NTP time sync completed: {}", drift);
+                        },
+                        Err(()) => {
+                            warn!("NTP time sync failed");
+                        }
+                    }
+
+                    last_ntp_scan = n;
+                }
+
+                if last_node_scan.diff(&n).millis() > NODE_SCAN_INTERVAL {
+                    // tell all networks to connect to more nodes
+                    last_node_scan = n;
+                }
+
+                thread::sleep(::std::time::Duration::from_millis(1000));
+            }
+        });
     }
 
     pub fn report_txn(&self, txn: Txn) {
