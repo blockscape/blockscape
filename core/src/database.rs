@@ -1,7 +1,5 @@
 use bincode;
-use block::Block;
 use env;
-use hash::hash_obj;
 use mutation::{Change, Mutation};
 use rocksdb::{DB, WriteBatch};
 use rocksdb::Error as RocksDBError;
@@ -11,7 +9,6 @@ use std::error::Error as StdErr;
 use std::fmt;
 use std::fmt::{Debug, Display};
 use std::sync::RwLock;
-use txn::Txn;
 use u256::U256;
 
 
@@ -39,7 +36,7 @@ pub trait MutationRule: Debug + Send + Sync {
 /// ```
 pub trait Storable: serde::Serialize + serde::de::DeserializeOwned {
     /// Error to be returned if it could not be deserialized correctly.
-    type DeserializeErr;
+    // type DeserializeErr;
 
     /// Return a unique ID for the type, an example of this is b"plot", though the smallest
     /// reasonable values would be better, e.g. b"p" for plot. All storable types must return
@@ -106,7 +103,6 @@ pub type MutationRules = LinkedList<Box<MutationRule>>;
 
 const BLOCKCHAIN_POSTFIX: &[u8] = b"b";
 const CACHE_POSTFIX: &[u8] = b"c";
-const GAME_POSTFIX: &[u8] = b"g";
 const NETWORK_POSTFIX: &[u8] = b"n";
 
 /// This is a wrapper around a RocksDB instance to provide the access and modifications needed for
@@ -149,7 +145,7 @@ impl Database {
     /// impact things which are mutated through the `mutate` function.
     pub fn add_rule(&mut self, rule: Box<MutationRule>) {
         let mut rules_lock = self.rules.write().unwrap();
-        (*rules_lock).push_back(rule);
+        rules_lock.push_back(rule);
     }
 
     /// Check if a mutation to the network state is valid.
@@ -221,6 +217,22 @@ impl Database {
         (*db_lock).write(batch)
     }
 
+    /// Retrieve network data from the database. Use this for things which are stored and modified
+    /// by transactions like the list of validators and public keys.
+    pub fn get_network_data(&self, key: &[u8]) -> Result<Vec<u8>, Error> {
+        let key = {
+            let mut k = Vec::from(key);
+            k.extend_from_slice(key);
+            k.extend_from_slice(NETWORK_POSTFIX); k
+        };
+
+        let db_lock = self.db.read().unwrap();
+
+        db_lock.get(&key)?
+            .map(|d| d.to_vec())
+            .ok_or(Error::NotFound(NETWORK_POSTFIX, b"", Vec::from(key)))
+    }
+
     /// Retrieve and deserialize data from the database. This will return an error if the database
     /// has an issue, if the data cannot be deserialized or if the object is not present in the
     /// database. Note that `instance_id` should be the object's ID/key which would normally be
@@ -235,7 +247,7 @@ impl Database {
 
         let db_lock = self.db.read().unwrap();
 
-        match (*db_lock).get(&key)? {
+        match db_lock.get(&key)? {
             Some(data) =>
                 bincode::deserialize::<S>(&data)
                 .map_err(|e| Error::Deserialize(e.to_string())),
@@ -254,11 +266,10 @@ impl Database {
         let value = bincode::serialize(obj, bincode::Infinite).expect("Error serializing game data.");
         
         let db_lock = self.db.write().unwrap();
-        // (*db_lock).put(&key, &value).map_err(|e| Error::DB(e))
-        Ok((*db_lock).put(&key, &value)?)
+        Ok(db_lock.put(&key, &value)?)
     }
 
-    /// Retrieve blockchain data from the database.
+    /// Retrieve blockchain data from the database. Use this for things like Blocks or Txns.
     pub fn get_blockchain_data<S: Storable>(&self, hash: &U256) -> Result<S, Error> {
         let mut id: [u8; 32] = [0u8; 32];
         hash.to_little_endian(&mut id);
@@ -267,24 +278,9 @@ impl Database {
     }
 
 
-    /// Write a blockchain object into the database.
+    /// Write a blockchain object into the database. Use this for things like Blocks or Txns. With generics:
     pub fn put_blockchain_data<S: Storable>(&mut self, obj: &S) -> Result<(), Error> {
         self.put::<S>(obj, BLOCKCHAIN_POSTFIX)
-    }
-
-    // /// Retrieve network data from the database.
-    // pub fn get_network_data<S: Storable>(&self, instance_id: &[u8]) -> Result<S, Error> {
-    //     self.get::<S>(instance_id, NETWORK_POSTFIX)
-    // }
-
-    /// Retrieve game data from the database.
-    pub fn get_game_data<S: Storable>(&self, instance_id: &[u8]) -> Result<S, Error> {
-        self.get::<S>(instance_id, GAME_POSTFIX)
-    }
-
-    /// Write a game data object into the database.
-    pub fn put_game_data<S: Storable>(&mut self, obj: &S) -> Result<(), Error> {
-        self.put::<S>(obj, GAME_POSTFIX)
     }
 
     /// Retrieve cache data from the database. This is for library use only.

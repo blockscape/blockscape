@@ -1,13 +1,12 @@
 use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
-use u256::U256;
 
 /// A single change to the database, a mutation may be the composite of multiple changes. This is
 /// designed as a simple structure which the outer world can use to store the changes which should
 /// not know anything about the database.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Change {
-    pub key: Vec<u8>,
+    pub key: Vec<u8>, // TODO: can we assume this will be a U256?
     pub value: Vec<u8>,
     pub data: Option<Vec<u8>>,
 }
