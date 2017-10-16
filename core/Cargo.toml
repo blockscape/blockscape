@@ -8,6 +8,7 @@ bincode = "^0.8"
 bytes = { version = "^0.4", features = ["serde"] }
 dns-lookup = "0.6.0"
 log = "^0.3"
+ntp = "0.3.0"
 openssl = "^0.9"
 rand = "^0.3.16"
 rust-crypto= "^0.2"

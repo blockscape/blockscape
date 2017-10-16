@@ -247,14 +247,14 @@ impl NodeRepository {
         self.build(&nodes);
     }
 
-    pub fn save(&self) -> Result<u32, Error> {
+    pub fn save(&self, name: &str) -> Result<u32, Error> {
 
         let saved: Vec<LocalNode> = self.available_nodes.values().map(|n| n.read().unwrap().clone()).collect();
         
         let serialized = serde_json::to_string_pretty(&saved).unwrap();
 
         // open a file, put serialized data into it
-        match File::create(&self.node_store_path()) {
+        match File::create(&self.node_store_path(name)) {
             Ok(mut f) => {
                 write!(f, "{}", serialized).expect("Could not save to open file");
                 Ok(saved.len() as u32)
@@ -263,16 +263,16 @@ impl NodeRepository {
         }
     }
 
-    pub fn load(&mut self) -> Result<u32, Error> {
+    pub fn load(&mut self, name: &str) -> Result<u32, Error> {
         info!("Load stored nodes from file...");
 
         // Handle file does not exist
-        if !self.node_store_path().as_path().is_file() {
+        if !self.node_store_path(name).as_path().is_file() {
             // import seed nodes, and return 0 to indicate that the file was not there
             return Ok(0);
         }
 
-        match File::open(&self.node_store_path().as_path()) {
+        match File::open(&self.node_store_path(name).as_path()) {
             Ok(mut f) => {
                 let mut contents = String::new();
                 f.read_to_string(&mut contents).expect("Unexpected node file read error");
@@ -286,9 +286,10 @@ impl NodeRepository {
         }
     }
 
-    fn node_store_path(&self) -> PathBuf {
+    fn node_store_path(&self, name: &str) -> PathBuf {
         let mut p = get_storage_dir().unwrap();
-        p.push("nodes.json");
+        p.push("nodes");
+        p.push(name.to_owned() + ".json");
 
         p
     }

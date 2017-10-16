@@ -2,6 +2,9 @@ use timelib::{Timespec, strftime, at_utc};
 use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use std::sync::atomic::{AtomicIsize,ATOMIC_ISIZE_INIT};
+use std::sync::atomic::Ordering::Relaxed;
+
 /// Represents an instant in time, defined by the number of milliseconds since the UNIX Epoch
 #[derive(Serialize, Deserialize, PartialEq, PartialOrd, Eq, Ord, Copy, Clone)]
 pub struct Time(i64);
@@ -31,7 +34,24 @@ impl From<i64> for Time {
     }
 }
 
+
+static NTP_DRIFT: AtomicIsize = ATOMIC_ISIZE_INIT;
+
 impl Time {
+
+    /// The time drift correction as calculated by NTP, in milliseconds
+    /// Updated by the network thread automatically
+    pub fn update_ntp(drift: i64) {
+        if NTP_DRIFT.load(Relaxed) == 0 {
+            // just set to start
+            NTP_DRIFT.store(drift as isize, Relaxed);
+        }
+        else {
+            // weighted
+            NTP_DRIFT.store((drift as f64 * 0.1 + NTP_DRIFT.load(Relaxed) as f64 * 0.9 as f64) as isize, Relaxed);
+        }
+    }
+
     pub fn from_milliseconds(ms: i64) -> Time {
         Time(ms)
     }
@@ -40,12 +60,23 @@ impl Time {
         Time::from_milliseconds(s * 1000i64)
     }
 
-    /// Return the current time in ms since the epoch. Later this can be switched to use NTP.
+    /// Return the current time in ms since the epoch. This includes a drift adjustment for NTP
     pub fn current() -> Time {
         let duration_since_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let seconds_contrib = (duration_since_epoch.as_secs() as i64) * 1_000i64;
         let nseconds_contrib = (duration_since_epoch.subsec_nanos() as i64) / 1_000_000i64;
         let milliseconds = seconds_contrib + nseconds_contrib;
+        // correct for drift
+        Time(milliseconds - NTP_DRIFT.load(Relaxed) as i64)
+    }
+
+    /// Return the current time in ms since the epoch. This is ***without*** a drift adjustment from NTP
+    pub fn current_local() -> Time {
+        let duration_since_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let seconds_contrib = (duration_since_epoch.as_secs() as i64) * 1_000i64;
+        let nseconds_contrib = (duration_since_epoch.subsec_nanos() as i64) / 1_000_000i64;
+        let milliseconds = seconds_contrib + nseconds_contrib;
+        // correct for drift
         Time(milliseconds)
     }
 
