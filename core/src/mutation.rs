@@ -7,7 +7,7 @@ use std::hash::{Hash, Hasher};
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Change {
     pub key: Vec<u8>, // TODO: can we assume this will be a U256?
-    pub value: Vec<u8>,
+    pub value: Option<Vec<u8>>,
     pub data: Option<Vec<u8>>,
 }
 

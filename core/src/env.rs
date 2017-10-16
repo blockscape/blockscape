@@ -4,20 +4,11 @@ use std::env::home_dir;
 
 /// Create the storage directory structure if it does not exist, and make sure it is valid if it
 /// does.
-/// # Panics
-/// If it cannot create the directory structure.
-pub fn prepare_storage_dir() {
-    let p = get_storage_dir();
-    
-    match p {
-        Some(dir) => {
-
-            ensure_mkdir(dir.as_path());
-            ensure_mkdir(dir.join("keys").as_path());
-            ensure_mkdir(dir.join("db").as_path());
-        },
-        None => panic!("Could not find storage directory! Please check your environment and try again.")
-    }
+pub fn prepare_storage_dir(p: &PathBuf) {
+    ensure_mkdir(p.as_path());
+    ensure_mkdir(p.join("keys").as_path());
+    ensure_mkdir(p.join("db").as_path());
+    ensure_mkdir(p.join("nodes").as_path());
 }
 
 /// This returns the storage directory for blockscape on unix.
