@@ -6,6 +6,10 @@ variables:
   IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
   DOCKER_HOST: tcp://localhost:2375
 
+
+services:
+  - dcr.buyme360.com/devops/docker:dind
+
 cache:
   paths:
     - "target"
