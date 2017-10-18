@@ -44,6 +44,12 @@ struct RawPacket {
 
 //#[derive(Debug)]
 pub struct ClientConfig {
+    /// Hostname to advertise as the node address, useful for DNS round robin or load balancing if wanted
+    pub hostname: String,
+
+    /// The port to listen for UDP packets on and bind to
+    pub port: u16,
+
     /// Sets a threshold which, at sufficiently low connectivity of nodes (AKA, less than this number), new nodes will be seeked out
     pub min_nodes: u16,
 
@@ -57,13 +63,19 @@ pub struct ClientConfig {
 }
 
 impl ClientConfig {
+
+    /// Reccomended communication port for P2P blockscape protocol
+    pub const DEFAULT_PORT: u16 = 35653;
+
     /// Initializes the config with reasonable defaults
     pub fn new() -> ClientConfig {
         ClientConfig {
             private_key: generate_private_key(),
             ntp_servers: vec!["pool.ntp.org".into()],
             min_nodes: 8,
-            max_nodes: 16
+            max_nodes: 16,
+            hostname: String::from(""),
+            port: ClientConfig::DEFAULT_PORT
         }
     }
 }
@@ -306,7 +318,7 @@ pub struct Client {
     /// Whether or not we are entered the exit state for the network interface
     done: AtomicBool,
 
-    curr_port: AtomicUsize
+    curr_port: AtomicUsize,
 }
 
 impl Client {
@@ -323,7 +335,7 @@ impl Client {
             my_node: Arc::new(Node {
                 key: config.private_key.public_key_to_der().unwrap(), // TODO: Should be public key only!
                 version: Session::PROTOCOL_VERSION,
-                endpoint: NodeEndpoint { host: String::from(""), port: 0 },
+                endpoint: NodeEndpoint { host: config.hostname.clone(), port: config.port },
                 name: get_client_name()
             }),
             config: config,
@@ -409,7 +421,7 @@ impl Client {
     }
 
     pub fn open(&mut self) -> Result<(), Error> {
-        match UdpSocket::bind(self.my_node.endpoint.clone().as_socketaddr().unwrap()) {
+        match UdpSocket::bind(self.my_node.endpoint.clone().as_socketaddr().expect("Could not parse hostname... is it valid?")) {
             Ok(s) => {
 
                 // socket should read indefinitely
@@ -492,7 +504,7 @@ impl Client {
                         b.clear();
                     }
                 },
-                Err(err) => break
+                Err(err) => {}
             }
 
             if let Some((p, addr)) = received_packet {
@@ -547,15 +559,34 @@ impl Client {
     }
 
     /// Spawns the threads and puts the networking into a full working state
-    pub fn run(this: Arc<Client>) {
+    pub fn run(this: Arc<Client>) -> Vec<thread::JoinHandle<()>> {
+
+        if this.done.load(Relaxed) {
+            panic!("Tried to run network after already closed");
+        }
+
+        let mut joins: Vec<thread::JoinHandle<()>> = Vec::new();
+
         let this2 = this.clone();
         // TODO: Do something about thread references! We need to be able to join to shut down the network thread
-        thread::Builder::new().name("P2P Handler".into()).spawn(move || this.recv_loop());
-        thread::Builder::new().name("Net Discovery/Maintenance".into()).spawn(move || {
+        joins.push(thread::Builder::new().name("P2P Handler".into()).spawn(move || {
+            info!("P2P Handler thread ready");
+            this.recv_loop();
+            info!("P2P Handler thread completed");
+        }).expect("Could not start P2P handler thread"));
+        joins.push(thread::Builder::new().name("Net Discovery/Maintenance".into()).spawn(move || {
+
+            info!("Node discovery/maintenance thread ready");
+
             let mut last_ntp_scan = Time::from_seconds(0);
             let mut last_node_scan = Time::from_seconds(0);
 
             loop {
+
+                if this2.done.load(Relaxed) {
+                    break;
+                }
+
                 let n = Time::current_local();
 
                 if last_ntp_scan.diff(&n).millis() > NODE_NTP_INTERVAL && !this2.config.ntp_servers.is_empty() {
@@ -563,10 +594,10 @@ impl Client {
                     match calc_ntp_drift(this2.config.ntp_servers[0].as_str()) {
                         Ok(drift) => {
                             Time::update_ntp(drift);
-                            debug!("NTP time sync completed: {}", drift);
+                            debug!("NTP time sync completed: drift is {}", drift);
                         },
-                        Err(()) => {
-                            warn!("NTP time sync failed");
+                        Err(reason) => {
+                            warn!("NTP time sync failed: {}", reason);
                         }
                     }
 
@@ -580,7 +611,16 @@ impl Client {
 
                 thread::sleep(::std::time::Duration::from_millis(1000));
             }
-        });
+
+            info!("Node discovery thread completed");
+        }).expect("Could not start node discovery thread"));
+
+        joins
+    }
+
+    /// Join to the network threads until they have completed.
+    pub fn join() {
+
     }
 
     pub fn report_txn(&self, txn: Txn) {

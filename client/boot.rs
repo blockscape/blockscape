@@ -42,9 +42,22 @@ pub fn parse_cmdline<'a>() -> ArgMatches<'a> {
                 .help("Disables computation services for the client, making this client observe/submit only"))
             .arg(Arg::with_name("ntp-servers")
                 .long("ntp-servers")
-                .default_value("pool.ntp.org")
-                .help("NTP servers to use for time correction. Separated by commas."))
+                .default_value("pool.ntp.org:123")
+                .help("NTP servers to use for time correction. Must be in the format: <hostname>:<port> (default is port 123). Separated by commas."))
         .group(ArgGroup::with_name("network"))
+            .arg(Arg::with_name("hostname")
+                .long("host")
+                .short("h")
+                .help("The advertised IP or DNS host which other clients should use to connect to this client")
+                .value_name("IP/HOST")
+                .default_value(""))
+            .arg(Arg::with_name("port")
+                .long("port")
+                .short("p")
+                .help("Where to listen for UDP packets for P2P protocol communication")
+                .value_name("NUM")
+                // TODO: Better port string support for pulling directly from const, its just hard to do with the string convert
+                .default_value("35653"))
             .arg(Arg::with_name("disable-net")
                 .long("disable-net")
                 .help("Disables the entire P2P interface, making the game only available for local play with no updates")
@@ -101,12 +114,11 @@ pub fn make_genesis() -> (Block, Vec<Txn>) {
 /// Converts the command line arguments to a client config ready to go
 /// # Arguments
 /// * `cmdline`: The argument matches from clap on the command line
-/// * `use_key`: Whether or not to load the public key for the node from file.
 /// *Note*: As this is a high level function, it will automatically try to load the network key from
 /// file, and it will generate a new one if needed
 /// # Panics
 /// If it cannot save a newly created public key, or if the private key loaded is invalid
-pub fn make_network_config(cmdline: &ArgMatches, use_key: bool) -> ClientConfig {
+pub fn make_network_config(cmdline: &ArgMatches) -> ClientConfig {
     let mut pub_path = get_storage_dir().unwrap();
 
     pub_path.push("keys");
@@ -136,6 +148,8 @@ pub fn make_network_config(cmdline: &ArgMatches, use_key: bool) -> ClientConfig 
         min_nodes: cmdline.value_of("min-nodes").unwrap().parse::<u16>().expect("Invalid value for min-nodes: must be a number!"),
         max_nodes: cmdline.value_of("max-nodes").unwrap().parse::<u16>().expect("Invalid value for max-nodes: must be a number!"),
         ntp_servers: cmdline.value_of("ntp-servers").unwrap().split(',').map(|s| String::from(s)).collect(),
-        private_key: key
+        private_key: key,
+        hostname: String::from(cmdline.value_of("hostname").unwrap()),
+        port: cmdline.value_of("port").unwrap().parse::<u16>().expect("Invalid P2P port: must be a number!")
     }
 }

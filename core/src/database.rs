@@ -10,7 +10,7 @@ use txn::Txn;
 
 /// Generic definition of a rule regarding whether changes to the database are valid.
 /// Debug implementations should state what the rule means/requires.
-trait MutationRule: Debug + Send + Sync {
+pub trait MutationRule: Debug + Send + Sync {
     /// Return Ok if it is valid, or an error explaining what rule was broken.
     fn is_valid(&self, database: &DB, mutation: &Mutation) -> Result<(), String>;
 }

@@ -3,7 +3,8 @@ use ntp::packet::Packet;
 
 use timelib::{Timespec, now_utc};
 
-pub fn calc_ntp_drift(ntp_server: &str) -> Result<i64, ()> {
+pub fn calc_ntp_drift(ntp_server: &str) -> Result<i64, String> {
+    debug!("NTP request server: {}", ntp_server);
     request(ntp_server)
         .map(|p| {
             let dest_time = now_utc().to_timespec();
@@ -13,5 +14,5 @@ pub fn calc_ntp_drift(ntp_server: &str) -> Result<i64, ()> {
 
             (((recv_time - orig_time) + (transmit_time - dest_time)) / 2).num_milliseconds()
         })
-        .map_err(|e|{})
+        .map_err(|e| String::from(e.description()))
 }
