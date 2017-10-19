@@ -17,6 +17,9 @@ build:
   stage: build
   script:
     - cargo build
+  artifacts:
+    paths:
+      - target/
 
   # depending on your build setup it's most likely a good idea to cache outputs to reduce the build time
 
@@ -45,4 +48,6 @@ package:
     - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
     - docker build -t $IMAGE_TAG .
     - docker push $IMAGE_TAG
+  dependencies:
+    - build
     
