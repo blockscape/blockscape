@@ -17,9 +17,12 @@ build:
   stage: build
   script:
     - cargo build
+    - cargo build --release
   artifacts:
     paths:
-      - target/
+      - target/debug/blockscape
+      - target/release/blockscape
+    expire_in: 2 days
 
   # depending on your build setup it's most likely a good idea to cache outputs to reduce the build time
 
