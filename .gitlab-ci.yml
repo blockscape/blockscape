@@ -11,8 +11,7 @@ services:
   - dcr.buyme360.com/devops/docker:dind
 
 cache:
-  paths:
-    - "target"
+  untracked: true
 
 build:
   stage: build
