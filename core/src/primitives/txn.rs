@@ -1,7 +1,7 @@
 use openssl::pkey::PKey;
+use primitives::Mutation;
 use signer::sign_obj;
 use std::vec::Vec;
-use super::mutation::Mutation;
 use time::Time;
 
 // Expand and divide shard transactions

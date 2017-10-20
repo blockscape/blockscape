@@ -5,12 +5,9 @@ use std::sync::{Arc,Mutex};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::Relaxed;
 
-use super::node::{Node, NodeEndpoint};
-
-use record_keeper::block::Block;
-use record_keeper::txn::Txn;
+use primitives::{Block, Txn, U256};
+use super::node::Node;
 use time::Time;
-use u256::*;
 
 use network::client::NetworkContext;
 

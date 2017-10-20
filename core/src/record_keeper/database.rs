@@ -1,13 +1,13 @@
 use bincode;
 use env;
+use primitives::{Change, Mutation};
+use primitives::U256;
 use rocksdb::{DB, WriteBatch};
 use rocksdb::Error as RocksDBError;
 use std::collections::LinkedList;
 use std::fmt::Debug;
 use std::sync::RwLock;
-use super::mutation::{Change, Mutation};
 use super::error::*;
-use u256::U256;
 use super::Storable;
 
 

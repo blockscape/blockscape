@@ -1,5 +1,4 @@
 use ntp::request;
-use ntp::packet::Packet;
 
 use timelib::{Timespec, now_utc};
 

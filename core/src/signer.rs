@@ -1,10 +1,8 @@
+use bincode;
 use openssl;
 use openssl::{sign, hash};
 use openssl::pkey::PKey;
-
 use serde::Serialize;
-
-use bincode;
 
 /// The size of any new RSA Keys; other sizes should still be supported.
 pub const RSA_KEY_SIZE: usize = 2048;

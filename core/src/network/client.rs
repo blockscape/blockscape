@@ -1,13 +1,5 @@
 use bincode::{serialize, deserialize, Bounded};
-use hash::hash_pub_key;
-use network::node::*;
-use network::session::*;
 use openssl::pkey::PKey;
-use record_keeper::block::*;
-use record_keeper::database::Database;
-use record_keeper::txn::*;
-use signer::generate_private_key;
-use std::cmp::min;
 use std::collections::{HashMap, VecDeque};
 use std::io::Error;
 use std::net::{SocketAddr,UdpSocket};
@@ -15,18 +7,17 @@ use std::sync::{Arc, RwLock, Mutex};
 use std::sync::atomic::{AtomicBool,AtomicUsize};
 use std::sync::atomic::Ordering::Relaxed;
 use std::thread;
-
 use std::time::Duration;
-use super::env::get_client_name;
-
-use u160::*;
-use u256::*;
-
 use time::Time;
 
-use network::session::*;
+use env::get_client_name;
+use hash::hash_pub_key;
 use network::node::*;
 use network::ntp::*;
+use network::session::*;
+use primitives::{Block, Txn, U256};
+use record_keeper::database::Database;
+use signer::generate_private_key;
 
 const NODE_SCAN_INTERVAL: i64 = 30000; // every 30 seconds
 const NODE_NTP_INTERVAL: i64 = 20 * 60000; // every 20 minutes
