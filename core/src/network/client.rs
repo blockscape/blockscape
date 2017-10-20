@@ -42,7 +42,7 @@ pub struct ClientConfig {
     pub seed_nodes: Vec<NodeEndpoint>,
 
     /// A private key used to sign and identify our own node data
-    pub private_key: PKey, 
+    pub private_key: PKey
 }
 
 impl ClientConfig {
@@ -214,13 +214,14 @@ impl Client {
     }
 
     pub fn detach_network(&self, network_id: &U256) -> bool {
-        let idx = self.resolve_port(network_id);
+        self.detach_network_port(self.resolve_port(network_id))
+    }
 
+    fn detach_network_port(&self, idx: u8) -> bool {
         let mut sh = self.shards[idx as usize].write().unwrap();
         if let None = *sh {
             return false;
         }
-
 
         sh.as_ref().unwrap().close(&self.socket.as_ref().unwrap());
         *sh = None;
@@ -427,11 +428,15 @@ impl Client {
 
                 if last_node_scan.diff(&n).millis() > NODE_SCAN_INTERVAL {
                     // tell all networks to connect to more nodes
+                    info!("Node scan started");
+
                     for i in 0..255 {
                         if let Some(ref mut s) = *this2.shards[i].write().unwrap() {
                             s.node_scan(&this2.my_node, this2.config.min_nodes as usize);
                         }
                     }
+
+                    info!("Node scan completed");
 
                     last_node_scan = n;
                 }
@@ -445,9 +450,22 @@ impl Client {
         joins
     }
 
-    /// Join to the network threads until they have completed.
-    pub fn join() {
+    /// End all network resources and prepare for program close
+    /// You are still responsible for joining to the network threads to make sure they close properly
+    pub fn close(&self) {
 
+        debug!("Closing network...");
+
+        self.done.store(true, Relaxed);
+
+        // detach all networks
+        for i in 0..255 {
+            let exists = self.shards[i].read().unwrap().is_some();
+
+            if exists {
+                self.detach_network_port(i as u8);
+            }
+        }
     }
 
     pub fn report_txn(&self, txn: Txn) {

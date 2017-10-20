@@ -8,6 +8,8 @@ extern crate openssl;
 
 extern crate blockscape_core;
 
+extern crate chan_signal;
+
 mod boot;
 mod rules;
 
@@ -15,6 +17,8 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use clap::{Arg, ArgGroup, ArgMatches, App, SubCommand};
+
+use chan_signal::Signal;
 
 use blockscape_core::env;
 use blockscape_core::network::client::Client;
@@ -30,6 +34,8 @@ fn main() {
 
     // Ready to boot
     println!("Welcome to Blockscape v{}", env!("CARGO_PKG_VERSION"));
+
+    let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
 
     // Open database; populate basic subsystems with latest information
     if let Some(d) = cmdline.value_of("workdir") { 
@@ -68,11 +74,17 @@ fn main() {
 
     // Open RPC interface
 
+    // wait for the kill signal
+    signal.recv().unwrap();
 
-    // join to something until further notice
+    println!("Finishing work, please wait...");
+
+    // close the network
     if let Some(client) = net_client {
-        threads.pop().unwrap().join();
+        client.close();
     }
+    
+    threads.pop().unwrap().join();
 
     println!("Exiting...");
 }

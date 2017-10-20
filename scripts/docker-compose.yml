@@ -1,0 +1,29 @@
+version: '3.3'
+
+services:
+    blockscape_1:
+        image: dcr.buyme360.com/plu-capstone/blockscape:latest
+
+        networks:
+            - net
+
+        command: /blockscape -h localhost --seed-node blockscape_2:35653
+    
+    blockscape_2:
+        image: dcr.buyme360.com/plu-capstone/blockscape:latest
+
+        networks:
+            - net
+
+        command: /blockscape -h localhost --seed-node blockscape_1:35653
+
+    blockscape_3:
+        image: dcr.buyme360.com/plu-capstone/blockscape:latest
+
+        networks:
+            - net
+
+        command: /blockscape -h localhost --seed-node blockscape_1:35653
+
+networks:
+    net:
