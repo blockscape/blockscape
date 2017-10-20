@@ -15,6 +15,16 @@ use super::super::time::Time;
 use network::client::NetworkContext;
 
 #[derive(Serialize, Deserialize)]
+pub struct RawPacket {
+    /// Which communication channel should be regarded for this node.
+    /// This is included so nodes can have multiple connections to each other through separate shards
+    /// Port 255 is reserved for connecting from remote nodes when the local port is unknown
+    pub port: u8,
+    /// The data which should be delivered to the session handler
+    pub payload: Packet
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct Packet {
     pub seq: u32,
     pub msg: Message,
@@ -30,10 +40,13 @@ pub enum DataRequestError {
     NetworkNotAvailable
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Copy)]
 pub enum ByeReason {
     /// Node is simply disconnecting
     Exit,
+    /// Connection should not be attempted to this node again because the node is incompatible or wrong
+    /// For example, connecting to self.
+    ExitPermanent,
     /// Node has not been responding, or no longer seems to be available
     Timeout,
     /// Node has not been nice, so disconnect
@@ -233,6 +246,11 @@ impl Session {
                     self.remote_peer = Arc::new(node.clone());
                     self.remote_port = port.clone();
 
+                    // detect if we have connected to self
+                    if self.remote_peer.key == self.local_peer.key {
+                        self.done = Some(ByeReason::ExitPermanent);
+                    }
+
                     // TODO: Add appendable nodes
                     //context.node_repo.read().unwrap().apply(node);
                 },
@@ -351,10 +369,14 @@ impl Session {
     }
 
     pub fn pop_send_queue(&mut self) -> Option<Packet> {
-        return self.send_queue.lock().unwrap().pop_front();
+        self.send_queue.lock().unwrap().pop_front()
     }
 
     pub fn get_remote(&self) -> (&SocketAddr, u8) {
-        return (&self.remote_addr, self.remote_port);
+        (&self.remote_addr, self.remote_port)
+    }
+
+    pub fn is_done(&self) -> Option<ByeReason> {
+        self.done
     }
 }

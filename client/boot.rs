@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::{Read,Write};
+use std::str::FromStr;
 
 use openssl::pkey::PKey;
 
@@ -14,6 +15,7 @@ use blockscape_core::time::Time;
 use blockscape_core::signer::generate_private_key;
 use blockscape_core::u256::*;
 use blockscape_core::network::client::ClientConfig;
+use blockscape_core::network::node::NodeEndpoint;
 
 /// Loads command line arguments, and returns them as a clap ArgMatches obj
 pub fn parse_cmdline<'a>() -> ArgMatches<'a> {
@@ -72,6 +74,10 @@ pub fn parse_cmdline<'a>() -> ArgMatches<'a> {
                 .help("Sets the maximum number of nodes to allow connections for. Extra connections will be dropped")
                 .value_name("NUM")
                 .default_value("16"))
+            .arg(Arg::with_name("seed-node")
+                .long("seed-node")
+                .help("Specifies the nodes to try connecting to first when none are available in the repo")
+                .value_name("HOST:PORT"))
         .get_matches()
 }
 
@@ -144,12 +150,19 @@ pub fn make_network_config(cmdline: &ArgMatches) -> ClientConfig {
         f.write_all(&key.private_key_to_pem().expect("Could not export generated keyfile"));
     }
 
-    ClientConfig {
-        min_nodes: cmdline.value_of("min-nodes").unwrap().parse::<u16>().expect("Invalid value for min-nodes: must be a number!"),
-        max_nodes: cmdline.value_of("max-nodes").unwrap().parse::<u16>().expect("Invalid value for max-nodes: must be a number!"),
-        ntp_servers: cmdline.value_of("ntp-servers").unwrap().split(',').map(|s| String::from(s)).collect(),
-        private_key: key,
-        hostname: String::from(cmdline.value_of("hostname").unwrap()),
-        port: cmdline.value_of("port").unwrap().parse::<u16>().expect("Invalid P2P port: must be a number!")
+    let mut config = ClientConfig::from_key(key);
+
+    config.min_nodes = cmdline.value_of("min-nodes").unwrap().parse::<u16>().expect("Invalid value for min-nodes: must be a number!");
+    config.max_nodes = cmdline.value_of("max-nodes").unwrap().parse::<u16>().expect("Invalid value for max-nodes: must be a number!");
+    config.ntp_servers = cmdline.value_of("ntp-servers").unwrap().split(',').map(|s| String::from(s)).collect();
+    config.hostname = String::from(cmdline.value_of("hostname").unwrap());
+    config.port = cmdline.value_of("port").unwrap().parse::<u16>().expect("Invalid P2P port: must be a number!");
+    if cmdline.is_present("seed-node") {
+        config.seed_nodes = cmdline.values_of_lossy("seed-node").unwrap().iter()
+            .map(|x| NodeEndpoint::from_str(x)
+                .expect(format!("Invalid hostname for seed node: {}. Did you include the port?", x).as_str()))
+            .collect();
     }
+
+    config
 }
