@@ -4,10 +4,12 @@ use std::cmp::*;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write, Error};
+use std::error::Error as BaseError;
 use std::net::{SocketAddr,IpAddr};
 use std::path::*;
 use std::sync::Arc;
 use std::sync::RwLock;
+use std::str::FromStr;
 
 use env::get_storage_dir;
 use hash::hash_pub_key;
@@ -35,6 +37,29 @@ impl NodeEndpoint {
         };
 
         ip.map(|p| SocketAddr::new(p, self.port))
+    }
+}
+
+impl FromStr for NodeEndpoint {
+
+    type Err = String;
+    
+    /// Convert from <hostname>:<port> format to a node endpoint
+    /// # Errors
+    /// * If the format is not correct
+    /// * If the port is not a parsable u16
+    /// # Note
+    /// * This does not check hostname validity, or perform any async blocking operation.
+    fn from_str(v: &str) -> Result<Self, Self::Err> {
+        let mut parts = v.split(':');
+
+        let host = parts.next().ok_or(String::from("Missing hostname part"))?;
+        let port = parts.next().ok_or(String::from("Missing port part"))?.parse::<u16>().map_err(|e| String::from(e.description()))?;
+
+        Ok(NodeEndpoint {
+            host: String::from(host),
+            port: port
+        })
     }
 }
 
