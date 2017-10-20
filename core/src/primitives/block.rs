@@ -1,5 +1,5 @@
+use primitives::U256;
 use std::collections::BTreeSet;
-use u256::U256;
 use time::Time;
 
 

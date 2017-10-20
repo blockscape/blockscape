@@ -1,12 +1,10 @@
-use u256::U256;
-use u160::U160;
-
-use crypto::digest::Digest;
-use crypto::sha3::Sha3;
-use crypto::ripemd160::Ripemd160;
-
-use serde::Serialize;
 use bincode;
+use crypto::digest::Digest;
+use crypto::ripemd160::Ripemd160;
+use crypto::sha3::Sha3;
+use serde::Serialize;
+
+use primitives::{U256, U160};
 
 /// Hash bytes of data and then return the result as a U256.
 /// This uses a double sha3-256 hash.

@@ -1,15 +1,14 @@
 use bincode;
 use env;
-use mutation::{Change, Mutation};
+use primitives::{Change, Mutation};
+use primitives::U256;
 use rocksdb::{DB, WriteBatch};
 use rocksdb::Error as RocksDBError;
-use serde;
 use std::collections::LinkedList;
-use std::error::Error as StdErr;
-use std::fmt;
-use std::fmt::{Debug, Display};
+use std::fmt::Debug;
 use std::sync::RwLock;
-use u256::U256;
+use super::error::*;
+use super::Storable;
 
 
 /// Generic definition of a rule regarding whether changes to the database are valid.
@@ -18,84 +17,6 @@ pub trait MutationRule: Debug + Send + Sync {
     /// Return Ok if it is valid, or an error explaining what rule was broken.
     fn is_valid(&self, database: &DB, mutation: &Mutation) -> Result<(), String>;
 }
-
-/// Storable objects are able to be stored in a `Database` instance.
-/// Example implementation:
-/// ```
-/// #[derive(Serialize, Deserialize)]
-/// struct Example {
-///     a: u8,
-///     b: u8
-/// }
-///
-/// impl Storable for Example {
-///     type DeserializeErr = String;
-///     fn global_id() -> &'static [u8] { b"p" }
-///     fn instance_id(&self) -> Vec<u8> { vec![self.a, self.b] }
-/// }
-/// ```
-pub trait Storable: serde::Serialize + serde::de::DeserializeOwned {
-    /// Error to be returned if it could not be deserialized correctly.
-    // type DeserializeErr;
-
-    /// Return a unique ID for the type, an example of this is b"plot", though the smallest
-    /// reasonable values would be better, e.g. b"p" for plot. All storable types must return
-    /// different IDs or there may be collisions.
-    fn global_id() -> &'static [u8];
-
-    /// Calculate and return a unique ID for the instance of this storable value. In the case of a
-    /// plot, it would simply be the plot ID. It is for a block, then it would just be its Hash.
-    /// This must not change between saves and loads for it to work correctly.
-    fn instance_id(&self) -> Vec<u8>;
-
-    /// Calculate and return the key-value of this object based on its global and instance IDs.
-    fn key(&self) -> Vec<u8> {
-        let mut key = Vec::new();
-        key.extend_from_slice(Self::global_id());
-        key.append(&mut self.instance_id());
-        key
-    }
-}
-
-
-#[derive(Debug)]
-pub enum Error {
-    DB(RocksDBError), // when there is an error working with the database itself
-    NotFound(&'static [u8], &'static [u8], Vec<u8>), // when data is not found in the database
-    Deserialize(String), // when data cannot be deserialized
-    InvalidMut(String) // when a rule is broken by a mutation
-}
-
-impl StdErr for Error {
-    fn description(&self) -> &str {
-        match *self { //TODO: why can we just get a ref of the objects
-            Error::DB(_) => "RocksDB error: aka, not my fault ☺",
-            Error::NotFound(_, _, _) => "Could not find the data requested at that Hash (may not be an issue).",
-            Error::Deserialize(_) => "Deserialization error, the data stored could not be deserialized into the requested type.",
-            Error::InvalidMut(_) => "Invalid Mutation, a rule is violated by the mutation so it will not be applied."
-        }
-    }
-
-    fn cause(&self) -> Option<&StdErr> {
-        match *self {
-            Error::DB(ref e) => Some(e),
-            Error::NotFound(_, _, _) => None,
-            Error::Deserialize(_) => None,
-            Error::InvalidMut(_) => None,
-        }
-    }
-}
-
-impl From<RocksDBError> for Error {
-    fn from(e: RocksDBError) -> Self { Error::DB(e) }
-}
-
-impl Display for Error {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str(self.description())
-    }
-}
-
 
 /// A list of mutation rules
 pub type MutationRules = LinkedList<Box<MutationRule>>;
@@ -218,7 +139,8 @@ impl Database {
             if let Some(ref v) = change.value {
                 batch.put(&key, v).expect("Failure when adding to rocksdb batch.");
             } else {  // delete key
-                batch.delete(&key);
+                // TODO: this code is invalid, cannot delete from the batch, must delete from the db
+                batch.delete(&key).expect("TODO: cannot delete database items by deleting items in a batch");
             }
         }
 
