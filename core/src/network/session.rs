@@ -1,16 +1,13 @@
+use std::cmp::min;
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::sync::{Arc,Mutex};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::Relaxed;
-use std::cmp::min;
 
-use super::node::{Node, NodeEndpoint};
-
-use u256::*;
-use super::block::Block;
-use super::super::txn::Txn;
-use super::super::time::Time;
+use primitives::{Block, Txn, U256};
+use super::node::Node;
+use time::Time;
 
 use network::client::NetworkContext;
 

@@ -18,7 +18,7 @@ use clap::{Arg, ArgGroup, ArgMatches, App, SubCommand};
 
 use blockscape_core::env;
 use blockscape_core::network::client::Client;
-use blockscape_core::database::Database;
+use blockscape_core::record_keeper::database::Database;
 
 use boot::*;
 

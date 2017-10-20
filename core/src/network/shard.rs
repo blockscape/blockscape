@@ -5,11 +5,11 @@ use std::sync::Arc;
 
 use bincode::{serialize, deserialize, Bounded};
 
-use u160::*;
-use u256::*;
+use primitives::u160::*;
+use primitives::u256::*;
 
-use block::*;
-use txn::*;
+use primitives::block::*;
+use primitives::txn::*;
 use hash::*;
 use time::Time;
 

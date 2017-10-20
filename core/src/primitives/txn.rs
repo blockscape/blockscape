@@ -1,8 +1,8 @@
+use openssl::pkey::PKey;
+use primitives::Mutation;
+use signer::sign_obj;
 use std::vec::Vec;
 use time::Time;
-use mutation::Mutation;
-use openssl::pkey::PKey;
-use signer::sign_obj;
 
 // Expand and divide shard transactions
 // Positive reputation transaction ?

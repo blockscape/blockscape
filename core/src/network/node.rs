@@ -1,26 +1,19 @@
-use std::net::{SocketAddr,IpAddr};
-use u160::*;
-use std::sync::Arc;
-
-use std::collections::HashMap;
-use std::fs::File;
-use std::str::FromStr;
-use std::error::Error as BaseError;
-use env::get_storage_dir;
 use dns_lookup::lookup_host;
 use serde_json;
-
-use openssl::pkey::PKey;
-
-use std::path::*;
 use std::cmp::*;
-use std::sync::RwLock;
-
+use std::collections::HashMap;
+use std::fs::File;
 use std::io::{Read, Write, Error};
+use std::error::Error as BaseError;
+use std::net::{SocketAddr,IpAddr};
+use std::path::*;
+use std::sync::Arc;
+use std::sync::RwLock;
+use std::str::FromStr;
 
+use env::get_storage_dir;
 use hash::hash_pub_key;
-
-use rand;
+use primitives::U160;
 
 /// All the information needed to make contact with a remote node
 #[derive(Clone, Serialize, PartialEq, Eq, Deserialize, Debug)]

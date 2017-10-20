@@ -1,21 +1,16 @@
+use clap::{Arg, ArgGroup, ArgMatches, App, SubCommand};
+use openssl::pkey::PKey;
 use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::{Read,Write};
 use std::str::FromStr;
 
-use openssl::pkey::PKey;
-
-use clap::{Arg, ArgGroup, ArgMatches, App, SubCommand};
-
-use blockscape_core::block::*;
 use blockscape_core::env::get_storage_dir;
-use blockscape_core::txn::*;
-use blockscape_core::mutation::*;
-use blockscape_core::time::Time;
-use blockscape_core::signer::generate_private_key;
-use blockscape_core::u256::*;
 use blockscape_core::network::client::ClientConfig;
 use blockscape_core::network::node::NodeEndpoint;
+use blockscape_core::primitives::*;
+use blockscape_core::signer::generate_private_key;
+use blockscape_core::time::Time;
 
 /// Loads command line arguments, and returns them as a clap ArgMatches obj
 pub fn parse_cmdline<'a>() -> ArgMatches<'a> {
