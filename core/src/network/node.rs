@@ -4,10 +4,12 @@ use std::cmp::*;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write, Error};
+use std::error::Error as BaseError;
 use std::net::{SocketAddr,IpAddr};
 use std::path::*;
 use std::sync::Arc;
 use std::sync::RwLock;
+use std::str::FromStr;
 
 use env::get_storage_dir;
 use hash::hash_pub_key;
@@ -38,6 +40,29 @@ impl NodeEndpoint {
     }
 }
 
+impl FromStr for NodeEndpoint {
+
+    type Err = String;
+    
+    /// Convert from <hostname>:<port> format to a node endpoint
+    /// # Errors
+    /// * If the format is not correct
+    /// * If the port is not a parsable u16
+    /// # Note
+    /// * This does not check hostname validity, or perform any async blocking operation.
+    fn from_str(v: &str) -> Result<Self, Self::Err> {
+        let mut parts = v.split(':');
+
+        let host = parts.next().ok_or(String::from("Missing hostname part"))?;
+        let port = parts.next().ok_or(String::from("Missing port part"))?.parse::<u16>().map_err(|e| String::from(e.description()))?;
+
+        Ok(NodeEndpoint {
+            host: String::from(host),
+            port: port
+        })
+    }
+}
+
 /// Detailed information about a node
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct Node {
@@ -49,6 +74,18 @@ pub struct Node {
     pub version: u16,
     /// A description for the client, consisting typically of the name of the client, plus the version code
     pub name: String
+}
+
+impl Node {
+    /// Minimalist constructor for if you only have the endpoint (which is the minimum required)
+    pub fn new(endpoint: NodeEndpoint) -> Node {
+        Node {
+            endpoint: endpoint,
+            key: Vec::new(),
+            version: 1,
+            name: String::new()
+        }
+    }
 }
 
 #[derive(PartialEq, Eq, Clone, Serialize, Deserialize, Debug)]
@@ -104,6 +141,8 @@ impl NodeRepository {
 
     /// Based on the local score of nodes, get a list of the best ones to connect to
     /// This is primarily intended for startup, or when there are no nodes connected for whatever reason, and a connection is needed.
+    /// # Panics
+    /// * If the repository is empty (i.e. has 0 nodes to connect to). You should check this on your end.
     pub fn get_nodes(&self, idx: usize) -> Arc<Node> {
         Arc::new(self.available_nodes.get(&self.sorted_nodes[idx % self.sorted_nodes.len()]).map(|n| n.read().unwrap().clone()).unwrap().node)
     }
@@ -193,7 +232,8 @@ impl NodeRepository {
         self.available_nodes = HashMap::new();
         self.sorted_nodes = Vec::new();
 
-        let seed_node_vec = vec![LocalNode {
+        // TODO: Do we need/want this?
+        /*let seed_node_vec = vec![LocalNode {
             node: Node {
                 endpoint: NodeEndpoint {
                     host: String::from("seed-1.blockscape"),
@@ -216,11 +256,11 @@ impl NodeRepository {
                 name: String::from("Seed Node 2")
             },
             score: 10
-        }];
+        }];*/
 
         let imported = match nodes.len() {
             // I would put the below stuff into a constant, but making method calls (however constructive) is not allowed, so I must put it here.
-            0 => &seed_node_vec,
+            0 => return,
             _ => nodes
         };
 
@@ -300,8 +340,10 @@ impl NodeRepository {
 fn populated_seed_nodes() {
     let nr = NodeRepository::new();
 
-    assert_eq!(nr.get_nodes(0).name, "Seed Node 1");
-    assert_eq!(nr.get_nodes(1).name, "Seed Node 2");
+    assert_eq!(nr.len(), 0);
+
+    //assert_eq!(nr.get_nodes(0).name, "Seed Node 1");
+    //assert_eq!(nr.get_nodes(1).name, "Seed Node 2");
 }
 
 #[test]

@@ -1,4 +1,4 @@
-use bincode::{serialize, deserialize, Bounded};
+use bincode::deserialize;
 use openssl::pkey::PKey;
 use std::collections::{HashMap, VecDeque};
 use std::io::Error;
@@ -11,86 +11,14 @@ use std::time::Duration;
 use time::Time;
 
 use env::get_client_name;
-use hash::hash_pub_key;
 use network::node::*;
 use network::ntp::*;
 use network::session::*;
+use network::shard::*;
 use primitives::{Block, Txn, U256};
 use record_keeper::database::Database;
 use signer::generate_private_key;
 
-const NODE_SCAN_INTERVAL: i64 = 30000; // every 30 seconds
-const NODE_NTP_INTERVAL: i64 = 20 * 60000; // every 20 minutes
-
-#[derive(Serialize, Deserialize)]
-struct RawPacket {
-    /// Which communication channel should be regarded for this node.
-    /// This is included so nodes can have multiple connections to each other through separate shards
-    /// Port 255 is reserved for connecting from remote nodes when the local port is unknown
-    pub port: u8,
-    /// The data which should be delivered to the session handler
-    pub payload: Packet
-}
-
-//#[derive(Debug)]
-pub struct ClientConfig {
-    /// Sets a threshold which, at sufficiently low connectivity of nodes (AKA, less than this number), new nodes will be seeked out
-    pub min_nodes: u16,
-
-    /// Sets the maximum simultaneous node connections
-    pub max_nodes: u16,
-
-    pub ntp_servers: Vec<String>,
-
-    /// A private key used to sign and identify our own node data
-    pub private_key: PKey, 
-}
-
-impl ClientConfig {
-    /// Initializes the config with reasonable defaults
-    pub fn new() -> ClientConfig {
-        ClientConfig {
-            private_key: generate_private_key(),
-            ntp_servers: vec!["pool.ntp.org".into()],
-            min_nodes: 8,
-            max_nodes: 16
-        }
-    }
-}
-
-pub struct NetworkContext<'a> {
-    /// The database for RO access
-    pub db: &'a Database,
-
-    /// Queue of transactions to import
-    pub import_txns: VecDeque<Txn>,
-
-    /// Queue of blocks to import
-    pub import_blocks: VecDeque<Block>,
-
-    /// Nodes which can be connected to which were recently supplied
-    pub connect_peers: HashMap<U256, Vec<Node>>,
-}
-
-impl<'a> NetworkContext<'a> {
-    pub fn new(db: &'a Database) -> NetworkContext<'a> {
-        NetworkContext {
-            db: db,
-            import_txns: VecDeque::new(),
-            import_blocks: VecDeque::new(),
-            connect_peers: HashMap::new()
-        }
-    }
-
-    /// Initialize a node repository from file given the ID
-    /// NOTE: This is pretty slow, consider using sparingly
-    pub fn load_node_repo(network_id: U256) -> NodeRepository {
-        let mut repo = NodeRepository::new();
-        repo.load(network_id.to_string().as_str()).unwrap_or(0);
-
-        repo
-    }
-}
 
 /// Defines the kind of interaction this node will take with a particular shard
 pub enum ShardMode {
@@ -103,168 +31,104 @@ pub enum ShardMode {
     QueryOnly
 }
 
-struct ShardInfo {
-    /// Unique identifier for this shard (usually genesis block hash)
-    network_id: U256,
+const NODE_SCAN_INTERVAL: i64 = 30000; // every 30 seconds
+const NODE_NTP_INTERVAL: i64 = 20 * 60000; // every 20 minutes
 
-    /// The port which should be assigned to clients
-    pub port: u8,
+//#[derive(Debug)]
+pub struct ClientConfig {
+    /// Hostname to advertise as the node address, useful for DNS round robin or load balancing if wanted
+    pub hostname: String,
 
-    /// Functional requirements of this shard connection
-    pub mode: ShardMode,
+    /// The port to listen for UDP packets on and bind to
+    pub port: u16,
 
-    /// Independant "connections" to each of the other NodeEndpoints we interact with
-    pub sessions: RwLock<HashMap<SocketAddr, Session>>,
+    /// Sets a threshold which, at sufficiently low connectivity of nodes (AKA, less than this number), new nodes will be seeked out
+    pub min_nodes: u16,
 
-    /// The index of the node we should scan next in the node repository. Incremented for each connection attempt
-    last_peer_idx: usize,
+    /// Sets the maximum simultaneous node connections
+    pub max_nodes: u16,
 
-    /// Collection of nodes which can be connected to this on this network
-    node_repo: NodeRepository,
+    pub ntp_servers: Vec<String>,
+
+    pub seed_nodes: Vec<NodeEndpoint>,
+
+    /// A private key used to sign and identify our own node data
+    pub private_key: PKey
 }
 
-impl ShardInfo {
-    pub fn new(network_id: U256, port: u8, mode: ShardMode, repo: NodeRepository) -> ShardInfo {
-        ShardInfo {
-            network_id: network_id,
-            port: port,
-            mode: mode,
-            sessions: RwLock::new(HashMap::new()),
-            last_peer_idx: 0,
-            node_repo: repo
-        }
+impl ClientConfig {
+
+    /// Reccomended communication port for P2P blockscape protocol
+    pub const DEFAULT_PORT: u16 = 35653;
+
+    /// Initializes the config with reasonable defaults
+    pub fn new() -> ClientConfig {
+        ClientConfig::from_key(generate_private_key())
     }
 
-    /// Try to scan the node database and ensure the minimum requested number of nodes
-    pub fn node_scan(&mut self, my_node: &Arc<Node>, wanted: usize) -> usize {
-        let mut removed_nodes = Vec::new();
-
-        {
-            let mut attempts = 0;
-            while self.sessions.read().unwrap().len() < wanted {
-                info!("Reaching for new nodes...");
-                // try to connect a couple more nodes
-
-                let mut peer = self.node_repo.get_nodes(self.last_peer_idx);
-                self.last_peer_idx += 1;
-                
-                let sess: Option<(SocketAddr, Session)> = match self.open_session(my_node.clone(), peer.clone(), None) {
-                    Ok(sopt) => Some(sopt),
-                    Err(_) => {
-                        removed_nodes.push(hash_pub_key(&peer.key[..]));
-                        None
-                    }
-                };
-
-                if let Some((addr, sess)) = sess {
-                    self.sessions.write().unwrap().insert(addr, sess);
-                }
-
-                if attempts >= wanted * 3 || attempts > self.node_repo.len() {
-                    break;
-                }
-                attempts += 1;
-            }
-        }
-
-        if !removed_nodes.is_empty() {
-            for r in removed_nodes {
-                self.node_repo.remove(&r);
-            }
-        }
-
-        self.sessions.read().unwrap().len()
-    }
-
-    pub fn open_session(&self, peer: Arc<Node>, my_node: Arc<Node>, introduce: Option<&Packet>) -> Result<(SocketAddr, Session), ()> {
-        let pkh = hash_pub_key(&peer.key[..]);
-        let saddr = peer.endpoint.clone().as_socketaddr();
-
-        // now we can look into creating a new session
-        if let Some(addr) = saddr {
-            if self.sessions.read().unwrap().contains_key(&addr) {
-                return Err(()); // already connected
-            }
-
-            // ready to connect
-            let sess = Session::new(my_node.clone(), self.port, peer, addr, self.network_id.clone(), introduce);
-            Ok((addr, sess))
-        }
-        else {
-            // We have bogus data
-            warn!("Could not resolve hostname for node: {:?}", peer.endpoint);
-            Err(())
-        }
-    }
-
-    /// Call to set this shard to a state where all nodes are disconnected and data should stop being validated/tracked
-    pub fn close(&self, s: &UdpSocket) {
-        for (addr, sess) in self.sessions.read().unwrap().iter() {
-            sess.close();
-            self.send_packets(addr, s);
-        }
-    }
-
-    /// Evaluate a single packet and route it to a session as necessary
-    pub fn process_packet(&self, p: &Packet, addr: &SocketAddr, mut context: &mut NetworkContext, socket: &UdpSocket) {
-        {
-            match self.sessions.write().unwrap().get_mut(&addr) {
-                Some(sess) => {
-                    sess.recv(&p, &mut context);
+    pub fn from_key(key: PKey) -> ClientConfig {
+        ClientConfig {
+            private_key: key,
+            ntp_servers: vec!["pool.ntp.org".into()],
+            seed_nodes: vec![
+                NodeEndpoint {
+                    host: String::from("seed-1.blockscape"),
+                    port: 35653
                 },
-                None => {
-                    // should never happen because all sessions init through port 255
+                NodeEndpoint {
+                    host: String::from("seed-2.blockscape"),
+                    port: 35653
                 }
-            }
+            ],
+            min_nodes: 8,
+            max_nodes: 16,
+            hostname: String::from(""),
+            port: ClientConfig::DEFAULT_PORT
+        }
+    }
+}
+
+pub struct NetworkContext<'a> {
+    /// The database for RO access
+    pub db: &'a Database,
+
+    /// The configuation associated with this client
+    pub config: &'a ClientConfig,
+
+    /// Queue of transactions to import
+    pub import_txns: VecDeque<Txn>,
+
+    /// Queue of blocks to import
+    pub import_blocks: VecDeque<Block>,
+
+    /// Nodes which can be connected to which were recently supplied
+    pub connect_peers: HashMap<U256, Vec<Node>>,
+}
+
+impl<'a> NetworkContext<'a> {
+    pub fn new(db: &'a Database, config: &'a ClientConfig) -> NetworkContext<'a> {
+        NetworkContext {
+            db: db,
+            config: config,
+            import_txns: VecDeque::new(),
+            import_blocks: VecDeque::new(),
+            connect_peers: HashMap::new()
+        }
+    }
+
+    /// Initialize a node repository from file given the ID
+    /// NOTE: This is pretty slow, consider using sparingly
+    pub fn load_node_repo(&self, network_id: U256) -> NodeRepository {
+        let mut repo = NodeRepository::new();
+
+        let res = repo.load(network_id.to_string().as_str());
+        
+        if res.is_ok() && res.unwrap() == 0 {
+            // add seed nodes
+            repo.build(&self.config.seed_nodes.iter().cloned().map(|ep| LocalNode::new(Node::new(ep))).collect());
         }
 
-        // send any packets pending on the connection
-        // session should always be valid at this point.
-
-        // TODO: Consider rate limiting, which might work well here
-        self.send_packets(&addr, socket);
-    }
-
-    /// Send all the packets queued for the given session
-    pub fn send_packets(&self, addr: &SocketAddr, s: &UdpSocket) -> usize {
-        let mut count: usize = 0;
-
-        let mut sr = self.sessions.write().unwrap();
-        let sess = sr.get_mut(addr).unwrap();
-
-        while let Some(p) = sess.pop_send_queue() {
-
-            let mut rawp = RawPacket {
-                port: sess.get_remote().1,
-                payload: p
-            };
-
-            // TODO: Is it bad that I call this in 2 separate calls, or are they just buffered together?
-            let raw = serialize(&rawp, Bounded(Client::MAX_PACKET_SIZE as u64)).unwrap();
-            s.send_to(&serialize(&raw.len(), Bounded(4)).unwrap()[..], sess.get_remote_addr());
-            s.send_to(&raw[..], sess.get_remote_addr());
-
-            count += 1;
-        }
-
-        count
-    }
-
-    pub fn send_all_packets(&self, s: &UdpSocket) -> usize {
-        let mut sent = 0;
-        for addr in self.sessions.read().unwrap().keys() {
-            sent += self.send_packets(addr, s);
-        }
-
-        sent
-    }
-
-    pub fn get_network_id(&self) -> &U256 {
-        return &self.network_id;
-    }
-
-    pub fn get_node_repo(&self) -> &NodeRepository {
-        return &self.node_repo;
+        repo
     }
 }
 
@@ -296,13 +160,13 @@ pub struct Client {
     /// Whether or not we are entered the exit state for the network interface
     done: AtomicBool,
 
-    curr_port: AtomicUsize
+    curr_port: AtomicUsize,
 }
 
 impl Client {
 
     /// The maximum amount of data that can be in a single message object (the object itself can still be in split into pieces at the datagram level)
-    const MAX_PACKET_SIZE: usize = 1024 * 128;
+    pub const MAX_PACKET_SIZE: usize = 1024 * 128;
 
     pub fn new(db: Arc<Database>, config: ClientConfig) -> Client {
         
@@ -313,7 +177,7 @@ impl Client {
             my_node: Arc::new(Node {
                 key: config.private_key.public_key_to_der().unwrap(), // TODO: Should be public key only!
                 version: Session::PROTOCOL_VERSION,
-                endpoint: NodeEndpoint { host: String::from(""), port: 0 },
+                endpoint: NodeEndpoint { host: config.hostname.clone(), port: config.port },
                 name: get_client_name()
             }),
             config: config,
@@ -336,8 +200,10 @@ impl Client {
         }
 
         // first, setup the node repository
-        let repo = NetworkContext::load_node_repo(network_id);
+        let repo = NetworkContext::new(&self.db, &self.config).load_node_repo(network_id);
         let node_count = repo.len();
+
+        debug!("Attached network repo size: {}", node_count);
 
         // find a suitable port
         let mut port = 0;
@@ -371,13 +237,16 @@ impl Client {
     }
 
     pub fn detach_network(&self, network_id: &U256) -> bool {
-        let idx = self.resolve_port(network_id);
+        self.detach_network_port(self.resolve_port(network_id))
+    }
+
+    fn detach_network_port(&self, idx: u8) -> bool {
+        debug!("Detach network port: {}", idx);
 
         let mut sh = self.shards[idx as usize].write().unwrap();
         if let None = *sh {
             return false;
         }
-
 
         sh.as_ref().unwrap().close(&self.socket.as_ref().unwrap());
         *sh = None;
@@ -399,7 +268,7 @@ impl Client {
     }
 
     pub fn open(&mut self) -> Result<(), Error> {
-        match UdpSocket::bind(self.my_node.endpoint.clone().as_socketaddr().unwrap()) {
+        match UdpSocket::bind(self.my_node.endpoint.clone().as_socketaddr().expect("Could not parse hostname... is it valid?")) {
             Ok(s) => {
 
                 // socket should read indefinitely
@@ -482,16 +351,17 @@ impl Client {
                         b.clear();
                     }
                 },
-                Err(err) => break
+                Err(err) => {}
             }
 
             if let Some((p, addr)) = received_packet {
                 if let Some(ref shard) = *self.shards[p.port as usize].read().unwrap() {
-                    let mut context = NetworkContext::new(&self.db);
+                    let mut context = NetworkContext::new(&self.db, &self.config);
 
                     {
+                        shard.process_packet(&p.payload, &addr, &mut context);
                         let lock = self.socket_mux.lock();
-                        shard.process_packet(&p.payload, &addr, &mut context, &self.socket.as_ref().unwrap());
+                        shard.send_packets(&addr, &self.socket.as_ref().unwrap());
                     }
 
                     // process data in the context: do we have anything to import?
@@ -512,7 +382,10 @@ impl Client {
                         // new session?
                         let idx = self.resolve_port(network_id);
                         if let Some(ref shard) = *self.shards[idx as usize].read().unwrap() {
-                            shard.open_session(Arc::new(node.clone()), self.my_node.clone(), Some(&p.payload));
+                            if let Ok(addr) = shard.open_session(Arc::new(node.clone()), self.my_node.clone(), Some(&p.payload)) {
+                                let lock = self.socket_mux.lock();
+                                shard.send_packets(&addr, &self.socket.as_ref().unwrap());
+                            }
                         }
                         else {
                             debug!("Invalid network ID received in join for network: {}", network_id);
@@ -537,15 +410,34 @@ impl Client {
     }
 
     /// Spawns the threads and puts the networking into a full working state
-    pub fn run(this: Arc<Client>) {
+    pub fn run(this: Arc<Client>) -> Vec<thread::JoinHandle<()>> {
+
+        if this.done.load(Relaxed) {
+            panic!("Tried to run network after already closed");
+        }
+
+        let mut joins: Vec<thread::JoinHandle<()>> = Vec::new();
+
         let this2 = this.clone();
         // TODO: Do something about thread references! We need to be able to join to shut down the network thread
-        thread::Builder::new().name("P2P Handler".into()).spawn(move || this.recv_loop());
-        thread::Builder::new().name("Net Discovery/Maintenance".into()).spawn(move || {
+        joins.push(thread::Builder::new().name("P2P Handler".into()).spawn(move || {
+            info!("P2P Handler thread ready");
+            this.recv_loop();
+            info!("P2P Handler thread completed");
+        }).expect("Could not start P2P handler thread"));
+        joins.push(thread::Builder::new().name("Net Discovery/Maintenance".into()).spawn(move || {
+
+            info!("Node discovery/maintenance thread ready");
+
             let mut last_ntp_scan = Time::from_seconds(0);
             let mut last_node_scan = Time::from_seconds(0);
 
             loop {
+
+                if this2.done.load(Relaxed) {
+                    break;
+                }
+
                 let n = Time::current_local();
 
                 if last_ntp_scan.diff(&n).millis() > NODE_NTP_INTERVAL && !this2.config.ntp_servers.is_empty() {
@@ -553,10 +445,10 @@ impl Client {
                     match calc_ntp_drift(this2.config.ntp_servers[0].as_str()) {
                         Ok(drift) => {
                             Time::update_ntp(drift);
-                            debug!("NTP time sync completed: {}", drift);
+                            debug!("NTP time sync completed: drift is {}", drift);
                         },
-                        Err(()) => {
-                            warn!("NTP time sync failed");
+                        Err(reason) => {
+                            warn!("NTP time sync failed: {}", reason);
                         }
                     }
 
@@ -565,12 +457,50 @@ impl Client {
 
                 if last_node_scan.diff(&n).millis() > NODE_SCAN_INTERVAL {
                     // tell all networks to connect to more nodes
+                    info!("Node scan started");
+
+                    for i in 0..255 {
+                        if let Some(ref mut s) = *this2.shards[i].write().unwrap() {
+                            s.node_scan(&this2.my_node, this2.config.min_nodes as usize);
+
+                            let lock = this2.socket_mux.lock();
+                            s.send_all_packets(&this2.socket.as_ref().unwrap());
+                        }
+                    }
+
+                    info!("Node scan completed");
+
                     last_node_scan = n;
                 }
 
                 thread::sleep(::std::time::Duration::from_millis(1000));
             }
-        });
+
+            info!("Node discovery thread completed");
+        }).expect("Could not start node discovery thread"));
+
+        joins
+    }
+
+    /// End all network resources and prepare for program close
+    /// You are still responsible for joining to the network threads to make sure they close properly
+    pub fn close(&self) {
+
+        debug!("Closing network...");
+
+        self.done.store(true, Relaxed);
+
+        // detach all networks
+        for i in 0..255 {
+            let mut exists = false;
+            {
+                exists = self.shards[i].read().unwrap().is_some();
+            }
+
+            if exists {
+                self.detach_network_port(i as u8);
+            }
+        }
     }
 
     pub fn report_txn(&self, txn: Txn) {

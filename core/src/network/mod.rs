@@ -1,4 +1,5 @@
 pub mod client;
-mod node;
+pub mod node;
 mod session;
 mod ntp;
+mod shard;
