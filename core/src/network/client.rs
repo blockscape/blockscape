@@ -11,7 +11,6 @@ use std::time::Duration;
 use time::Time;
 
 use env::get_client_name;
-use hash::hash_pub_key;
 use network::node::*;
 use network::ntp::*;
 use network::session::*;
@@ -19,6 +18,18 @@ use network::shard::*;
 use primitives::{Block, Txn, U256};
 use record_keeper::database::Database;
 use signer::generate_private_key;
+
+
+/// Defines the kind of interaction this node will take with a particular shard
+pub enum ShardMode {
+    /// Full participation, operating in block mining, full work processing, full authority
+    Primary,
+    /// This is a long term connection and we still validate and sync on this shard, but less processing, primarily just validation
+    Auxillery,
+    /// Used when connecting to a shard to only get information from authoritative network sources. Good for when a player views a arbitrary shard
+    /// for gameplay. 
+    QueryOnly
+}
 
 const NODE_SCAN_INTERVAL: i64 = 30000; // every 30 seconds
 const NODE_NTP_INTERVAL: i64 = 20 * 60000; // every 20 minutes
@@ -81,6 +92,9 @@ pub struct NetworkContext<'a> {
     /// The database for RO access
     pub db: &'a Database,
 
+    /// The configuation associated with this client
+    pub config: &'a ClientConfig,
+
     /// Queue of transactions to import
     pub import_txns: VecDeque<Txn>,
 
@@ -92,9 +106,10 @@ pub struct NetworkContext<'a> {
 }
 
 impl<'a> NetworkContext<'a> {
-    pub fn new(db: &'a Database) -> NetworkContext<'a> {
+    pub fn new(db: &'a Database, config: &'a ClientConfig) -> NetworkContext<'a> {
         NetworkContext {
             db: db,
+            config: config,
             import_txns: VecDeque::new(),
             import_blocks: VecDeque::new(),
             connect_peers: HashMap::new()
@@ -103,9 +118,15 @@ impl<'a> NetworkContext<'a> {
 
     /// Initialize a node repository from file given the ID
     /// NOTE: This is pretty slow, consider using sparingly
-    pub fn load_node_repo(network_id: U256) -> NodeRepository {
+    pub fn load_node_repo(&self, network_id: U256) -> NodeRepository {
         let mut repo = NodeRepository::new();
-        repo.load(network_id.to_string().as_str()).unwrap_or(0);
+
+        let res = repo.load(network_id.to_string().as_str());
+        
+        if res.is_ok() && res.unwrap() == 0 {
+            // add seed nodes
+            repo.build(&self.config.seed_nodes.iter().cloned().map(|ep| LocalNode::new(Node::new(ep))).collect());
+        }
 
         repo
     }
@@ -179,8 +200,10 @@ impl Client {
         }
 
         // first, setup the node repository
-        let repo = NetworkContext::load_node_repo(network_id);
+        let repo = NetworkContext::new(&self.db, &self.config).load_node_repo(network_id);
         let node_count = repo.len();
+
+        debug!("Attached network repo size: {}", node_count);
 
         // find a suitable port
         let mut port = 0;
@@ -218,6 +241,8 @@ impl Client {
     }
 
     fn detach_network_port(&self, idx: u8) -> bool {
+        debug!("Detach network port: {}", idx);
+
         let mut sh = self.shards[idx as usize].write().unwrap();
         if let None = *sh {
             return false;
@@ -331,11 +356,12 @@ impl Client {
 
             if let Some((p, addr)) = received_packet {
                 if let Some(ref shard) = *self.shards[p.port as usize].read().unwrap() {
-                    let mut context = NetworkContext::new(&self.db);
+                    let mut context = NetworkContext::new(&self.db, &self.config);
 
                     {
+                        shard.process_packet(&p.payload, &addr, &mut context);
                         let lock = self.socket_mux.lock();
-                        shard.process_packet(&p.payload, &addr, &mut context, &self.socket.as_ref().unwrap());
+                        shard.send_packets(&addr, &self.socket.as_ref().unwrap());
                     }
 
                     // process data in the context: do we have anything to import?
@@ -356,7 +382,10 @@ impl Client {
                         // new session?
                         let idx = self.resolve_port(network_id);
                         if let Some(ref shard) = *self.shards[idx as usize].read().unwrap() {
-                            shard.open_session(Arc::new(node.clone()), self.my_node.clone(), Some(&p.payload));
+                            if let Ok(addr) = shard.open_session(Arc::new(node.clone()), self.my_node.clone(), Some(&p.payload)) {
+                                let lock = self.socket_mux.lock();
+                                shard.send_packets(&addr, &self.socket.as_ref().unwrap());
+                            }
                         }
                         else {
                             debug!("Invalid network ID received in join for network: {}", network_id);
@@ -433,6 +462,9 @@ impl Client {
                     for i in 0..255 {
                         if let Some(ref mut s) = *this2.shards[i].write().unwrap() {
                             s.node_scan(&this2.my_node, this2.config.min_nodes as usize);
+
+                            let lock = this2.socket_mux.lock();
+                            s.send_all_packets(&this2.socket.as_ref().unwrap());
                         }
                     }
 
@@ -460,7 +492,10 @@ impl Client {
 
         // detach all networks
         for i in 0..255 {
-            let exists = self.shards[i].read().unwrap().is_some();
+            let mut exists = false;
+            {
+                exists = self.shards[i].read().unwrap().is_some();
+            }
 
             if exists {
                 self.detach_network_port(i as u8);

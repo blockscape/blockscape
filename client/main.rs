@@ -20,8 +20,10 @@ use clap::{Arg, ArgGroup, ArgMatches, App, SubCommand};
 
 use chan_signal::Signal;
 
+use blockscape_core::primitives::HasBlockHeader;
 use blockscape_core::env;
 use blockscape_core::network::client::Client;
+use blockscape_core::network::client::ShardMode;
 use blockscape_core::record_keeper::database::Database;
 
 use boot::*;
@@ -60,6 +62,13 @@ fn main() {
         let mut c = Client::new(db, cc);
         c.open();
 
+        // TODO: Somewhere around here, we read a config or cmdline or something to figure out which net to work for
+        // but start with the genesis
+        let genesis_net = make_genesis().0.get_header().calculate_hash();
+
+        // must be connected to at least one network in order to do anything, might as well be genesis for now.
+        c.attach_network(genesis_net, ShardMode::Primary);
+
         net_client = Some(
             Arc::new(c)
         );
@@ -83,8 +92,12 @@ fn main() {
     if let Some(client) = net_client {
         client.close();
     }
+
+    debug!("Waiting for threads...");
     
-    threads.pop().unwrap().join();
+    while let Some(thread) = threads.pop() {
+        thread.join().expect("Failed to join thread");
+    }
 
     println!("Exiting...");
 }

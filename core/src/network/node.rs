@@ -76,6 +76,18 @@ pub struct Node {
     pub name: String
 }
 
+impl Node {
+    /// Minimalist constructor for if you only have the endpoint (which is the minimum required)
+    pub fn new(endpoint: NodeEndpoint) -> Node {
+        Node {
+            endpoint: endpoint,
+            key: Vec::new(),
+            version: 1,
+            name: String::new()
+        }
+    }
+}
+
 #[derive(PartialEq, Eq, Clone, Serialize, Deserialize, Debug)]
 pub struct LocalNode {
     pub node: Node,
@@ -129,6 +141,8 @@ impl NodeRepository {
 
     /// Based on the local score of nodes, get a list of the best ones to connect to
     /// This is primarily intended for startup, or when there are no nodes connected for whatever reason, and a connection is needed.
+    /// # Panics
+    /// * If the repository is empty (i.e. has 0 nodes to connect to). You should check this on your end.
     pub fn get_nodes(&self, idx: usize) -> Arc<Node> {
         Arc::new(self.available_nodes.get(&self.sorted_nodes[idx % self.sorted_nodes.len()]).map(|n| n.read().unwrap().clone()).unwrap().node)
     }
@@ -218,7 +232,8 @@ impl NodeRepository {
         self.available_nodes = HashMap::new();
         self.sorted_nodes = Vec::new();
 
-        let seed_node_vec = vec![LocalNode {
+        // TODO: Do we need/want this?
+        /*let seed_node_vec = vec![LocalNode {
             node: Node {
                 endpoint: NodeEndpoint {
                     host: String::from("seed-1.blockscape"),
@@ -241,11 +256,11 @@ impl NodeRepository {
                 name: String::from("Seed Node 2")
             },
             score: 10
-        }];
+        }];*/
 
         let imported = match nodes.len() {
             // I would put the below stuff into a constant, but making method calls (however constructive) is not allowed, so I must put it here.
-            0 => &seed_node_vec,
+            0 => return,
             _ => nodes
         };
 
@@ -325,8 +340,10 @@ impl NodeRepository {
 fn populated_seed_nodes() {
     let nr = NodeRepository::new();
 
-    assert_eq!(nr.get_nodes(0).name, "Seed Node 1");
-    assert_eq!(nr.get_nodes(1).name, "Seed Node 2");
+    assert_eq!(nr.len(), 0);
+
+    //assert_eq!(nr.get_nodes(0).name, "Seed Node 1");
+    //assert_eq!(nr.get_nodes(1).name, "Seed Node 2");
 }
 
 #[test]
