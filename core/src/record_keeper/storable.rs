@@ -1,8 +1,18 @@
 use serde;
 
 /// Storable objects are able to be stored in a `Database` instance.
-/// Example implementation:
+///
+/// # Examples 
+///
 /// ```
+/// extern crate blockscape_core;
+/// extern crate serde;
+///
+/// #[macro_use]
+/// extern crate serde_derive;
+///
+/// use blockscape_core::record_keeper::Storable;
+///
 /// #[derive(Serialize, Deserialize)]
 /// struct Example {
 ///     a: u8,
@@ -10,17 +20,15 @@ use serde;
 /// }
 ///
 /// impl Storable for Example {
-///     type DeserializeErr = String;
 ///     fn global_id() -> &'static [u8] { b"p" }
 ///     fn instance_id(&self) -> Vec<u8> { vec![self.a, self.b] }
 /// }
+///
+/// fn main() {}
 /// ```
 pub trait Storable: serde::Serialize + serde::de::DeserializeOwned {
-    /// Error to be returned if it could not be deserialized correctly.
-    // type DeserializeErr;
-
     /// Return a unique ID for the type, an example of this is b"plot", though the smallest
-    /// reasonable values would be better, e.g. b"p" for plot. All storable types must return
+    /// reasonable values would be better, e.g. `b"p"` for plot. All storable types must return
     /// different IDs or there may be collisions.
     fn global_id() -> &'static [u8];
 
@@ -33,7 +41,6 @@ pub trait Storable: serde::Serialize + serde::de::DeserializeOwned {
     fn key(&self) -> Vec<u8> {
         let mut key = Vec::new();
         key.extend_from_slice(Self::global_id());
-        key.append(&mut self.instance_id());
-        key
+        key.append(&mut self.instance_id()); key
     }
 }
