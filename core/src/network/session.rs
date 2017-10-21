@@ -294,7 +294,7 @@ impl Session {
                 Message::FindNodes { ref network_id, ref skip } => {
 
                     // send back a list of nodes that I know about for the specified network
-                    let repo = NetworkContext::load_node_repo(network_id.clone());
+                    let repo = context.load_node_repo(network_id.clone());
 
                     let mut nodes: Vec<Node> = Vec::with_capacity(min(Session::NODE_RESPONSE_SIZE, repo.len()));
 

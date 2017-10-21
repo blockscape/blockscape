@@ -2,6 +2,7 @@ use primitives::U256;
 use std::collections::BTreeSet;
 use time::Time;
 
+use hash::hash_obj;
 
 /// The main infromation about a block. This noteably excludes the list of transactions.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -10,6 +11,12 @@ pub struct BlockHeader {
     pub timestamp: Time,
     pub hash_previous_block: U256,
     pub hash_merkle_root: U256,
+}
+
+impl BlockHeader {
+    pub fn calculate_hash(&self) -> U256 {
+        hash_obj(self)
+    }
 }
 
 /// The core unit of the blockchain.
