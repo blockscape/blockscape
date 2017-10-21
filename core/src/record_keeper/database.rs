@@ -148,59 +148,12 @@ impl Database {
     }
 
     /// Put raw data into the database. Should have no uses outside this class.
-    fn put_raw_data(&mut self, key: &[u8], data: &[u8], postfix: &'static [u8]) -> Result<(), Error> {
+    pub fn put_raw_data(&mut self, key: &[u8], data: &[u8], postfix: &'static [u8]) -> Result<(), Error> {
         let key = {
             let mut k = Vec::from(key);
             k.extend_from_slice(postfix); k
         };
 
         Ok(self.db.put(&key, &data)?)
-    }
-
-    /// Retrieve and deserialize data from the database. This will return an error if the database
-    /// has an issue, if the data cannot be deserialized or if the object is not present in the
-    /// database. Note that `instance_id` should be the object's ID/key which would normally be
-    /// returned from calling `storable.instance_id()`.
-    pub fn get<S: Storable>(&self, instance_id: &[u8], postfix: &'static [u8]) -> Result<S, Error> {
-        let key = {
-            let mut k = Vec::from(S::global_id());
-            k.extend_from_slice(instance_id); k
-        };
-
-        let raw = self.get_raw_data(&key, postfix)?;
-        bincode::deserialize::<S>(&raw)
-        .map_err(|e| Error::Deserialize(e.to_string()))
-    }
-
-    /// Serialize and store data in the database. This will return an error if the database has an
-    /// issue.
-    fn put<S: Storable>(&mut self, obj: &S, postfix: &'static [u8]) -> Result<(), Error> {
-        let value = bincode::serialize(obj, bincode::Infinite)
-            .expect("Error serializing game data.");
-        self.put_raw_data(&obj.key(), &value, postfix)
-    }
-
-    /// Retrieve blockchain data from the database. Use this for things like Blocks or Txns.
-    pub fn get_blockchain_data<S: Storable>(&self, hash: &U256) -> Result<S, Error> {
-        let mut id: [u8; 32] = [0u8; 32];
-        hash.to_little_endian(&mut id);
-
-        self.get::<S>(&id, BLOCKCHAIN_POSTFIX)
-    }
-
-
-    /// Write a blockchain object into the database. Use this for things like Blocks or Txns. With generics:
-    pub fn put_blockchain_data<S: Storable>(&mut self, obj: &S) -> Result<(), Error> {
-        self.put::<S>(obj, BLOCKCHAIN_POSTFIX)
-    }
-
-    /// Retrieve cache data from the database. This is for library use only.
-    pub fn get_cache_data<S: Storable>(&self, instance_id: &[u8]) -> Result<S, Error> {
-        self.get::<S>(instance_id, CACHE_POSTFIX)
-    }
-
-    /// Put cache data into the database. This is for library use only.
-    pub fn put_cache_data<S: Storable>(&mut self, obj: &S) -> Result<(), Error> {
-        self.put::<S>(obj, CACHE_POSTFIX)
     }
 }
