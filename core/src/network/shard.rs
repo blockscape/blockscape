@@ -7,8 +7,7 @@ use std::collections::VecDeque;
 use bincode::{serialize, Bounded};
 
 use primitives::u256::*;
-
-use hash::*;
+use primitives::u160::*;
 
 use network::client::*;
 use network::session::*;
@@ -61,6 +60,9 @@ impl ShardInfo {
         // do we need more nodes to connect to (from the queue)? If so, pull from the node repo
         {
             let mut queue = self.connect_queue.lock().unwrap();
+
+            info!("Starting new node queue size: {}, repo size: {}", queue.len(), self.node_repo.len());
+
             let mut attempts = 0;
             if self.node_repo.len() > 0 {
                 while cur_count + queue.len() < wanted {
@@ -71,7 +73,7 @@ impl ShardInfo {
 
                     attempts += 1;
 
-                    if attempts >= wanted * 3 || attempts > self.node_repo.len() {
+                    if attempts >= wanted * 3 || attempts >= self.node_repo.len() {
                         break;
                     }
                 }
@@ -80,15 +82,15 @@ impl ShardInfo {
             info!("Reaching for {} new nodes...", queue.len());
         }
 
-        let mut removed_nodes = Vec::new();
+        let mut removed_nodes: Vec<U160> = Vec::new();
 
         // pull from the connection queue
 
         while let Some(peer) = self.connect_queue.lock().unwrap().pop_front() {
-            let sess: Option<SocketAddr> = match self.open_session(my_node.clone(), peer.clone(), None) {
+            let sess: Option<SocketAddr> = match self.open_session(peer.clone(), my_node.clone(), None) {
                 Ok(sopt) => Some(sopt),
                 Err(_) => {
-                    removed_nodes.push(hash_pub_key(&peer.key[..]));
+                    removed_nodes.push(peer.get_hash_id());
                     None
                 }
             };
@@ -101,8 +103,49 @@ impl ShardInfo {
         self.sessions.read().unwrap().len()
     }
 
+    /// Sends pings and removes dead connections as necessary
+    pub fn check_sessions(&mut self) {
+
+        let mut removed: Vec<SocketAddr> = Vec::new();
+
+
+        let mut s = self.sessions.write().unwrap();
+
+        for (addr, mut sess) in s.iter_mut() {
+            sess.check_conn();
+
+            if let Some(d) = sess.is_done() {
+                removed.push(addr.clone());
+
+                debug!("Remove session: {:?}", sess.get_remote_node().endpoint);
+
+                // may have to do something additional depending on the failure reason:
+                match d {
+                    ByeReason::ExitPermanent => {
+                        // remove this node from the db as well
+                        self.node_repo.remove(
+                            &sess.get_remote_node().get_hash_id()
+                        );
+                    },
+                    // TODO: Maybe also add the node to a blacklist of some kind?
+                    ByeReason::Abuse => {
+                        // remove this node from the db as well
+                        self.node_repo.remove(
+                            &sess.get_remote_node().get_hash_id()
+                        );
+                    },
+                    _ => {}
+                }
+            }
+        }
+
+        for remove in removed {
+            s.remove(&remove);
+        }
+    }
+
     pub fn open_session(&self, peer: Arc<Node>, my_node: Arc<Node>, introduce: Option<&Packet>) -> Result<SocketAddr, ()> {
-        let pkh = hash_pub_key(&peer.key[..]);
+        let pkh = peer.get_hash_id();
         let saddr = peer.endpoint.clone().as_socketaddr();
 
         // now we can look into creating a new session
@@ -110,6 +153,8 @@ impl ShardInfo {
             if self.sessions.read().unwrap().contains_key(&addr) {
                 return Err(()); // already connected
             }
+
+            debug!("New session: {:?}", peer.endpoint);
 
             // ready to connect
             let sess = Session::new(my_node.clone(), self.port, peer, addr, self.network_id.clone(), introduce);
@@ -153,18 +198,19 @@ impl ShardInfo {
         }
     }
 
-    /// Send all the packets queued for the given session
-    pub fn send_packets(&self, addr: &SocketAddr, s: &UdpSocket) -> usize {
+    /// Send all the packets queued for the given session. Returns number of bytes sent.
+    pub fn send_packets(&self, addr: &SocketAddr, s: &UdpSocket) -> u64 {
         let mut sr = self.sessions.write().unwrap();
         let mut sess = sr.get_mut(addr).unwrap();
 
         send_session_packets(&mut sess, s)
     }
 
+    /// Send all the packets queued for any session in this network. Returns number of bytes sent.
     pub fn send_all_packets(&self, s: &UdpSocket) -> usize {
-        let mut sent = 0;
+        let mut sent: usize = 0;
         for mut sess in self.sessions.write().unwrap().values_mut() {
-            sent += send_session_packets(&mut sess, s);
+            sent += send_session_packets(&mut sess, s) as usize;
         }
 
         sent
@@ -177,10 +223,14 @@ impl ShardInfo {
     pub fn get_node_repo(&self) -> &NodeRepository {
         return &self.node_repo;
     }
+
+    pub fn session_count(&self) -> usize {
+        return self.sessions.read().unwrap().len();
+    }
 }
 
-fn send_session_packets(sess: &mut Session, s: &UdpSocket) -> usize {
-    let mut count: usize = 0;
+fn send_session_packets(sess: &mut Session, s: &UdpSocket) -> u64 {
+    let mut count: u64 = 0;
 
     while let Some(p) = sess.pop_send_queue() {
 
@@ -195,7 +245,7 @@ fn send_session_packets(sess: &mut Session, s: &UdpSocket) -> usize {
         s.send_to(&size_enc[..], sess.get_remote_addr());
         s.send_to(&raw[..], sess.get_remote_addr());
 
-        count += 1;
+        count += 4 + raw.len() as u64;
     }
 
     count
