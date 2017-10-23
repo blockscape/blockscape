@@ -82,8 +82,8 @@ pub fn make_genesis() -> (Block, Vec<Txn>) {
         header: BlockHeader {
             version: 1,
             timestamp: Time::from_seconds(1508009036),
-            hash_previous_block: U256_ZERO,
-            hash_merkle_root: U256_ZERO
+            prev: U256_ZERO,
+            merkle_root: U256_ZERO
         },
         transactions: BTreeSet::new()
     };

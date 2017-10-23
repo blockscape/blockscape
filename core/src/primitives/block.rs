@@ -9,8 +9,8 @@ use hash::hash_obj;
 pub struct BlockHeader {
     pub version: u16,
     pub timestamp: Time,
-    pub hash_previous_block: U256,
-    pub hash_merkle_root: U256,
+    pub prev: U256,
+    pub merkle_root: U256,
 }
 
 impl BlockHeader {

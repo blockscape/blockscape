@@ -1,18 +1,23 @@
 use bincode;
-use primitives::Mutation;
+use bytes::{BigEndian, ByteOrder};
+use primitives::{U256, Txn, Block, BlockHeader, Mutation};
+use std::collections::{HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::RwLock;
 use super::{MutationRule, MutationRules, Error, Storable};
 use super::database::*;
-use primitives::U256;
+
+const HEIGHT_PREFIX: &[u8] = b"h";
 
 /// An abstraction on the concept of states and state state data. Builds higher-level functunality
 /// On top of the database. The implementation uses RwLocks to provide many read, single write
 /// thread safety.
+/// TODO: Also add a block to the known blocks if it is only referenced.
 pub struct RecordKeeper {
     db: RwLock<Database>,
     rules: RwLock<MutationRules>,
+    pending_txns: RwLock<HashMap<U256, Txn>>
 }
 
 impl RecordKeeper {
@@ -22,6 +27,7 @@ impl RecordKeeper {
         RecordKeeper{
             db: RwLock::new(db),
             rules: RwLock::new(rules.unwrap_or(MutationRules::new())),
+            pending_txns: RwLock::new(HashMap::new())
         }
     }
 
@@ -34,6 +40,77 @@ impl RecordKeeper {
     pub fn open(path: Option<PathBuf>, rules: Option<MutationRules>) -> Result<RecordKeeper, Error> {
         let db = Database::open(path)?;
         Ok(Self::new(db, rules))
+    }
+
+
+    pub fn create_block(&self, txns: HashSet<U256>) -> Block {
+        unimplemented!("Need to create blocks from transactions")
+    }
+
+    pub fn add_block(&mut self, block: &Block) -> Result<(), Error> {
+        let block_hash = block.header.calculate_hash();
+        let block_height = self.get_block_height(&block.header.prev)?;
+        self.add_block_to_height(block_height, block_hash)?;
+
+        unimplemented!("Need to add a block and move the state forward if it is longer than the current chain")
+    }
+
+    /// Add a block the set of known blocks at a given height.
+    fn add_block_to_height(&mut self, height: u64, block: U256) -> Result<(), Error> {
+        let key = Self::get_block_height_key(height);
+        let mut db = self.db.write().unwrap(); // single lock through whole process
+        let res = db.get_raw_data(&key, CACHE_POSTFIX);
+        
+        let mut height_vals: HashSet<U256> = {
+            match res {
+                Ok(raw) => bincode::deserialize(&raw)?,
+                Err(e) => match e {
+                    Error::NotFound(..) => HashSet::new(),
+                    _ => return Err(e)
+                }
+            }
+        };
+
+        height_vals.insert(block);
+        let raw = bincode::serialize(&height_vals, bincode::Infinite)?;
+        db.put_raw_data(&key, &raw, CACHE_POSTFIX)
+    }
+
+    /// Calculate the height of a given block. It will follow the path until it finds the genesis
+    /// block which is denoted by having a previous block reference of 0.
+    pub fn get_block_height(&self, hash: &U256) -> Result<u64, Error> {
+        let mut h: u64 = 0;
+        let mut block = self.get_block_header(hash)?;
+
+        while !block.prev.is_zero() {  // while we have not reached genesis...
+            h += 1;
+            block = self.get_block_header(&block.prev)?;
+        } Ok(h)
+    }
+
+    /// Return a list of **known** blocks which have a given height. If the block has not been added
+    /// to the database, then it will not be included.
+    pub fn get_blocks_of_height(&self, height: u64) -> Result<HashSet<U256>, Error> {
+        let key = Self::get_block_height_key(height);
+        let res = self.get_raw_data(&key, CACHE_POSTFIX);
+        match res {
+            Ok(raw) => { // found something, deserialize
+                Ok(bincode::deserialize::<HashSet<U256>>(&raw)?)
+            },
+            Err(e) => match e {
+                Error::NotFound(..) => // nothing known to us, so emptyset
+                    Ok(HashSet::new()),
+                _ => Err(e) // some sort of database error
+            }
+        }
+    }
+
+    /// Get the key value for the height cache in the database. (Without the cache postfix).
+    fn get_block_height_key(height: u64) -> Vec<u8> {
+        let mut buf = [0u8; 8];
+        BigEndian::write_u64(&mut buf, height);
+        let mut k = Vec::from(HEIGHT_PREFIX);
+        k.extend_from_slice(&buf); k
     }
 
 
@@ -50,6 +127,7 @@ impl RecordKeeper {
         self.is_valid_given_lock(&*db_lock, mutation)
     }
 
+    
     /// Internal use function to check if a mutation is valid given a lock of the db. While it only
     /// takes a reference to a db, make sure a lock is in scope which is used to get the db ref.
     fn is_valid_given_lock(&self, db: &Database, mutation: &Mutation) -> Result<(), String> {
@@ -60,7 +138,6 @@ impl RecordKeeper {
         }
         Ok(())
     }
-
 
     /// Check if a mutation is valid and then apply the changes to the network state.
     fn mutate(&mut self, mutation: &Mutation) -> Result<Mutation, Error> {
@@ -90,8 +167,7 @@ impl RecordKeeper {
         };
 
         let raw = self.get_raw_data(&key, postfix)?;
-        bincode::deserialize::<S>(&raw)
-        .map_err(|e| Error::Deserialize(e.to_string()))
+        Ok(bincode::deserialize::<S>(&raw)?)
     }
 
     /// Serialize and store data in the database. This will return an error if the database has an
@@ -125,9 +201,24 @@ impl RecordKeeper {
     }
 
     /// Retrieve blockchain data from the database. Use this for things like Blocks or Txns.
-    pub fn get_blockchain_data<S: Storable>(&self, hash: &U256) -> Result<S, Error> {
+    fn get_blockchain_data<S: Storable>(&self, hash: &U256) -> Result<S, Error> {
         let mut id: [u8; 32] = [0u8; 32];
         hash.to_little_endian(&mut id);
         self.get::<S>(&id, BLOCKCHAIN_POSTFIX)
+    }
+
+    /// Retrieve a block header from the database.
+    pub fn get_block_header(&self, hash: &U256) -> Result<BlockHeader, Error> {
+        unimplemented!()
+    }
+
+    /// Get a block including its list of transactions from the database.
+    pub fn get_block(&self, hash: &U256) -> Result<Block, Error> {
+        unimplemented!()
+    }
+
+    /// Get a transaction from the database.
+    pub fn get_txn(&self, hash: &U256) -> Result<Txn, Error> {
+        unimplemented!()
     }
 }

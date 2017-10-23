@@ -1,3 +1,4 @@
+use bincode::Error as BincodeError;
 use rocksdb::Error as RocksDBError;
 use std::error::Error as StdErr;
 use std::fmt;
@@ -7,7 +8,7 @@ use std::fmt::Display;
 pub enum Error {
     DB(RocksDBError), // when there is an error working with the database itself
     NotFound(&'static [u8], Vec<u8>), // when data is not found in the database
-    Deserialize(String), // when data cannot be deserialized
+    Deserialize(BincodeError), // when data cannot be deserialized
     InvalidMut(String) // when a rule is broken by a mutation
 }
 
@@ -25,7 +26,7 @@ impl StdErr for Error {
         match *self {
             Error::DB(ref e) => Some(e),
             Error::NotFound(_, _) => None,
-            Error::Deserialize(_) => None,
+            Error::Deserialize(ref e) => Some(e),
             Error::InvalidMut(_) => None,
         }
     }
@@ -33,6 +34,10 @@ impl StdErr for Error {
 
 impl From<RocksDBError> for Error {
     fn from(e: RocksDBError) -> Self { Error::DB(e) }
+}
+
+impl From<BincodeError> for Error {
+    fn from(e: BincodeError) -> Self { Error::Deserialize(e) }
 }
 
 impl Display for Error {
