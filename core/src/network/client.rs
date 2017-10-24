@@ -16,7 +16,7 @@ use network::ntp::*;
 use network::session::*;
 use network::shard::*;
 use primitives::{Block, Txn, U256};
-use record_keeper::database::Database;
+use record_keeper::RecordKeeper;
 use signer::generate_private_key;
 
 
@@ -90,7 +90,7 @@ impl ClientConfig {
 
 pub struct NetworkContext<'a> {
     /// The database for RO access
-    pub db: &'a Database,
+    pub db: &'a RecordKeeper,
 
     /// The configuation associated with this client
     pub config: &'a ClientConfig,
@@ -106,7 +106,7 @@ pub struct NetworkContext<'a> {
 }
 
 impl<'a> NetworkContext<'a> {
-    pub fn new(db: &'a Database, config: &'a ClientConfig) -> NetworkContext<'a> {
+    pub fn new(db: &'a RecordKeeper, config: &'a ClientConfig) -> NetworkContext<'a> {
         NetworkContext {
             db: db,
             config: config,
@@ -141,7 +141,7 @@ pub struct Client {
     my_node: Arc<Node>,
 
     /// The database
-    db: Arc<Database>,
+    db: Arc<RecordKeeper>,
 
     /// Data structures associated with shard-specific information
     shards: [RwLock<Option<ShardInfo>>; 255],
@@ -168,7 +168,7 @@ impl Client {
     /// The maximum amount of data that can be in a single message object (the object itself can still be in split into pieces at the datagram level)
     pub const MAX_PACKET_SIZE: usize = 1024 * 128;
 
-    pub fn new(db: Arc<Database>, config: ClientConfig) -> Client {
+    pub fn new(db: Arc<RecordKeeper>, config: ClientConfig) -> Client {
         
         Client {
             db: db,

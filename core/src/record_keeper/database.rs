@@ -2,32 +2,21 @@ use bincode;
 use env;
 use primitives::{Change, Mutation};
 use primitives::U256;
-use rocksdb::{DB, WriteBatch};
+use rocksdb::{DB, WriteBatch, Options};
 use rocksdb::Error as RocksDBError;
-use std::collections::LinkedList;
+use std::collections::{LinkedList, BTreeSet};
 use std::fmt::Debug;
+use std::path::PathBuf;
 use std::sync::RwLock;
 use super::error::*;
-use super::Storable;
+use super::storable::Storable;
 
-
-/// Generic definition of a rule regarding whether changes to the database are valid.
-/// Debug implementations should state what the rule means/requires.
-pub trait MutationRule: Debug + Send + Sync {
-    /// Return Ok if it is valid, or an error explaining what rule was broken.
-    fn is_valid(&self, database: &DB, mutation: &Mutation) -> Result<(), String>;
-}
-
-/// A list of mutation rules
-pub type MutationRules = LinkedList<Box<MutationRule>>;
-
-
-const BLOCKCHAIN_POSTFIX: &[u8] = b"b";
-const CACHE_POSTFIX: &[u8] = b"c";
-const NETWORK_POSTFIX: &[u8] = b"n";
+pub const BLOCKCHAIN_POSTFIX: &[u8] = b"b";
+pub const CACHE_POSTFIX: &[u8] = b"c";
+pub const NETWORK_POSTFIX: &[u8] = b"n";
 
 /// This is a wrapper around a RocksDB instance to provide the access and modifications needed for
-/// our system. The implementation uses RwLocks to provide many read, single write thread safety.
+/// our system.
 /// Please note that there are three distinct "regions" of the database:
 /// - The **blockcahin state** stores the blocks and transactions by their hashes.
 /// - The **game state** stores plots and their associated data, possibly other things as well.
@@ -37,53 +26,39 @@ const NETWORK_POSTFIX: &[u8] = b"n";
 /// prevent conflicts between the different regions even if they are using non-secure hashing
 /// methods.
 pub struct Database {
-    db: RwLock<DB>,
-    rules: RwLock<MutationRules>,
+    db: DB
 }
 
 
 impl Database {
     /// Create a new Database from a RocksDB instance
-    pub fn new(db: DB, rules: Option<MutationRules>) -> Database {
-        Database {
-            db: RwLock::new(db),
-            rules: RwLock::new(rules.unwrap_or(MutationRules::new())),
-        }
+    pub fn new(db: DB) -> Database {
+        Database{ db }
     }
 
-    /// Open the RocksDB database based on the environment
-    pub fn open_db(rules: Option<MutationRules>) -> Result<Database, RocksDBError> {
-        let mut dir = env::get_storage_dir().unwrap();
-        dir.push("db");
+    /// Open the RocksDB database based on the environment or by the given path. Construct a new
+    /// Database by opening an existing one or creating a new database if the one specified does not
+    /// exist. If no path is provided, it will open the database in the directory
+    /// `env::get_storage_dir()`.
+    /// # Warning
+    /// Any database which is opened, is assumed to contain data in a certain way, any outside
+    /// modifications can cause undefined behavior.
+    pub fn open(path: Option<PathBuf>) -> Result<Database, RocksDBError> {
+        let mut options = Options::default();
+        options.create_if_missing(true);
+
+        let dir = match path {
+            Some(p) => p,
+            None => {
+                let mut d = env::get_storage_dir().unwrap();
+                d.push("db"); d
+            }
+        };
 
         Ok(
             DB::open_default(dir)
-            .map(|db| Self::new(db, rules))?
+            .map(|db| Self::new(db))?
         )
-    }
-
-    /// Add a new rule to the database regarding what network mutations are valid. This will only
-    /// impact things which are mutated through the `mutate` function.
-    pub fn add_rule(&mut self, rule: Box<MutationRule>) {
-        let mut rules_lock = self.rules.write().unwrap();
-        rules_lock.push_back(rule);
-    }
-
-    /// Check if a mutation to the network state is valid.
-    pub fn is_valid(&self, mutation: &Mutation) -> Result<(), String> {
-        let db_lock = self.db.read().unwrap();
-        self.is_valid_given_lock(&*db_lock, mutation)
-    }
-
-    /// Internal use function to check if a mutation is valid given a lock of the db. While it only
-    /// takes a reference to a db, make sure a lock is in scope which is used to get the db ref.
-    fn is_valid_given_lock(&self, db: &DB, mutation: &Mutation) -> Result<(), String> {
-        let rules_lock = self.rules.read().unwrap();
-        for rule in &*rules_lock {
-            // verify all rules are satisfied and return, propagate error if not
-            rule.is_valid(db, mutation)?;
-        }
-        Ok(())
     }
 
     /// Mutate the stored **network state** and return a contra mutation to be able to undo what was
@@ -91,34 +66,38 @@ impl Database {
     /// functions.
     pub fn mutate(&mut self, mutation: &Mutation) -> Result<Mutation, Error> {
         mutation.assert_not_contra();
-        let db_lock = self.db.write().unwrap();
-
-        self.is_valid_given_lock(&*db_lock, mutation).map_err(|e| Error::InvalidMut(e))?;
-
         let mut contra = Mutation::new_contra();
         let mut batch = WriteBatch::default();
+        let mut del = BTreeSet::new();  // set of keys to be deleted
+
         for change in &mutation.changes {
             let key = {
                 let mut k = change.key.clone();
                 k.extend_from_slice(NETWORK_POSTFIX); k
             };
             
-            // Result<Option<DBVector>, DBError>
-            let prior_value = db_lock.get(&key)?.map(|v| v.to_vec());
-            
             contra.changes.push(Change {
                 key: key.clone(),
-                value: prior_value,
+                value: self.db.get(&key)?.map(|v| v.to_vec()), // Option<Vec<u8>>
                 data: None,
             });
 
             if let Some(ref v) = change.value {
+                del.remove(&key);
                 batch.put(&key, v).expect("Failure when adding to rocksdb batch.");
             } else {  // delete key
-                batch.delete(&key);
+                batch.delete(&key).is_ok(); // ignore error if there is one
+                del.insert(key.clone()); // add it to list of things to remove
             }
         }
-        (*db_lock).write(batch)?;
+        self.db.write(batch)?;
+
+        for i in del {
+            if self.db.delete(&i).is_err() {
+                warn!("Unable to delete a key in network state data. They key may not have \
+                       existed, or there could be a problem with the database.");
+            }
+        }
 
         contra.changes.reverse();
         Ok(contra)
@@ -126,10 +105,11 @@ impl Database {
 
     /// Consumes a contra mutation to undo changes made by the corresponding mutation to the
     /// network state.
-    pub fn undo_mutate(&mut self, mutation: Mutation) -> Result<(), RocksDBError> {
+    pub fn undo_mutate(&mut self, mutation: Mutation) -> Result<(), Error> {
         mutation.assert_contra();
         let mut batch = WriteBatch::default();
-        let db_lock = self.db.read().unwrap();
+        let mut del = BTreeSet::new();
+
         for change in &mutation.changes {
             let key = {
                 let mut k = change.key.clone();
@@ -137,89 +117,43 @@ impl Database {
             };
 
             if let Some(ref v) = change.value {
+                del.remove(&key);
                 batch.put(&key, v).expect("Failure when adding to rocksdb batch.");
             } else {  // delete key
-                // TODO: this code is invalid, cannot delete from the batch, must delete from the db
-                batch.delete(&key).expect("TODO: cannot delete database items by deleting items in a batch");
+                batch.delete(&key).is_ok();
+                del.insert(key);
             }
         }
 
-        (*db_lock).write(batch)
+        self.db.write(batch)?;
+        for i in del {
+            if self.db.delete(&i).is_err() {
+                // TODO: should we panic?
+                error!("Unable to delete a key in network state when applying a contra mutation!");
+            }
+        }
+        Ok(())
     }
 
-    /// Retrieve network data from the database. Use this for things which are stored and modified
-    /// by transactions like the list of validators and public keys.
-    pub fn get_network_data(&self, key: &[u8]) -> Result<Vec<u8>, Error> {
+    /// Retrieve raw data from the database. Use this for non-storable types (mostly network stuff).
+    pub fn get_raw_data(&self, key: &[u8], postfix: &'static [u8]) -> Result<Vec<u8>, Error> {
         let key = {
             let mut k = Vec::from(key);
-            k.extend_from_slice(key);
-            k.extend_from_slice(NETWORK_POSTFIX); k
+            k.extend_from_slice(postfix); k
         };
 
-        let db_lock = self.db.read().unwrap();
-
-        db_lock.get(&key)?
+        self.db.get(&key)?
             .map(|d| d.to_vec())
-            .ok_or(Error::NotFound(NETWORK_POSTFIX, b"", Vec::from(key)))
+            .ok_or(Error::NotFound(postfix, Vec::from(key)))
     }
 
-    /// Retrieve and deserialize data from the database. This will return an error if the database
-    /// has an issue, if the data cannot be deserialized or if the object is not present in the
-    /// database. Note that `instance_id` should be the object's ID/key which would normally be
-    /// returned from calling `storable.instance_id()`.
-    fn get<S: Storable>(&self, instance_id: &[u8], postfix: &'static [u8]) -> Result<S, Error> {
+    /// Put raw data into the database. Should have no uses outside this class.
+    pub fn put_raw_data(&mut self, key: &[u8], data: &[u8], postfix: &'static [u8]) -> Result<(), Error> {
         let key = {
-            let mut k = Vec::new();
-            k.extend_from_slice(S::global_id());
-            k.extend_from_slice(instance_id);
+            let mut k = Vec::from(key);
             k.extend_from_slice(postfix); k
         };
 
-        let db_lock = self.db.read().unwrap();
-
-        match db_lock.get(&key)? {
-            Some(data) =>
-                bincode::deserialize::<S>(&data)
-                .map_err(|e| Error::Deserialize(e.to_string())),
-            None => Err(Error::NotFound(postfix, S::global_id(), Vec::from(instance_id)))
-        }
-    }
-
-    /// Serialize and store data in the database. This will return an error if the database has
-    /// an issue.
-    fn put<S: Storable>(&mut self, obj: &S, postfix: &[u8]) -> Result<(), Error> {
-        let key = {
-            let mut k = obj.key();
-            k.extend_from_slice(postfix); k
-        };
-
-        let value = bincode::serialize(obj, bincode::Infinite).expect("Error serializing game data.");
-        
-        let db_lock = self.db.write().unwrap();
-        Ok(db_lock.put(&key, &value)?)
-    }
-
-    /// Retrieve blockchain data from the database. Use this for things like Blocks or Txns.
-    pub fn get_blockchain_data<S: Storable>(&self, hash: &U256) -> Result<S, Error> {
-        let mut id: [u8; 32] = [0u8; 32];
-        hash.to_little_endian(&mut id);
-
-        self.get::<S>(&id, BLOCKCHAIN_POSTFIX)
-    }
-
-
-    /// Write a blockchain object into the database. Use this for things like Blocks or Txns. With generics:
-    pub fn put_blockchain_data<S: Storable>(&mut self, obj: &S) -> Result<(), Error> {
-        self.put::<S>(obj, BLOCKCHAIN_POSTFIX)
-    }
-
-    /// Retrieve cache data from the database. This is for library use only.
-    pub fn get_cache_data<S: Storable>(&self, instance_id: &[u8]) -> Result<S, Error> {
-        self.get::<S>(instance_id, CACHE_POSTFIX)
-    }
-
-    /// Put cache data into the database. This is for library use only.
-    pub fn put_cache_data<S: Storable>(&mut self, obj: &S) -> Result<(), Error> {
-        self.put::<S>(obj, CACHE_POSTFIX)
+        Ok(self.db.put(&key, &data)?)
     }
 }

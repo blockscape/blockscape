@@ -1,10 +1,11 @@
+pub mod database;
 pub mod error;
 pub mod storable;
 
-pub mod database;
+mod mutation_rule;
+mod record_keeper;
 
-use self::storable::Storable;
-
-struct RecordKeeper {
-
-}
+pub use self::error::Error;
+pub use self::mutation_rule::{MutationRule, MutationRules};
+pub use self::record_keeper::RecordKeeper;
+pub use self::storable::Storable;
