@@ -1,6 +1,7 @@
 use dns_lookup::lookup_host;
 use serde_json;
 use std::cmp::*;
+use std::fmt;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write, Error};
@@ -16,7 +17,7 @@ use hash::hash_pub_key;
 use primitives::U160;
 
 /// All the information needed to make contact with a remote node
-#[derive(Clone, Serialize, PartialEq, Eq, Deserialize, Debug)]
+#[derive(Clone, Serialize, PartialEq, Eq, Deserialize)]
 pub struct NodeEndpoint {
     /// Network IP of the client
     pub host: String,
@@ -63,6 +64,18 @@ impl FromStr for NodeEndpoint {
     }
 }
 
+impl fmt::Display for NodeEndpoint {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}:{}", self.host, self.port)
+    }
+}
+
+impl fmt::Debug for NodeEndpoint {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
 /// Detailed information about a node
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct Node {
@@ -85,6 +98,10 @@ impl Node {
             version: 1,
             name: String::new()
         }
+    }
+
+    pub fn get_hash_id(&self) -> U160 {
+        hash_pub_key(&self.key[..])
     }
 }
 
@@ -153,7 +170,7 @@ impl NodeRepository {
 
     /// Notify the repository of updated or new node information. Will automatically add or change an existing node as appropriate based on the key in the repository
     pub fn apply(&self, node: Node) -> bool {
-        let hpk = hash_pub_key(&node.key[..]);
+        let hpk = node.get_hash_id();
         {
             if let Some(n) = self.available_nodes.get(&hpk) {
 
@@ -170,7 +187,7 @@ impl NodeRepository {
 
     pub fn new_node(&mut self, node: Node) {
 
-        let hpk = hash_pub_key(&node.key[..]);
+        let hpk = node.get_hash_id();
         // sanity check
         if self.available_nodes.contains_key(&hpk) {
             self.apply(node);
@@ -265,7 +282,7 @@ impl NodeRepository {
         };
 
         for node in imported {
-            let hpk = hash_pub_key(&node.node.key[..]);
+            let hpk = node.node.get_hash_id();
             let n = RwLock::new(LocalNode::clone(node));
 
             self.sorted_nodes.push(hpk);

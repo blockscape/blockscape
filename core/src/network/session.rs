@@ -9,9 +9,11 @@ use primitives::{Block, Txn, U256};
 use super::node::Node;
 use time::Time;
 
+use signer::RSA_KEY_SIZE;
+
 use network::client::NetworkContext;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct RawPacket {
     /// Which communication channel should be regarded for this node.
     /// This is included so nodes can have multiple connections to each other through separate shards
@@ -21,13 +23,13 @@ pub struct RawPacket {
     pub payload: Packet
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Packet {
     pub seq: u32,
     pub msg: Message,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum DataRequestError {
     /// The requested hash does not exist on this node
     HashNotFound,
@@ -37,7 +39,7 @@ pub enum DataRequestError {
     NetworkNotAvailable
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 pub enum ByeReason {
     /// Node is simply disconnecting
     Exit,
@@ -50,7 +52,7 @@ pub enum ByeReason {
     Abuse
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum Message {
     /// First message sent by a connecting node. If the other node accepts, it will reply with an "Introduce". The nodes are now connected
     Introduce {
@@ -88,6 +90,7 @@ pub enum Message {
         /// The original requested network id
         network_id: U256,
         /// If more nodes are needed, an offset can be indicated here to get additional nodes with subsequent queries (just increment by however many you received)
+        /// Currently this is not used for anything.
         skip: u16
     },
 
@@ -120,6 +123,8 @@ pub enum Message {
     }
 }
 
+/// Represents a single connection between another peer on the network.
+/// There may be only one session for each peer-network (AKA, a peer could have multiple sessions for separate network_id)
 pub struct Session {
 
     /// Whether or not we have received Introduce packet from the other end yet. Cannot process any packets otherwise
@@ -158,7 +163,12 @@ pub struct Session {
     /// A queue of packets which should be sent to the client soon
     send_queue: Mutex<VecDeque<Packet>>,
 
-    current_seq: AtomicUsize
+    /// The unique packet identifier to use for the next packet
+    current_seq: AtomicUsize,
+
+    /// Used to help discern the number of failed replies. When this number exceeds a threshold,
+    /// the connection is considered dropped
+    strikes: AtomicUsize
 }
 
 impl Session {
@@ -170,6 +180,12 @@ impl Session {
 
     /// How much of the ping value to retain. The current value keeps a weighted average over 10 minutes
     pub const PING_RETENTION: f32 = 40.0;
+
+    /// Number of milliseconds to wait before declaring a ping failed
+    pub const PING_TIMEOUT: i64 = 3000;
+
+    /// The number of strikes which may accumulate before declaring the connection timed out
+    pub const TIMEOUT_TOLERANCE: u64 = 3;
 
     /// The number of nodes which should be sent back on a list node request
     pub const NODE_RESPONSE_SIZE: usize = 8;
@@ -190,27 +206,31 @@ impl Session {
             latency:  Time::from_milliseconds(0),
             last_ping_send: None,
             send_queue: Mutex::new(VecDeque::new()),
-            current_seq: AtomicUsize::new(0)
+            current_seq: AtomicUsize::new(0),
+            strikes: AtomicUsize::new(0)
         };
 
         if let Some(p) = introduce {
             sess.handle_introduce(&p.msg);
         }
 
-        sess.send_queue.lock().unwrap().push_back(Packet {
-            seq: 0,
-            msg: Message::Introduce {
-                node: introduce_n,
-                port: local_port,
-                network_id: network_id
-            }
-        });
+        // connection could have been acquitted while handling the introduce.
+        if sess.done.is_none() {
+            sess.send_queue.lock().unwrap().push_back(Packet {
+                seq: 0,
+                msg: Message::Introduce {
+                    node: introduce_n,
+                    port: local_port,
+                    network_id: network_id
+                }
+            });
+        }
 
         sess
     }
 
-    pub fn get_remote_node(&self) -> Arc<Node> {
-        self.remote_peer.clone()
+    pub fn get_remote_node(&self) -> &Arc<Node> {
+        &self.remote_peer
     }
 
     pub fn get_remote_addr(&self) -> &SocketAddr {
@@ -223,6 +243,20 @@ impl Session {
             self.remote_port = *port;
 
             self.introduced = true;
+            self.strikes.store(0, Relaxed);
+
+            //debug!("Remote peer key: {:?}, Local peer key: {:?}", self.remote_peer.key, self.local_peer.key);
+
+            if self.remote_peer.key.len() != self.local_peer.key.len() {
+                debug!("Key size is wrong from client: {:?}, expected: {:?}, actual: {:?}", self.remote_peer.endpoint, self.remote_peer.key.len(), RSA_KEY_SIZE);
+                self.done = Some(ByeReason::ExitPermanent);
+            }
+
+            // detect if we have connected to self
+            if self.remote_peer.key == self.local_peer.key {
+                debug!("Detected a connection to self, from remote: {:?}", self.remote_peer.endpoint);
+                self.done = Some(ByeReason::ExitPermanent);
+            }
         }
         else {
             panic!("Received non-introduce packet for session init");
@@ -232,24 +266,15 @@ impl Session {
     /// Provide a packet which has been received for this session
     pub fn recv(&mut self, packet: &Packet, context: &mut NetworkContext) {
 
+        if self.done.is_some() {
+            return; // no need to do any additional processing
+        }
+
         if !self.introduced {
             // we cannot take this packet
             match packet.msg {
                 Message::Introduce { ref node, ref network_id, ref port } => {
-
-                    // Update node information in the repository with latest here
-                    // It is guarenteed to be in the repo since our remote reference corresponds to it
-                    // NOTE: Reference is actually not valid anymore, but we should be OK.
-                    self.remote_peer = Arc::new(node.clone());
-                    self.remote_port = port.clone();
-
-                    // detect if we have connected to self
-                    if self.remote_peer.key == self.local_peer.key {
-                        self.done = Some(ByeReason::ExitPermanent);
-                    }
-
-                    // TODO: Add appendable nodes
-                    //context.node_repo.read().unwrap().apply(node);
+                    self.handle_introduce(&packet.msg);
                 },
 
                 _ => {
@@ -288,6 +313,8 @@ impl Session {
                         }
 
                         self.last_ping_send = None;
+                        // now we know the connection is still going, reset strike counter
+                        self.strikes.store(0, Relaxed);
                     }
                 },
 
@@ -356,13 +383,79 @@ impl Session {
         }
     }
 
+    /// Performs checks to verify the current connection state. If the connection appears dead, it will
+    /// set this connection as done. Otherwise, it will send a ping packet.
+    /// Call this function at regular intervals for best results.
+    pub fn check_conn(&mut self) {
+        if self.done.is_none() {
+
+            if !self.introduced {
+                // we might have to re-send the introduce packet
+                let introduce_n = self.local_peer.as_ref().clone();
+                self.send_queue.lock().unwrap().push_back(Packet {
+                    seq: 0,
+                    msg: Message::Introduce {
+                        node: introduce_n,
+                        port: self.local_port,
+                        network_id: self.network_id
+                    }
+                });
+
+                if self.strikes.fetch_add(1, Relaxed) + 1 > Session::TIMEOUT_TOLERANCE as usize {
+                    self.done = Some(ByeReason::Timeout);
+                }
+            }
+            else {
+                // if we still have an outgoing ping and too much time has passed, add a strike
+                if let Some(lps) = self.last_ping_send {
+                    if lps.diff(&Time::current()).millis() > Session::PING_TIMEOUT {
+                        self.strikes.fetch_add(1, Relaxed);
+                    }
+                }
+
+                //debug!("Connection Strikes: {}", self.strikes.load(Relaxed));
+
+                if self.strikes.load(Relaxed) > Session::TIMEOUT_TOLERANCE as usize {
+                    self.done = Some(ByeReason::Timeout);
+                }
+                else {
+
+                    let lps = Time::current();
+
+                    self.send_queue.lock().unwrap().push_back(Packet {
+                        seq: self.current_seq.fetch_add(1, Relaxed) as u32,
+                        msg: Message::Ping {
+                            time: lps
+                        }
+                    });
+
+                    self.last_ping_send = Some(lps);
+                }
+            }
+        }
+    }
+
+    pub fn find_nodes(&self, network_id: &U256) {
+        if self.introduced {
+            self.send_queue.lock().unwrap().push_back(Packet {
+                seq: self.current_seq.fetch_add(1, Relaxed) as u32,
+                msg: Message::FindNodes {
+                    network_id: network_id.clone(),
+                    skip: 0
+                }
+            });
+        }
+    }
+
     /// Appends a bye packet to the end of the queue
     /// NOTE: Dont forget to empty the send queue after calling this function!
-    pub fn close(&self) {
+    pub fn close(&mut self) {
         self.send_queue.lock().unwrap().push_back(Packet {
             seq: self.current_seq.fetch_add(1, Relaxed) as u32,
             msg: Message::Bye { reason: ByeReason::Exit }
         });
+
+        self.done = Some(ByeReason::Exit);
     }
 
     pub fn pop_send_queue(&mut self) -> Option<Packet> {
@@ -375,5 +468,9 @@ impl Session {
 
     pub fn is_done(&self) -> Option<ByeReason> {
         self.done
+    }
+
+    pub fn is_introduced(&self) -> bool {
+        self.introduced
     }
 }

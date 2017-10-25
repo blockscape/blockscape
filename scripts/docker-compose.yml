@@ -7,7 +7,7 @@ services:
         networks:
             - net
 
-        command: /blockscape -h localhost --seed-node blockscape_2:35653
+        command: /blockscape -h blockscape_1 --seed-node blockscape_2:35653
     
     blockscape_2:
         image: dcr.buyme360.com/plu-capstone/blockscape:latest
@@ -15,7 +15,7 @@ services:
         networks:
             - net
 
-        command: /blockscape -h localhost --seed-node blockscape_1:35653
+        command: /blockscape -h blockscape_2 # --seed-node blockscape_1:35653
 
     blockscape_3:
         image: dcr.buyme360.com/plu-capstone/blockscape:latest
@@ -23,7 +23,7 @@ services:
         networks:
             - net
 
-        command: /blockscape -h localhost --seed-node blockscape_1:35653
+        command: /blockscape -h blockscape_3 --seed-node blockscape_1:35653
 
 networks:
     net:

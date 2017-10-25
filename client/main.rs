@@ -1,30 +1,34 @@
 extern crate blockscape_core;
 extern crate chan_signal;
-extern crate env_logger;
 extern crate openssl;
 
 #[macro_use]
 extern crate clap;
+extern crate pretty_env_logger;
 #[macro_use]
 extern crate log;
+
+extern crate colored;
+
+mod boot;
+mod rules;
+mod reporter;
 
 use chan_signal::Signal;
 use clap::{Arg, ArgGroup, ArgMatches, App, SubCommand};
 use std::sync::Arc;
-use std::thread::JoinHandle;
+use std::thread;
+use std::sync::mpsc::channel;
 
+use blockscape_core::primitives::HasBlockHeader;
 use blockscape_core::env;
 use blockscape_core::network::client::{Client, ShardMode};
-use blockscape_core::primitives::HasBlockHeader;
 use blockscape_core::record_keeper::RecordKeeper;
 
 use boot::*;
 
-mod boot;
-mod rules;
-
 fn main() {
-    env_logger::init().unwrap();
+    pretty_env_logger::init().unwrap();
 
     // Parse cmdline
     let cmdline = parse_cmdline();
@@ -48,7 +52,7 @@ fn main() {
 
     let mut net_client: Option<Arc<Client>> = None;
 
-    let mut threads: Vec<JoinHandle<()>> = Vec::new();
+    let mut threads: Vec<thread::JoinHandle<()>> = Vec::new();
 
     if !cmdline.is_present("disable-net") {
         // start network
@@ -78,6 +82,19 @@ fn main() {
 
     // Open RPC interface
 
+
+    // startup the reporter
+    let (tx, rx) = channel();
+    {
+        let nc = net_client.clone();
+
+        threads.push(
+            thread::Builder::new().name(String::from("Reporter")).spawn(move || {
+                reporter::run(&nc, rx);
+            }).unwrap()
+        );
+    }
+
     // wait for the kill signal
     signal.recv().unwrap();
 
@@ -87,6 +104,8 @@ fn main() {
     if let Some(client) = net_client {
         client.close();
     }
+
+    tx.send(()).expect("Thread was finished prematurely");
 
     debug!("Waiting for threads...");
     

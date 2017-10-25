@@ -20,7 +20,7 @@ impl BlockHeader {
 }
 
 /// The core unit of the blockchain.
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Block {
     pub header: BlockHeader,
     pub transactions: BTreeSet<U256>,

@@ -32,6 +32,7 @@ pub enum ShardMode {
 }
 
 const NODE_SCAN_INTERVAL: i64 = 30000; // every 30 seconds
+const NODE_CHECK_INTERVAL: i64 = 5000; // every 5 seconds
 const NODE_NTP_INTERVAL: i64 = 20 * 60000; // every 20 minutes
 
 //#[derive(Debug)]
@@ -84,6 +85,37 @@ impl ClientConfig {
             max_nodes: 16,
             hostname: String::from(""),
             port: ClientConfig::DEFAULT_PORT
+        }
+    }
+}
+
+/// Statistical information which can be queried from the network client
+#[derive(Debug)]
+pub struct Statistics {
+    /// The number of networks currently registered/working on this node
+    pub attached_networks: u8,
+
+    /// Thu number of nodes currently connected
+    pub connected_peers: u32,
+
+    /// Number of bytes received since the client started execution
+    pub rx: u64,
+
+    /// Number of bytes sent since the client started execution
+    pub tx: u64,
+
+    /// Number of milliseconds of average latency between peers
+    pub avg_latency: u64
+}
+
+impl Statistics {
+    fn new() -> Statistics {
+        Statistics {
+            attached_networks: 0,
+            connected_peers: 0,
+            rx: 0,
+            tx: 0,
+            avg_latency: 0
         }
     }
 }
@@ -161,6 +193,12 @@ pub struct Client {
     done: AtomicBool,
 
     curr_port: AtomicUsize,
+
+    /// Accumulator reperesnting number bytes received
+    rx: AtomicUsize,
+
+    /// Accumulator representing number of bytes sent
+    tx: AtomicUsize
 }
 
 impl Client {
@@ -185,7 +223,9 @@ impl Client {
             socket_mux: Mutex::new(()),
             last_peer_seek: Time::from(0),
             done: AtomicBool::new(false),
-            curr_port: AtomicUsize::new(0)
+            curr_port: AtomicUsize::new(0),
+            rx: AtomicUsize::new(0),
+            tx: AtomicUsize::new(0)
         }
     }
 
@@ -326,6 +366,8 @@ impl Client {
                         }
                     }
 
+                    self.rx.fetch_add(n, Relaxed);
+
                     if let Some((addr, v)) = newb {
                         recv_buf.insert(addr, v);
                     }
@@ -340,10 +382,11 @@ impl Client {
 
                     if b.len() - 4 >= len {
                         // we have a full packet, move it into our packet list
-                        match deserialize(&b[..]) {
+                        match deserialize(&b[4..]) {
                             Ok(p) => received_packet = Some((p, addr)),
                             Err(e) => {
                                 warn!("Packet decode failed from {}: {}", addr, e);
+                                warn!("Expected size: {}", len);
                                 // TODO: Note misbehaviors/errors
                             }
                         };
@@ -355,13 +398,33 @@ impl Client {
             }
 
             if let Some((p, addr)) = received_packet {
-                if let Some(ref shard) = *self.shards[p.port as usize].read().unwrap() {
+                //debug!("Got packet: {:?}, {:?}", p, addr);
+                if p.port == 255 {
+                    if let Message::Introduce { ref node, ref network_id, ref port } = p.payload.msg {
+                        // new session?
+                        let idx = self.resolve_port(network_id);
+                        if let Some(ref shard) = *self.shards[idx as usize].read().unwrap() {
+                            if let Ok(addr) = shard.open_session(Arc::new(node.clone()), self.my_node.clone(), Some(&p.payload)) {
+                                info!("New contact opened from {}", addr);
+                                let lock = self.socket_mux.lock();
+                                self.tx.fetch_add(shard.send_packets(&addr, &self.socket.as_ref().unwrap()) as usize, Relaxed);
+                            }
+                        }
+                        else {
+                            debug!("Invalid network ID received in join for network: {}", network_id);
+                        }
+                    }
+                    else {
+                        debug!("Received non-introduce first packet on generic port: {:?}", p);
+                    }
+                }
+                else if let Some(ref shard) = *self.shards[p.port as usize].read().unwrap() {
                     let mut context = NetworkContext::new(&self.db, &self.config);
 
                     {
                         shard.process_packet(&p.payload, &addr, &mut context);
                         let lock = self.socket_mux.lock();
-                        shard.send_packets(&addr, &self.socket.as_ref().unwrap());
+                        self.tx.fetch_add(shard.send_packets(&addr, &self.socket.as_ref().unwrap()) as usize, Relaxed);
                     }
 
                     // process data in the context: do we have anything to import?
@@ -375,24 +438,20 @@ impl Client {
                     }
 
                     // finally, any new nodes to connect to?
-                    // TODO: Put in
-                }
-                else if p.port == 255 {
-                    if let Message::Introduce { ref node, ref network_id, ref port } = p.payload.msg {
-                        // new session?
-                        let idx = self.resolve_port(network_id);
-                        if let Some(ref shard) = *self.shards[idx as usize].read().unwrap() {
-                            if let Ok(addr) = shard.open_session(Arc::new(node.clone()), self.my_node.clone(), Some(&p.payload)) {
-                                let lock = self.socket_mux.lock();
-                                shard.send_packets(&addr, &self.socket.as_ref().unwrap());
+                    for (network_id, peers) in context.connect_peers.iter() {
+                        for peer in peers {
+                            // for right now, only save for nodes of open networks
+                            let port = self.resolve_port(network_id) as usize;
+                            if port != 255 {
+                                // add to the connect queue of the network
+                                // a successful connection will result in the node being added to the permanent db
+                                let shard = self.shards[port].read().unwrap();
+                                if let Some(ref sh) = *shard {
+
+                                    sh.add_connect_queue(Arc::new(peer.clone()));
+                                }
                             }
                         }
-                        else {
-                            debug!("Invalid network ID received in join for network: {}", network_id);
-                        }
-                    }
-                    else {
-                        debug!("Received non-introduce first packet on generic port!");
                     }
                 }
                 else {
@@ -431,6 +490,7 @@ impl Client {
 
             let mut last_ntp_scan = Time::from_seconds(0);
             let mut last_node_scan = Time::from_seconds(0);
+            let mut last_node_check = Time::from_seconds(0);
 
             loop {
 
@@ -455,20 +515,27 @@ impl Client {
                     last_ntp_scan = n;
                 }
 
-                if last_node_scan.diff(&n).millis() > NODE_SCAN_INTERVAL {
-                    // tell all networks to connect to more nodes
-                    info!("Node scan started");
-
+                if last_node_check.diff(&n).millis() > NODE_CHECK_INTERVAL {
                     for i in 0..255 {
                         if let Some(ref mut s) = *this2.shards[i].write().unwrap() {
-                            s.node_scan(&this2.my_node, this2.config.min_nodes as usize);
+                            if last_node_scan.diff(&n).millis() > NODE_SCAN_INTERVAL {
+                                s.node_scan(&this2.my_node, this2.config.min_nodes as usize);
+                            }
 
+                            s.check_sessions();
+
+                            // send packets that may have accumulated
                             let lock = this2.socket_mux.lock();
-                            s.send_all_packets(&this2.socket.as_ref().unwrap());
+                            this2.tx.fetch_add(s.send_all_packets(&this2.socket.as_ref().unwrap()), Relaxed);
                         }
                     }
 
-                    info!("Node scan completed");
+                    last_node_check = n;
+                }
+
+                if last_node_scan.diff(&n).millis() > NODE_SCAN_INTERVAL {
+                    // tell all networks to connect to more nodes
+                    debug!("Node scan started");
 
                     last_node_scan = n;
                 }
@@ -501,6 +568,27 @@ impl Client {
                 self.detach_network_port(i as u8);
             }
         }
+    }
+
+    pub fn get_stats(&self) -> Statistics {
+
+        let mut stats = Statistics::new();
+
+        stats.rx = self.rx.load(Relaxed) as u64;
+        stats.tx = self.tx.load(Relaxed) as u64;
+
+        for i in 0..255 {
+            if let Some(ref s) = *self.shards[i].read().unwrap() {
+                stats.attached_networks += 1;
+                stats.connected_peers += s.session_count() as u32;
+            }
+        }
+
+        stats
+    }
+
+    pub fn get_config(&self) -> &ClientConfig {
+        &self.config
     }
 
     pub fn report_txn(&self, txn: Txn) {

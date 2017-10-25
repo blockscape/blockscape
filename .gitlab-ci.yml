@@ -12,6 +12,9 @@ services:
 
 cache:
   untracked: true
+  paths:
+    # need this or else untracked files will not be regarded
+    - /root/.cargo
 
 build:
   stage: build
