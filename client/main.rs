@@ -1,14 +1,12 @@
+extern crate blockscape_core;
+extern crate chan_signal;
+extern crate openssl;
+
 #[macro_use]
 extern crate clap;
 extern crate pretty_env_logger;
 #[macro_use]
 extern crate log;
-
-extern crate openssl;
-
-extern crate blockscape_core;
-
-extern crate chan_signal;
 
 extern crate colored;
 
@@ -16,17 +14,16 @@ mod boot;
 mod rules;
 mod reporter;
 
+use chan_signal::Signal;
+use clap::{Arg, ArgGroup, ArgMatches, App, SubCommand};
 use std::sync::Arc;
 use std::thread;
 use std::sync::mpsc::channel;
 
-use chan_signal::Signal;
-
 use blockscape_core::primitives::HasBlockHeader;
 use blockscape_core::env;
-use blockscape_core::network::client::Client;
-use blockscape_core::network::client::ShardMode;
-use blockscape_core::record_keeper::database::Database;
+use blockscape_core::network::client::{Client, ShardMode};
+use blockscape_core::record_keeper::RecordKeeper;
 
 use boot::*;
 
@@ -50,7 +47,7 @@ fn main() {
             .expect("Could not automatically find work directory for blockscape! Please check your environment and try again."));
     }
 
-    let db = Arc::new(Database::open_db(Some(rules::build_rules())).expect("Database was not able to initialize!"));
+    let db = Arc::new(RecordKeeper::open(None, Some(rules::build_rules())).expect("Record Keeper was not able to initialize!"));
 
 
     let mut net_client: Option<Arc<Client>> = None;
