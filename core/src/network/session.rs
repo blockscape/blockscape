@@ -13,7 +13,7 @@ use signer::RSA_KEY_SIZE;
 
 use network::client::NetworkContext;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct RawPacket {
     /// Which communication channel should be regarded for this node.
     /// This is included so nodes can have multiple connections to each other through separate shards
@@ -23,13 +23,13 @@ pub struct RawPacket {
     pub payload: Packet
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Packet {
     pub seq: u32,
     pub msg: Message,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum DataRequestError {
     /// The requested hash does not exist on this node
     HashNotFound,
@@ -39,7 +39,7 @@ pub enum DataRequestError {
     NetworkNotAvailable
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 pub enum ByeReason {
     /// Node is simply disconnecting
     Exit,
@@ -52,7 +52,7 @@ pub enum ByeReason {
     Abuse
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum Message {
     /// First message sent by a connecting node. If the other node accepts, it will reply with an "Introduce". The nodes are now connected
     Introduce {
@@ -90,6 +90,7 @@ pub enum Message {
         /// The original requested network id
         network_id: U256,
         /// If more nodes are needed, an offset can be indicated here to get additional nodes with subsequent queries (just increment by however many you received)
+        /// Currently this is not used for anything.
         skip: u16
     },
 
@@ -191,7 +192,6 @@ impl Session {
 
     pub fn new(local_peer: Arc<Node>, local_port: u8, remote_peer: Arc<Node>, remote_addr: SocketAddr, network_id: U256, introduce: Option<&Packet>) -> Session {
         let introduce_n = local_peer.as_ref().clone();
-        debug!("Introduce_n: {:?}", introduce_n);
         
         let mut sess = Session {
             local_port: local_port,
@@ -238,7 +238,6 @@ impl Session {
     }
 
     fn handle_introduce(&mut self, msg: &Message) {
-        debug!("Handling introduce");
         if let &Message::Introduce { ref node, ref network_id, ref port } = msg {
             self.remote_peer = Arc::new(node.clone());
             self.remote_port = *port;
@@ -248,7 +247,7 @@ impl Session {
 
             //debug!("Remote peer key: {:?}, Local peer key: {:?}", self.remote_peer.key, self.local_peer.key);
 
-            if self.remote_peer.key.len() != RSA_KEY_SIZE {
+            if self.remote_peer.key.len() != self.local_peer.key.len() {
                 debug!("Key size is wrong from client: {:?}, expected: {:?}, actual: {:?}", self.remote_peer.endpoint, self.remote_peer.key.len(), RSA_KEY_SIZE);
                 self.done = Some(ByeReason::ExitPermanent);
             }
@@ -267,7 +266,7 @@ impl Session {
     /// Provide a packet which has been received for this session
     pub fn recv(&mut self, packet: &Packet, context: &mut NetworkContext) {
 
-        if self.done.is_none() {
+        if self.done.is_some() {
             return; // no need to do any additional processing
         }
 
@@ -392,6 +391,19 @@ impl Session {
 
             if !self.introduced {
                 // we might have to re-send the introduce packet
+                let introduce_n = self.local_peer.as_ref().clone();
+                self.send_queue.lock().unwrap().push_back(Packet {
+                    seq: 0,
+                    msg: Message::Introduce {
+                        node: introduce_n,
+                        port: self.local_port,
+                        network_id: self.network_id
+                    }
+                });
+
+                if self.strikes.fetch_add(1, Relaxed) + 1 > Session::TIMEOUT_TOLERANCE as usize {
+                    self.done = Some(ByeReason::Timeout);
+                }
             }
             else {
                 // if we still have an outgoing ping and too much time has passed, add a strike
@@ -423,13 +435,27 @@ impl Session {
         }
     }
 
+    pub fn find_nodes(&self, network_id: &U256) {
+        if self.introduced {
+            self.send_queue.lock().unwrap().push_back(Packet {
+                seq: self.current_seq.fetch_add(1, Relaxed) as u32,
+                msg: Message::FindNodes {
+                    network_id: network_id.clone(),
+                    skip: 0
+                }
+            });
+        }
+    }
+
     /// Appends a bye packet to the end of the queue
     /// NOTE: Dont forget to empty the send queue after calling this function!
-    pub fn close(&self) {
+    pub fn close(&mut self) {
         self.send_queue.lock().unwrap().push_back(Packet {
             seq: self.current_seq.fetch_add(1, Relaxed) as u32,
             msg: Message::Bye { reason: ByeReason::Exit }
         });
+
+        self.done = Some(ByeReason::Exit);
     }
 
     pub fn pop_send_queue(&mut self) -> Option<Packet> {
@@ -442,5 +468,9 @@ impl Session {
 
     pub fn is_done(&self) -> Option<ByeReason> {
         self.done
+    }
+
+    pub fn is_introduced(&self) -> bool {
+        self.introduced
     }
 }

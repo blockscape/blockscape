@@ -366,6 +366,8 @@ impl Client {
                         }
                     }
 
+                    self.rx.fetch_add(n, Relaxed);
+
                     if let Some((addr, v)) = newb {
                         recv_buf.insert(addr, v);
                     }
@@ -396,12 +398,14 @@ impl Client {
             }
 
             if let Some((p, addr)) = received_packet {
+                //debug!("Got packet: {:?}, {:?}", p, addr);
                 if p.port == 255 {
                     if let Message::Introduce { ref node, ref network_id, ref port } = p.payload.msg {
                         // new session?
                         let idx = self.resolve_port(network_id);
                         if let Some(ref shard) = *self.shards[idx as usize].read().unwrap() {
                             if let Ok(addr) = shard.open_session(Arc::new(node.clone()), self.my_node.clone(), Some(&p.payload)) {
+                                info!("New contact opened from {}", addr);
                                 let lock = self.socket_mux.lock();
                                 self.tx.fetch_add(shard.send_packets(&addr, &self.socket.as_ref().unwrap()) as usize, Relaxed);
                             }
@@ -411,7 +415,7 @@ impl Client {
                         }
                     }
                     else {
-                        debug!("Received non-introduce first packet on generic port!");
+                        debug!("Received non-introduce first packet on generic port: {:?}", p);
                     }
                 }
                 else if let Some(ref shard) = *self.shards[p.port as usize].read().unwrap() {
@@ -434,7 +438,21 @@ impl Client {
                     }
 
                     // finally, any new nodes to connect to?
-                    // TODO: Put in
+                    for (network_id, peers) in context.connect_peers.iter() {
+                        for peer in peers {
+                            // for right now, only save for nodes of open networks
+                            let port = self.resolve_port(network_id) as usize;
+                            if port != 255 {
+                                // add to the connect queue of the network
+                                // a successful connection will result in the node being added to the permanent db
+                                let shard = self.shards[port].read().unwrap();
+                                if let Some(ref sh) = *shard {
+
+                                    sh.add_connect_queue(Arc::new(peer.clone()));
+                                }
+                            }
+                        }
+                    }
                 }
                 else {
                     // bogus network ID received, ignore

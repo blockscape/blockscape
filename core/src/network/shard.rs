@@ -13,6 +13,8 @@ use network::client::*;
 use network::session::*;
 use network::node::*;
 
+use rand;
+
 pub struct ShardInfo {
     /// Unique identifier for this shard (usually genesis block hash)
     network_id: U256,
@@ -57,6 +59,17 @@ impl ShardInfo {
             return cur_count; // no need to do any more
         }
 
+        // Ask a random peer for more nodes, to keep the database saturated
+        {
+            let s = self.sessions.read().unwrap();
+            if !s.is_empty() {
+                let mut rng = rand::thread_rng();
+                let sess = rand::sample(&mut rng, s.values(), 1)[0];
+
+                sess.find_nodes(&self.network_id);
+            }
+        }
+
         // do we need more nodes to connect to (from the queue)? If so, pull from the node repo
         {
             let mut queue = self.connect_queue.lock().unwrap();
@@ -88,7 +101,10 @@ impl ShardInfo {
 
         while let Some(peer) = self.connect_queue.lock().unwrap().pop_front() {
             let sess: Option<SocketAddr> = match self.open_session(peer.clone(), my_node.clone(), None) {
-                Ok(sopt) => Some(sopt),
+                Ok(sopt) => {
+                    info!("New contact opened to {}", sopt);
+                    Some(sopt)
+                },
                 Err(_) => {
                     removed_nodes.push(peer.get_hash_id());
                     None
@@ -193,6 +209,7 @@ impl ShardInfo {
                 },
                 None => {
                     // should never happen because all sessions init through port 255
+                    warn!("Unroutable packet: {:?}", p);
                 }
             }
         }
@@ -201,9 +218,13 @@ impl ShardInfo {
     /// Send all the packets queued for the given session. Returns number of bytes sent.
     pub fn send_packets(&self, addr: &SocketAddr, s: &UdpSocket) -> u64 {
         let mut sr = self.sessions.write().unwrap();
-        let mut sess = sr.get_mut(addr).unwrap();
-
-        send_session_packets(&mut sess, s)
+        
+        if let Some(mut sess) = sr.get_mut(addr) {
+            send_session_packets(&mut sess, s)
+        }
+        else {
+            0
+        }
     }
 
     /// Send all the packets queued for any session in this network. Returns number of bytes sent.
@@ -225,7 +246,15 @@ impl ShardInfo {
     }
 
     pub fn session_count(&self) -> usize {
-        return self.sessions.read().unwrap().len();
+        // filter only sessions which are past introductions
+        let mut count = 0;
+        for sess in self.sessions.read().unwrap().values() {
+            if sess.is_introduced() {
+                count += 1;
+            }
+        }
+
+        count
     }
 }
 
