@@ -13,6 +13,7 @@ extern crate colored;
 mod boot;
 mod rules;
 mod reporter;
+mod format;
 
 use chan_signal::Signal;
 use clap::{Arg, ArgGroup, ArgMatches, App, SubCommand};
