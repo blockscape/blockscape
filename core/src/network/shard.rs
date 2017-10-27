@@ -3,6 +3,7 @@ use std::net::{SocketAddr,UdpSocket};
 use std::sync::{Mutex,RwLock};
 use std::sync::Arc;
 use std::collections::VecDeque;
+use std::ops::Deref;
 
 use bincode::{serialize, Bounded};
 
@@ -152,6 +153,15 @@ impl ShardInfo {
                     },
                     _ => {}
                 }
+            }
+
+            // TODO: for now this is a little inefficient (requires a U160 hash for each client every 5 seconds), but it works
+            // add introduced nodes to the repo
+            if sess.is_introduced() && self.node_repo.get(&sess.get_remote_node().get_hash_id()).is_none() {
+                debug!("Add node to DB: {:?}", addr);
+                self.node_repo.new_node(
+                    sess.get_remote_node().deref().clone()
+                );
             }
         }
 

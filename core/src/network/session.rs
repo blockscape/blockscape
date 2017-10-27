@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc,Mutex};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::Relaxed;
+use std::ops::Deref;
 
 use primitives::{Block, Txn, U256};
 use super::node::Node;
@@ -326,7 +327,13 @@ impl Session {
                     let mut nodes: Vec<Node> = Vec::with_capacity(min(Session::NODE_RESPONSE_SIZE, repo.len()));
 
                     for i in *skip..min(repo.len() as u16, (*skip as usize + Session::NODE_RESPONSE_SIZE) as u16) {
-                        nodes.push(Arc::try_unwrap(repo.get_nodes((skip + i) as usize)).unwrap());
+                        // dont send the node if it is self
+                        let d = repo.get_nodes((skip + i) as usize);
+                        let n = d.deref();
+
+                        if n.endpoint != self.remote_peer.endpoint {
+                            nodes.push(n.clone());
+                        }
                     }
 
                     self.send_queue.lock().unwrap().push_back(Packet {
