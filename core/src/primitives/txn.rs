@@ -1,5 +1,6 @@
+use hash::hash_obj;
 use openssl::pkey::PKey;
-use primitives::Mutation;
+use primitives::{Mutation, U256};
 use signer::sign_obj;
 use std::vec::Vec;
 use time::Time;
@@ -138,5 +139,9 @@ impl Txn {
         // Seems like this might get broken into more than one creation function depending on the
         // change that is to be made.
         unimplemented!("Admin transactions have not been implemented");
+    }
+
+    pub fn calculate_hash(&self) -> U256 {
+        hash_obj(self)
     }
 }

@@ -1,8 +1,8 @@
+use bincode;
+use hash::hash_obj;
 use primitives::U256;
 use std::collections::BTreeSet;
 use time::Time;
-
-use hash::hash_obj;
 
 /// The main infromation about a block. This noteably excludes the list of transactions.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +45,12 @@ impl HasBlockHeader for Block {
 
 
 impl Block {
+    /// Custom deserialization implementation
+    pub fn deserialize(header: BlockHeader, raw_txns: &[u8]) -> Result<Block, bincode::Error> {
+        let transactions = bincode::deserialize::<BTreeSet<U256>>(raw_txns)?;
+        Ok(Block{header, transactions})
+    }
+
     pub fn calculate_merkle_root(&self) -> U256 {
         unimplemented!("Calculate merkle root has not yet been completed!");
     }

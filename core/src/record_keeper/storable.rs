@@ -1,4 +1,6 @@
-use serde;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use primitives::{Block, BlockHeader, Txn};
 
 /// Storable objects are able to be stored in a `Database` instance.
 ///
@@ -26,7 +28,7 @@ use serde;
 ///
 /// fn main() {}
 /// ```
-pub trait Storable: serde::Serialize + serde::de::DeserializeOwned {
+pub trait Storable: Serialize + DeserializeOwned {
     /// Return a unique ID for the type, an example of this is b"plot", though the smallest
     /// reasonable values would be better, e.g. `b"p"` for plot. All storable types must return
     /// different IDs or there may be collisions.
@@ -43,4 +45,14 @@ pub trait Storable: serde::Serialize + serde::de::DeserializeOwned {
         key.extend_from_slice(Self::global_id());
         key.append(&mut self.instance_id()); key
     }
+}
+
+impl Storable for BlockHeader {
+    fn global_id() -> &'static [u8] { b"" }  // SHA256 so no need for a prefix
+    fn instance_id(&self) -> Vec<u8> { self.calculate_hash().to_vec() }
+}
+
+impl Storable for Txn {
+    fn global_id() -> &'static [u8] { b"" } // SHA256 so no need for a prefix
+    fn instance_id(&self) -> Vec<u8> { self.calculate_hash().to_vec() }
 }

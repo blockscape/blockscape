@@ -1,9 +1,10 @@
+use bincode;
 use bytes::{ByteOrder, BigEndian, LittleEndian};
+use std::cmp;
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::str::FromStr;
-use std::cmp;
 
 /// A simple 160-bit storage unit that acts sort of like an integer.
 /// Note: internally, the lowest significance u32 is in the lowest index,
@@ -90,6 +91,7 @@ impl From<u64> for U160 {
         U160([(v as u32), ((v >> 32) as u32), 0, 0, 0])
     }
 }
+
 
 impl Hash for U160 {
     /// Calculate the hash value of the little-endian stored bytes using a Hasher.
@@ -197,6 +199,10 @@ impl U160 {
             BigEndian::write_u32(s, self.0[4 - i]);
         }
     }
+
+    pub fn to_vec(v: U160) -> Vec<u8> {
+        bincode::serialize(&v, bincode::Bounded(20)).unwrap()
+     }
 }
 
 
