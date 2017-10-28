@@ -2,6 +2,7 @@ use bincode::deserialize;
 use openssl::pkey::PKey;
 use std::collections::{HashMap, VecDeque};
 use std::io::Error;
+use std::marker::PhantomData;
 use std::net::{SocketAddr,UdpSocket};
 use std::sync::{Arc, RwLock, Mutex};
 use std::sync::atomic::{AtomicBool,AtomicUsize};
@@ -11,12 +12,13 @@ use std::time::Duration;
 use time::Time;
 
 use env::get_client_name;
-use network::node::*;
-use network::ntp::*;
-use network::session::*;
-use network::shard::*;
+use network::node::{Node, NodeRepository, NodeEndpoint, LocalNode};
+use network::ntp;
+use network::session;
+use network::session::{RawPacket, Message, Session};
+use network::shard::{ShardInfo};
 use primitives::{Block, Txn, U256};
-use record_keeper::RecordKeeper;
+use record_keeper::{RecordKeeper, Event};
 use signer::generate_private_key;
 
 
@@ -34,6 +36,9 @@ pub enum ShardMode {
 const NODE_SCAN_INTERVAL: i64 = 30000; // every 30 seconds
 const NODE_CHECK_INTERVAL: i64 = 5000; // every 5 seconds
 const NODE_NTP_INTERVAL: i64 = 20 * 60000; // every 20 minutes
+
+/// The maximum amount of data that can be in a single message object (the object itself can still be in split into pieces at the datagram level)
+pub const MAX_PACKET_SIZE: usize = 1024 * 128;
 
 //#[derive(Debug)]
 pub struct ClientConfig {
@@ -120,9 +125,9 @@ impl Statistics {
     }
 }
 
-pub struct NetworkContext<'a> {
+pub struct NetworkContext<'a, PlotEvent: Event> {
     /// The database for RO access
-    pub db: &'a RecordKeeper,
+    pub db: &'a RecordKeeper<PlotEvent>,
 
     /// The configuation associated with this client
     pub config: &'a ClientConfig,
@@ -135,16 +140,20 @@ pub struct NetworkContext<'a> {
 
     /// Nodes which can be connected to which were recently supplied
     pub connect_peers: HashMap<U256, Vec<Node>>,
+
+    /// PhantomData to allow PlotEvent to be be used for RecordKeeper
+    phantom: PhantomData<&'a PlotEvent>,
 }
 
-impl<'a> NetworkContext<'a> {
-    pub fn new(db: &'a RecordKeeper, config: &'a ClientConfig) -> NetworkContext<'a> {
+impl<'a, PE: Event> NetworkContext<'a, PE> {
+    pub fn new(db: &'a RecordKeeper<PE>, config: &'a ClientConfig) -> NetworkContext<'a, PE> {
         NetworkContext {
             db: db,
             config: config,
             import_txns: VecDeque::new(),
             import_blocks: VecDeque::new(),
-            connect_peers: HashMap::new()
+            connect_peers: HashMap::new(),
+            phantom: PhantomData
         }
     }
 
@@ -164,7 +173,7 @@ impl<'a> NetworkContext<'a> {
     }
 }
 
-pub struct Client {
+pub struct Client<PlotEvent: Event> {
 
     /// Configuration options for the behavior of the network client
     config: ClientConfig,
@@ -173,10 +182,10 @@ pub struct Client {
     my_node: Arc<Node>,
 
     /// The database
-    db: Arc<RecordKeeper>,
+    db: Arc<RecordKeeper<PlotEvent>>,
 
     /// Data structures associated with shard-specific information
-    shards: [RwLock<Option<ShardInfo>>; 255],
+    shards: [RwLock<Option<ShardInfo<PlotEvent>>>; 255],
 
     /// Number of active shards
     num_shards: u8,
@@ -201,20 +210,16 @@ pub struct Client {
     tx: AtomicUsize
 }
 
-impl Client {
-
-    /// The maximum amount of data that can be in a single message object (the object itself can still be in split into pieces at the datagram level)
-    pub const MAX_PACKET_SIZE: usize = 1024 * 128;
-
-    pub fn new(db: Arc<RecordKeeper>, config: ClientConfig) -> Client {
+impl<PE: Event> Client<PE> {
+    pub fn new(db: Arc<RecordKeeper<PE>>, config: ClientConfig) -> Client<PE> {
         
         Client {
             db: db,
-            shards: init_array!(RwLock<Option<ShardInfo>>, 255, RwLock::new(None)),
+            shards: init_array!(RwLock<Option<ShardInfo<PE>>>, 255, RwLock::new(None)),
             num_shards: 0,
             my_node: Arc::new(Node {
                 key: config.private_key.public_key_to_der().unwrap(), // TODO: Should be public key only!
-                version: Session::PROTOCOL_VERSION,
+                version: session::PROTOCOL_VERSION,
                 endpoint: NodeEndpoint { host: config.hostname.clone(), port: config.port },
                 name: get_client_name()
             }),
@@ -344,7 +349,7 @@ impl Client {
 
                     let mut newb: Option<(SocketAddr, Vec<u8>)> = None;
                     if let Some(b) = recv_buf.get_mut(&addr) {
-                        if b.len() > Client::MAX_PACKET_SIZE {
+                        if b.len() > MAX_PACKET_SIZE {
                             // cannot accept more packet data from this client
                             warn!("Client exceeded max packet size, dumping: {:?}", addr);
                             remove = true;
@@ -357,7 +362,7 @@ impl Client {
                         // new peer, can we take more?
                         if recv_len <= self.config.max_nodes as usize {
                             // allocate
-                            let mut v: Vec<u8> = Vec::with_capacity(Client::MAX_PACKET_SIZE);
+                            let mut v: Vec<u8> = Vec::with_capacity(MAX_PACKET_SIZE);
                             v.extend_from_slice(&buf[..n]);
                             newb = Some((addr, v));
                         }
@@ -469,7 +474,7 @@ impl Client {
     }
 
     /// Spawns the threads and puts the networking into a full working state
-    pub fn run(this: Arc<Client>) -> Vec<thread::JoinHandle<()>> {
+    pub fn run(this: Arc<Client<PE>>) -> Vec<thread::JoinHandle<()>> {
 
         if this.done.load(Relaxed) {
             panic!("Tried to run network after already closed");
@@ -502,7 +507,7 @@ impl Client {
 
                 if last_ntp_scan.diff(&n).millis() > NODE_NTP_INTERVAL && !this2.config.ntp_servers.is_empty() {
                     // TODO: Choose a random NTP server rather than only the first
-                    match calc_ntp_drift(this2.config.ntp_servers[0].as_str()) {
+                    match ntp::calc_drift(this2.config.ntp_servers[0].as_str()) {
                         Ok(drift) => {
                             Time::update_ntp(drift);
                             debug!("NTP time sync completed: drift is {}", drift);

@@ -1,33 +1,45 @@
 use bincode;
 use bytes::{BigEndian, ByteOrder};
 use primitives::{U256, Txn, Block, BlockHeader, Mutation};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use std::collections::{HashMap, HashSet};
+use std::fmt::Debug;
+use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::RwLock;
-use super::{MutationRule, MutationRules, Error, Storable};
+use super::{MutationRule, MutationRules, Error, Storable, Event, Events};
 use super::database::*;
 
 const HEIGHT_PREFIX: &[u8] = b"h";
 
-/// An abstraction on the concept of states and state state data. Builds higher-level functunality
+/// An abstraction on the concept of states and state state data. Builds higher-level functionality
 /// On top of the database. The implementation uses RwLocks to provide many read, single write
 /// thread safety.
+///
+/// The `PlotEvent` templated here, is an implementation defined type which will be used when
+/// processing the game to determine how the game computation should be impacted by events on plots.
+/// See also `record_keeper::event`.
+///
 /// TODO: Also add a block to the known blocks if it is only referenced.
-pub struct RecordKeeper {
+pub struct RecordKeeper<PlotEvent: Event>
+{
     db: RwLock<Database>,
     rules: RwLock<MutationRules>,
-    pending_txns: RwLock<HashMap<U256, Txn>>
+    pending_txns: RwLock<HashMap<U256, Txn>>,
+    phantom: PhantomData<PlotEvent>,
 }
 
-impl RecordKeeper {
+impl<PlotEvent: Event> RecordKeeper<PlotEvent> {
     /// Construct a new RecordKeeper from an already opened database and possibly an existing set of
     /// rules.
-    pub fn new(db: Database, rules: Option<MutationRules>) -> RecordKeeper {
+    pub fn new(db: Database, rules: Option<MutationRules>) -> RecordKeeper<PlotEvent> {
         RecordKeeper{
             db: RwLock::new(db),
             rules: RwLock::new(rules.unwrap_or(MutationRules::new())),
-            pending_txns: RwLock::new(HashMap::new())
+            pending_txns: RwLock::new(HashMap::new()),
+            phantom: PhantomData
         }
     }
 
@@ -37,7 +49,7 @@ impl RecordKeeper {
     /// # Warning
     /// Any database which is opened, is assumed to contain data in a certain way, any outside
     /// modifications can cause undefined behavior.
-    pub fn open(path: Option<PathBuf>, rules: Option<MutationRules>) -> Result<RecordKeeper, Error> {
+    pub fn open(path: Option<PathBuf>, rules: Option<MutationRules>) -> Result<RecordKeeper<PlotEvent>, Error> {
         let db = Database::open(path)?;
         Ok(Self::new(db, rules))
     }

@@ -1,21 +1,19 @@
+use bincode::{serialize, Bounded};
+use rand;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::net::{SocketAddr,UdpSocket};
 use std::sync::{Mutex,RwLock};
 use std::sync::Arc;
-use std::collections::VecDeque;
 
-use bincode::{serialize, Bounded};
+use network::client::{ShardMode, NetworkContext};
+use network::client;
+use network::node::{Node, NodeRepository};
+use network::session::{Session, ByeReason, Packet, RawPacket};
+use primitives::{U256, U160};
+use record_keeper::Event;
 
-use primitives::u256::*;
-use primitives::u160::*;
-
-use network::client::*;
-use network::session::*;
-use network::node::*;
-
-use rand;
-
-pub struct ShardInfo {
+pub struct ShardInfo<PlotEvent: Event> {
     /// Unique identifier for this shard (usually genesis block hash)
     network_id: U256,
 
@@ -26,7 +24,7 @@ pub struct ShardInfo {
     pub mode: ShardMode,
 
     /// Independant "connections" to each of the other NodeEndpoints we interact with
-    pub sessions: RwLock<HashMap<SocketAddr, Session>>,
+    pub sessions: RwLock<HashMap<SocketAddr, Session<PlotEvent>>>,
 
     /// The index of the node we should scan next in the node repository. Incremented for each connection attempt
     last_peer_idx: usize,
@@ -37,8 +35,8 @@ pub struct ShardInfo {
     connect_queue: Mutex<VecDeque<Arc<Node>>>
 }
 
-impl ShardInfo {
-    pub fn new(network_id: U256, port: u8, mode: ShardMode, repo: NodeRepository) -> ShardInfo {
+impl<PE: Event> ShardInfo<PE> {
+    pub fn new(network_id: U256, port: u8, mode: ShardMode, repo: NodeRepository) -> ShardInfo<PE> {
         ShardInfo {
             network_id: network_id,
             port: port,
@@ -196,12 +194,12 @@ impl ShardInfo {
         debug!("Close shard: {}", self.network_id);
         for mut sess in self.sessions.write().unwrap().values_mut() {
             sess.close();
-            send_session_packets(&mut sess, s);
+            Self::send_session_packets(&mut sess, s);
         }
     }
 
     /// Evaluate a single packet and route it to a session as necessary
-    pub fn process_packet(&self, p: &Packet, addr: &SocketAddr, mut context: &mut NetworkContext) {
+    pub fn process_packet(&self, p: &Packet, addr: &SocketAddr, mut context: &mut NetworkContext<PE>) {
         {
             match self.sessions.write().unwrap().get_mut(&addr) {
                 Some(sess) => {
@@ -220,7 +218,7 @@ impl ShardInfo {
         let mut sr = self.sessions.write().unwrap();
         
         if let Some(mut sess) = sr.get_mut(addr) {
-            send_session_packets(&mut sess, s)
+            Self::send_session_packets(&mut sess, s)
         }
         else {
             0
@@ -231,7 +229,7 @@ impl ShardInfo {
     pub fn send_all_packets(&self, s: &UdpSocket) -> usize {
         let mut sent: usize = 0;
         for mut sess in self.sessions.write().unwrap().values_mut() {
-            sent += send_session_packets(&mut sess, s) as usize;
+            sent += Self::send_session_packets(&mut sess, s) as usize;
         }
 
         sent
@@ -256,26 +254,26 @@ impl ShardInfo {
 
         count
     }
-}
 
-fn send_session_packets(sess: &mut Session, s: &UdpSocket) -> u64 {
-    let mut count: u64 = 0;
+    fn send_session_packets(sess: &mut Session<PE>, s: &UdpSocket) -> u64 {
+        let mut count: u64 = 0;
 
-    while let Some(p) = sess.pop_send_queue() {
+        while let Some(p) = sess.pop_send_queue() {
 
-        let mut rawp = RawPacket {
-            port: sess.get_remote().1,
-            payload: p
-        };
+            let mut rawp = RawPacket {
+                port: sess.get_remote().1,
+                payload: p
+            };
 
-        // TODO: Is it bad that I call this in 2 separate calls, or are they just buffered together?
-        let raw = serialize(&rawp, Bounded(Client::MAX_PACKET_SIZE as u64)).unwrap();
-        let size_enc = serialize(&(raw.len() as u32), Bounded(4)).unwrap();
-        s.send_to(&size_enc[..], sess.get_remote_addr());
-        s.send_to(&raw[..], sess.get_remote_addr());
+            // TODO: Is it bad that I call this in 2 separate calls, or are they just buffered together?
+            let raw = serialize(&rawp, Bounded(client::MAX_PACKET_SIZE as u64)).unwrap();
+            let size_enc = serialize(&(raw.len() as u32), Bounded(4)).unwrap();
+            s.send_to(&size_enc[..], sess.get_remote_addr());
+            s.send_to(&raw[..], sess.get_remote_addr());
 
-        count += 4 + raw.len() as u64;
+            count += 4 + raw.len() as u64;
+        }
+
+        count
     }
-
-    count
 }
