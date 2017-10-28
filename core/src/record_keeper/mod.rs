@@ -7,5 +7,5 @@ mod record_keeper;
 
 pub use self::error::Error;
 pub use self::mutation_rule::{MutationRule, MutationRules};
-pub use self::record_keeper::RecordKeeper;
+pub use self::record_keeper::{RecordKeeper, RecordEvent};
 pub use self::storable::Storable;

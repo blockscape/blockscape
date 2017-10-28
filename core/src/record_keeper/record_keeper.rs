@@ -2,18 +2,40 @@ use bincode;
 use bytes::{BigEndian, ByteOrder};
 use primitives::{Event, Events, EventListener};
 use primitives::{U256, Txn, Block, BlockHeader, Mutation};
+use serde::{Serialize, Deserialize};
 use serde::de::DeserializeOwned;
-use serde::Serialize;
 use std::collections::{HashMap, HashSet};
+use std::collections::LinkedList;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock, Weak};
 use super::{MutationRule, MutationRules, Error, Storable};
 use super::database::*;
+use std::mem;
 
 const HEIGHT_PREFIX: &[u8] = b"h";
+
+
+/// An event regarding the keeping of records, such as the introduction of a new block or shifting
+/// state.
+///
+/// **Note:** notifications will only be sent once the changes to state have been applied unless
+/// otherwise stated. This means that if there is a `NewBlock` message, a call to retrieve the block
+/// will succeed.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum RecordEvent {
+    /// A new block has been added, walk forward (or back, if back, then a state invalidated event
+    /// will also be pushed out if relevant)
+    NewBlock { uncled: bool, hash: U256 },
+    /// A new transaction that has come into the system and is now pending
+    NewTxn { hash: U256 },
+    /// The state needs to be transitioned backwards, probably onto a new branch
+    StateInvalidated { new_height: u64, after_height: u64, after_tick: u64 },
+}
+impl Event for RecordEvent {}
+
 
 /// An abstraction on the concept of states and state state data. Builds higher-level functionality
 /// On top of the database. The implementation uses RwLocks to provide many read, single write
@@ -29,6 +51,10 @@ pub struct RecordKeeper<PlotEvent: Event>
     db: RwLock<Database>,
     rules: RwLock<MutationRules>,
     pending_txns: RwLock<HashMap<U256, Txn>>,
+
+    record_listeners: RwLock<Vec<Weak<EventListener<RecordEvent>>>>,
+    game_listeners: RwLock<Vec<Weak<EventListener<PlotEvent>>>>,
+
     phantom: PhantomData<PlotEvent>,
 }
 
@@ -40,6 +66,8 @@ impl<PlotEvent: Event> RecordKeeper<PlotEvent> {
             db: RwLock::new(db),
             rules: RwLock::new(rules.unwrap_or(MutationRules::new())),
             pending_txns: RwLock::new(HashMap::new()),
+            record_listeners: RwLock::new(Vec::new()),
+            game_listeners: RwLock::new(Vec::new()),
             phantom: PhantomData
         }
     }
@@ -115,6 +143,22 @@ impl<PlotEvent: Event> RecordKeeper<PlotEvent> {
                 _ => Err(e) // some sort of database error
             }
         }
+    }
+
+    /// Add a new listener for events such as new blocks. This will also take a moment to remove any
+    /// listeners which no longer exist.
+    pub fn add_record_listener(&mut self, listener: &Arc<EventListener<RecordEvent>>) {
+        let mut listeners = self.record_listeners.write().unwrap();
+        listeners.retain(|l| l.upgrade().is_some());
+        listeners.push(Arc::downgrade(listener));
+    }
+
+    /// Add a new listener for plot events. This will also take a moment to remove any listeners
+    /// which no longer exist.
+    pub fn add_game_listener(&mut self, listener: &Arc<EventListener<PlotEvent>>) {
+        let mut listeners = self.game_listeners.write().unwrap();
+        listeners.retain(|l| l.upgrade().is_some());
+        listeners.push(Arc::downgrade(listener));
     }
 
     /// Add a new rule to the database regarding what network mutations are valid. This will only

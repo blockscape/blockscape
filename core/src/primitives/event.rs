@@ -12,7 +12,7 @@ pub trait Event: Clone + Debug + DeserializeOwned + Send + Serialize + Sync + 's
 
 /// `EventListener`s are designed to be notified of new events as they happen so the implementing
 /// object does not have to regularly check if things have changed.
-pub trait EventListener<E: Event>: Sync {
+pub trait EventListener<E: Event>: Send + Sync {
     /// Notify will be called when a new event comes in.
     fn notify(&self, tick: u64, event: &E);
 }
