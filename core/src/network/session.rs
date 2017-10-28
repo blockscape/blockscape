@@ -6,8 +6,7 @@ use std::sync::{Arc,Mutex};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::Relaxed;
 
-use primitives::{Block, Txn, U256};
-use record_keeper::Event;
+use primitives::{Block, Txn, U256, Event};
 use super::node::Node;
 use time::Time;
 

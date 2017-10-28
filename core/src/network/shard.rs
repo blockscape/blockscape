@@ -10,8 +10,7 @@ use network::client::{ShardMode, NetworkContext};
 use network::client;
 use network::node::{Node, NodeRepository};
 use network::session::{Session, ByeReason, Packet, RawPacket};
-use primitives::{U256, U160};
-use record_keeper::Event;
+use primitives::{U256, U160, Event};
 
 pub struct ShardInfo<PlotEvent: Event> {
     /// Unique identifier for this shard (usually genesis block hash)

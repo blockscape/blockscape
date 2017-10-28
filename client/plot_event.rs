@@ -1,4 +1,4 @@
-use blockscape_core::record_keeper::Event;
+use blockscape_core::primitives::Event;
 use serde;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

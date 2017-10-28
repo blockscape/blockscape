@@ -9,6 +9,15 @@ use serde::Serialize;
 /// store references to external data as they may be brought into and out of existence at any time.
 pub trait Event: Clone + Debug + DeserializeOwned + Send + Serialize + Sync + 'static {}
 
+
+/// `EventListener`s are designed to be notified of new events as they happen so the implementing
+/// object does not have to regularly check if things have changed.
+pub trait EventListener<E: Event>: Sync {
+    /// Notify will be called when a new event comes in.
+    fn notify(&self, tick: u64, event: &E);
+}
+
+
 /// A set of events that all happened at the same time.
 pub struct Events<E: Event> {
     pub tick: u64,

@@ -17,8 +17,8 @@ use network::ntp;
 use network::session;
 use network::session::{RawPacket, Message, Session};
 use network::shard::{ShardInfo};
-use primitives::{Block, Txn, U256};
-use record_keeper::{RecordKeeper, Event};
+use primitives::{Block, Txn, U256, Event};
+use record_keeper::{RecordKeeper};
 use signer::generate_private_key;
 
 

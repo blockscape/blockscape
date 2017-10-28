@@ -1,5 +1,6 @@
 use bincode;
 use bytes::{BigEndian, ByteOrder};
+use primitives::{Event, Events, EventListener};
 use primitives::{U256, Txn, Block, BlockHeader, Mutation};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -9,7 +10,7 @@ use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::RwLock;
-use super::{MutationRule, MutationRules, Error, Storable, Event, Events};
+use super::{MutationRule, MutationRules, Error, Storable};
 use super::database::*;
 
 const HEIGHT_PREFIX: &[u8] = b"h";
@@ -35,7 +36,7 @@ impl<PlotEvent: Event> RecordKeeper<PlotEvent> {
     /// Construct a new RecordKeeper from an already opened database and possibly an existing set of
     /// rules.
     pub fn new(db: Database, rules: Option<MutationRules>) -> RecordKeeper<PlotEvent> {
-        RecordKeeper{
+        RecordKeeper {
             db: RwLock::new(db),
             rules: RwLock::new(rules.unwrap_or(MutationRules::new())),
             pending_txns: RwLock::new(HashMap::new()),
