@@ -13,7 +13,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock, Weak};
 use super::{MutationRule, MutationRules, Error, Storable};
 use super::database::*;
-use std::mem;
 
 const HEIGHT_PREFIX: &[u8] = b"h";
 
@@ -46,6 +45,8 @@ impl Event for RecordEvent {}
 /// See also `record_keeper::event`.
 ///
 /// TODO: Also add a block to the known blocks if it is only referenced.
+/// TODO: Also allow for reaching out to the network to request missing information.
+/// TODO: Allow removing state data for shards which are not being processed.
 pub struct RecordKeeper<PlotEvent: Event>
 {
     db: RwLock<Database>,
@@ -88,12 +89,33 @@ impl<PlotEvent: Event> RecordKeeper<PlotEvent> {
         unimplemented!("Need to create blocks from transactions")
     }
 
+    /// Add a new block to the chain state after verifying it is valid. Then check pending
+    /// transaction to see which ones are no longer pending, and to see which ones have been
+    /// invalidated. Also move the network state to be at the new end of the chain.
     pub fn add_block(&mut self, block: &Block) -> Result<(), Error> {
         let block_hash = block.header.calculate_hash();
         let block_height = self.get_block_height(&block.header.prev)?;
         self.add_block_to_height(block_height, block_hash)?;
 
-        unimplemented!("Need to add a block and move the state forward if it is longer than the current chain")
+        unimplemented!("Need to add a block and move the state forward if it is loIf they are not found, then they are not a
+    /// validator.nger than the current chain")
+    }
+
+    /// Add a new transaction to the pool of pending transactions.
+    pub fn add_pending_txn(&mut self, txn: &Txn) -> Result<(), Error> {
+        unimplemented!()
+    }
+
+    /// Find a validator's public key given the hash. If they are not found, then they are not a
+    /// validator.
+    pub fn get_validator_key(&self, id: &U160) -> Result<Vec<u8>, Error> {
+        unimplemented!()
+    }
+
+    /// Get the reputation of a validator. Will default to 0 if they are not found.
+    /// TODO: Handle shard-based reputations
+    pub fn get_validator_rep(&self, id: &U160) -> Result<i64, Error> {
+        unimplemented!()
     }
 
     /// Retrieve the current block hash which the network state represents.
@@ -145,9 +167,17 @@ impl<PlotEvent: Event> RecordKeeper<PlotEvent> {
         }
     }
 
+    /// Returns a list of events for each tick that happened after a given tick. Note: it will not
+    /// seek to reconstruct old history so `after_tick` simply allows additional filtering, e.g. if
+    /// you set `after_tick` to 0, you would not get all events unless those events have not yet
+    /// been removed from the cache.
+    pub fn get_plot_events(&self, plot_id: u64, after_tick: u64) -> Events<PlotEvent> {
+        unimplemented!()
+    }
+
     /// Add a new listener for events such as new blocks. This will also take a moment to remove any
     /// listeners which no longer exist.
-    pub fn add_record_listener(&mut self, listener: &Arc<EventListener<RecordEvent>>) {
+    pub fn register_record_listener(&mut self, listener: &Arc<EventListener<RecordEvent>>) {
         let mut listeners = self.record_listeners.write().unwrap();
         listeners.retain(|l| l.upgrade().is_some());
         listeners.push(Arc::downgrade(listener));
@@ -155,7 +185,7 @@ impl<PlotEvent: Event> RecordKeeper<PlotEvent> {
 
     /// Add a new listener for plot events. This will also take a moment to remove any listeners
     /// which no longer exist.
-    pub fn add_game_listener(&mut self, listener: &Arc<EventListener<PlotEvent>>) {
+    pub fn register_game_listener(&mut self, listener: &Arc<EventListener<PlotEvent>>) {
         let mut listeners = self.game_listeners.write().unwrap();
         listeners.retain(|l| l.upgrade().is_some());
         listeners.push(Arc::downgrade(listener));
@@ -267,7 +297,7 @@ impl<PlotEvent: Event> RecordKeeper<PlotEvent> {
         for rule in &*rules_lock {
             // verify all rules are satisfied and return, propagate error if not
             rule.is_valid(db, mutation)?;
-        }
+        }use std::collections::BTreeMap;
         Ok(())
     }
 
