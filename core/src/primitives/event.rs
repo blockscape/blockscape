@@ -11,6 +11,10 @@ use std::ops::{Deref, DerefMut};
 pub trait Event: Clone + Debug + DeserializeOwned + Send + Serialize + Sync + PartialEq + Eq + 'static {}
 
 
+impl Event for Vec<u8> {}
+pub type RawEvent = Vec<u8>;
+
+
 /// `EventListener`s are designed to be notified of new events as they happen so the implementing
 /// object does not have to regularly check if things have changed.
 pub trait EventListener<E: Event>: Send + Sync {

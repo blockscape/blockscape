@@ -64,7 +64,7 @@ impl Database {
     /// Mutate the stored **network state** and return a contra mutation to be able to undo what was
     /// done. Note that changes to either blockchain state or gamestate must occur through other
     /// functions.
-    pub fn mutate<E: Event>(&mut self, mutation: &Mutation<E>) -> Result<Mutation<E>, Error> {
+    pub fn mutate(&mut self, mutation: &Mutation) -> Result<Mutation, Error> {
         // mutation.assert_not_contra();
         // let mut contra = Mutation::new_contra();
         // let mut batch = WriteBatch::default();
@@ -106,7 +106,7 @@ impl Database {
 
     /// Consumes a contra mutation to undo changes made by the corresponding mutation to the
     /// network state.
-    pub fn undo_mutate<E: Event>(&mut self, mutation: Mutation<E>) -> Result<(), Error> {
+    pub fn undo_mutate(&mut self, mutation: Mutation) -> Result<(), Error> {
         // mutation.assert_contra();
         // let mut batch = WriteBatch::default();
         // let mut del = BTreeSet::new();

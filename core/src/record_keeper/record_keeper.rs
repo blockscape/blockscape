@@ -1,13 +1,12 @@
 use bincode;
 use bytes::{BigEndian, ByteOrder};
-use primitives::{Event, Events, EventListener};
+use primitives::{Event, RawEvent, Events, EventListener};
 use primitives::{U256, U160, Txn, Block, BlockHeader, Mutation};
 use serde::{Serialize, Deserialize};
 use serde::de::DeserializeOwned;
 use std::collections::{HashMap, HashSet};
 use std::collections::LinkedList;
 use std::fmt::Debug;
-use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock, Weak};
@@ -40,36 +39,29 @@ impl Event for RecordEvent {}
 /// On top of the database. The implementation uses RwLocks to provide many read, single write
 /// thread safety.
 ///
-/// The `PlotEvent` templated here, is an implementation defined type which will be used when
-/// processing the game to determine how the game computation should be impacted by events on plots.
-/// See also `record_keeper::event`.
-///
 /// TODO: Also add a block to the known blocks if it is only referenced.
 /// TODO: Also allow for reaching out to the network to request missing information.
 /// TODO: Allow removing state data for shards which are not being processed.
-pub struct RecordKeeper<PlotEvent: Event>
+pub struct RecordKeeper
 {
     db: RwLock<Database>,
-    rules: RwLock<MutationRules<PlotEvent>>,
-    pending_txns: RwLock<HashMap<U256, Txn<PlotEvent>>>,
+    rules: RwLock<MutationRules>,
+    pending_txns: RwLock<HashMap<U256, Txn>>,
 
     record_listeners: RwLock<Vec<Weak<EventListener<RecordEvent>>>>,
-    game_listeners: RwLock<Vec<Weak<EventListener<PlotEvent>>>>,
-
-    phantom: PhantomData<PlotEvent>,
+    game_listeners: RwLock<Vec<Weak<EventListener<RawEvent>>>>,
 }
 
-impl<PlotEvent: Event> RecordKeeper<PlotEvent> {
+impl RecordKeeper {
     /// Construct a new RecordKeeper from an already opened database and possibly an existing set of
     /// rules.
-    pub fn new(db: Database, rules: Option<MutationRules<PlotEvent>>) -> RecordKeeper<PlotEvent> {
+    pub fn new(db: Database, rules: Option<MutationRules>) -> RecordKeeper {
         RecordKeeper {
             db: RwLock::new(db),
             rules: RwLock::new(rules.unwrap_or(MutationRules::new())),
             pending_txns: RwLock::new(HashMap::new()),
             record_listeners: RwLock::new(Vec::new()),
-            game_listeners: RwLock::new(Vec::new()),
-            phantom: PhantomData
+            game_listeners: RwLock::new(Vec::new())
         }
     }
 
@@ -79,7 +71,7 @@ impl<PlotEvent: Event> RecordKeeper<PlotEvent> {
     /// # Warning
     /// Any database which is opened, is assumed to contain data in a certain way, any outside
     /// modifications can cause undefined behavior.
-    pub fn open(path: Option<PathBuf>, rules: Option<MutationRules<PlotEvent>>) -> Result<RecordKeeper<PlotEvent>, Error> {
+    pub fn open(path: Option<PathBuf>, rules: Option<MutationRules>) -> Result<RecordKeeper, Error> {
         let db = Database::open(path)?;
         Ok(Self::new(db, rules))
     }
@@ -101,7 +93,7 @@ impl<PlotEvent: Event> RecordKeeper<PlotEvent> {
     }
 
     /// Add a new transaction to the pool of pending transactions.
-    pub fn add_pending_txn(&mut self, txn: &Txn<PlotEvent>) -> Result<(), Error> {
+    pub fn add_pending_txn(&mut self, txn: &Txn) -> Result<(), Error> {
         unimplemented!()
     }
 
@@ -170,7 +162,7 @@ impl<PlotEvent: Event> RecordKeeper<PlotEvent> {
     /// seek to reconstruct old history so `after_tick` simply allows additional filtering, e.g. if
     /// you set `after_tick` to 0, you would not get all events unless those events have not yet
     /// been removed from the cache.
-    pub fn get_plot_events(&self, plot_id: u64, after_tick: u64) -> Events<PlotEvent> {
+    pub fn get_plot_events(&self, plot_id: u64, after_tick: u64) -> Events<RawEvent> {
         unimplemented!()
     }
 
@@ -184,7 +176,7 @@ impl<PlotEvent: Event> RecordKeeper<PlotEvent> {
 
     /// Add a new listener for plot events. This will also take a moment to remove any listeners
     /// which no longer exist.
-    pub fn register_game_listener(&mut self, listener: &Arc<EventListener<PlotEvent>>) {
+    pub fn register_game_listener(&mut self, listener: &Arc<EventListener<RawEvent>>) {
         let mut listeners = self.game_listeners.write().unwrap();
         listeners.retain(|l| l.upgrade().is_some());
         listeners.push(Arc::downgrade(listener));
@@ -192,13 +184,13 @@ impl<PlotEvent: Event> RecordKeeper<PlotEvent> {
 
     /// Add a new rule to the database regarding what network mutations are valid. This will only
     /// impact things which are mutated through the `mutate` function.
-    pub fn add_rule(&mut self, rule: Box<MutationRule<PlotEvent>>) {
+    pub fn add_rule(&mut self, rule: Box<MutationRule>) {
         let mut rules_lock = self.rules.write().unwrap();
         rules_lock.push_back(rule);
     }
 
     /// Check if a mutation to the network state is valid.
-    pub fn is_valid(&self, mutation: &Mutation<PlotEvent>) -> Result<(), String> {
+    pub fn is_valid(&self, mutation: &Mutation) -> Result<(), String> {
         let db_lock = self.db.read().unwrap();
         self.is_valid_given_lock(&*db_lock, mutation)
     }
@@ -245,7 +237,7 @@ impl<PlotEvent: Event> RecordKeeper<PlotEvent> {
     }
 
     /// Get a transaction from the database.
-    pub fn get_txn(&self, hash: &U256) -> Result<Txn<PlotEvent>, Error> {
+    pub fn get_txn(&self, hash: &U256) -> Result<Txn, Error> {
         let db_lock = self.db.read().unwrap();
         Self::get_txn_given_lock(&*db_lock, hash)
     }
@@ -273,7 +265,7 @@ impl<PlotEvent: Event> RecordKeeper<PlotEvent> {
     }
 
     /// Check if a mutation is valid and then apply the changes to the network state.
-    fn mutate(&mut self, mutation: &Mutation<PlotEvent>) -> Result<Mutation<PlotEvent>, Error> {
+    fn mutate(&mut self, mutation: &Mutation) -> Result<Mutation, Error> {
         // mutation.assert_not_contra();
         // let mut db_lock = self.db.write().unwrap();
         // self.is_valid_given_lock(&*db_lock, mutation).map_err(|e| Error::InvalidMut(e))?;
@@ -284,7 +276,7 @@ impl<PlotEvent: Event> RecordKeeper<PlotEvent> {
     }
 
     /// Apply a contra mutation to the network state. (And consumes the mutation).
-    fn undo_mutate(&mut self, mutation: Mutation<PlotEvent>) -> Result<(), Error> {
+    fn undo_mutate(&mut self, mutation: Mutation) -> Result<(), Error> {
         // mutation.assert_contra();
         // let mut db_lock = self.db.write().unwrap();
         
@@ -295,7 +287,7 @@ impl<PlotEvent: Event> RecordKeeper<PlotEvent> {
 
     /// Internal use function to check if a mutation is valid given a lock of the db. While it only
     /// takes a reference to a db, make sure a lock is in scope which is used to get the db ref.
-    fn is_valid_given_lock(&self, db: &Database, mutation: &Mutation<PlotEvent>) -> Result<(), String> {
+    fn is_valid_given_lock(&self, db: &Database, mutation: &Mutation) -> Result<(), String> {
         let rules_lock = self.rules.read().unwrap();
         for rule in &*rules_lock {
             // verify all rules are satisfied and return, propagate error if not
@@ -358,7 +350,7 @@ impl<PlotEvent: Event> RecordKeeper<PlotEvent> {
         Ok(Block::deserialize(header, &raw_txns)?)
     }
 
-    fn get_txn_given_lock(db: &Database, hash: &U256) -> Result<Txn<PlotEvent>, Error> {
+    fn get_txn_given_lock(db: &Database, hash: &U256) -> Result<Txn, Error> {
         let id = hash.to_vec();
         Self::get::<Txn>(db, &id, BLOCKCHAIN_POSTFIX)
     }

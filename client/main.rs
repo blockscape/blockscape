@@ -56,7 +56,7 @@ fn main() {
     let db = Arc::new(RecordKeeper::open(None, Some(rules::build_rules())).expect("Record Keeper was not able to initialize!"));
 
 
-    let mut net_client: Option<Arc<Client<PlotEvent>>> = None;
+    let mut net_client: Option<Arc<Client>> = None;
 
     let mut threads: Vec<thread::JoinHandle<()>> = Vec::new();
 

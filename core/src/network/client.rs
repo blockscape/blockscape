@@ -2,7 +2,6 @@ use bincode::deserialize;
 use openssl::pkey::PKey;
 use std::collections::{HashMap, VecDeque};
 use std::io::Error;
-use std::marker::PhantomData;
 use std::net::{SocketAddr,UdpSocket};
 use std::sync::{Arc, RwLock, Mutex};
 use std::sync::atomic::{AtomicBool,AtomicUsize};
@@ -17,7 +16,7 @@ use network::ntp;
 use network::session;
 use network::session::{RawPacket, Message, Session};
 use network::shard::{ShardInfo};
-use primitives::{Block, Txn, U256, Event};
+use primitives::{Block, Txn, U256};
 use record_keeper::{RecordKeeper};
 use signer::generate_private_key;
 
@@ -125,35 +124,31 @@ impl Statistics {
     }
 }
 
-pub struct NetworkContext<'a, PlotEvent: Event> {
+pub struct NetworkContext<'a> {
     /// The database for RO access
-    pub db: &'a RecordKeeper<PlotEvent>,
+    pub db: &'a RecordKeeper,
 
     /// The configuation associated with this client
     pub config: &'a ClientConfig,
 
     /// Queue of transactions to import
-    pub import_txns: VecDeque<Txn<PlotEvent>>,
+    pub import_txns: VecDeque<Txn>,
 
     /// Queue of blocks to import
     pub import_blocks: VecDeque<Block>,
 
     /// Nodes which can be connected to which were recently supplied
     pub connect_peers: HashMap<U256, Vec<Node>>,
-
-    /// PhantomData to allow PlotEvent to be be used for RecordKeeper
-    phantom: PhantomData<&'a PlotEvent>,
 }
 
-impl<'a, PE: Event> NetworkContext<'a, PE> {
-    pub fn new(db: &'a RecordKeeper<PE>, config: &'a ClientConfig) -> NetworkContext<'a, PE> {
+impl<'a> NetworkContext<'a> {
+    pub fn new(db: &'a RecordKeeper, config: &'a ClientConfig) -> NetworkContext<'a> {
         NetworkContext {
             db: db,
             config: config,
             import_txns: VecDeque::new(),
             import_blocks: VecDeque::new(),
-            connect_peers: HashMap::new(),
-            phantom: PhantomData
+            connect_peers: HashMap::new()
         }
     }
 
@@ -173,7 +168,7 @@ impl<'a, PE: Event> NetworkContext<'a, PE> {
     }
 }
 
-pub struct Client<PlotEvent: Event> {
+pub struct Client {
 
     /// Configuration options for the behavior of the network client
     config: ClientConfig,
@@ -182,10 +177,10 @@ pub struct Client<PlotEvent: Event> {
     my_node: Arc<Node>,
 
     /// The database
-    db: Arc<RecordKeeper<PlotEvent>>,
+    db: Arc<RecordKeeper>,
 
     /// Data structures associated with shard-specific information
-    shards: [RwLock<Option<ShardInfo<PlotEvent>>>; 255],
+    shards: [RwLock<Option<ShardInfo>>; 255],
 
     /// Number of active shards
     num_shards: u8,
@@ -210,12 +205,12 @@ pub struct Client<PlotEvent: Event> {
     tx: AtomicUsize
 }
 
-impl<PE: Event> Client<PE> {
-    pub fn new(db: Arc<RecordKeeper<PE>>, config: ClientConfig) -> Client<PE> {
+impl Client {
+    pub fn new(db: Arc<RecordKeeper>, config: ClientConfig) -> Client {
         
         Client {
             db: db,
-            shards: init_array!(RwLock<Option<ShardInfo<PE>>>, 255, RwLock::new(None)),
+            shards: init_array!(RwLock<Option<ShardInfo>>, 255, RwLock::new(None)),
             num_shards: 0,
             my_node: Arc::new(Node {
                 key: config.private_key.public_key_to_der().unwrap(), // TODO: Should be public key only!
@@ -474,7 +469,7 @@ impl<PE: Event> Client<PE> {
     }
 
     /// Spawns the threads and puts the networking into a full working state
-    pub fn run(this: Arc<Client<PE>>) -> Vec<thread::JoinHandle<()>> {
+    pub fn run(this: Arc<Client>) -> Vec<thread::JoinHandle<()>> {
 
         if this.done.load(Relaxed) {
             panic!("Tried to run network after already closed");
@@ -596,7 +591,7 @@ impl<PE: Event> Client<PE> {
         &self.config
     }
 
-    pub fn report_txn(&self, txn: Txn<PE>) {
+    pub fn report_txn(&self, txn: Txn) {
         // do we already have this txn? if so, stop here
 
 

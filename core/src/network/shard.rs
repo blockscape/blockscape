@@ -10,9 +10,9 @@ use network::client::{ShardMode, NetworkContext};
 use network::client;
 use network::node::{Node, NodeRepository};
 use network::session::{Session, ByeReason, Packet, RawPacket};
-use primitives::{U256, U160, Event};
+use primitives::{U256, U160};
 
-pub struct ShardInfo<PlotEvent: Event> {
+pub struct ShardInfo {
     /// Unique identifier for this shard (usually genesis block hash)
     network_id: U256,
 
@@ -23,7 +23,7 @@ pub struct ShardInfo<PlotEvent: Event> {
     pub mode: ShardMode,
 
     /// Independant "connections" to each of the other NodeEndpoints we interact with
-    pub sessions: RwLock<HashMap<SocketAddr, Session<PlotEvent>>>,
+    pub sessions: RwLock<HashMap<SocketAddr, Session>>,
 
     /// The index of the node we should scan next in the node repository. Incremented for each connection attempt
     last_peer_idx: usize,
@@ -34,8 +34,8 @@ pub struct ShardInfo<PlotEvent: Event> {
     connect_queue: Mutex<VecDeque<Arc<Node>>>
 }
 
-impl<PE: Event> ShardInfo<PE> {
-    pub fn new(network_id: U256, port: u8, mode: ShardMode, repo: NodeRepository) -> ShardInfo<PE> {
+impl ShardInfo {
+    pub fn new(network_id: U256, port: u8, mode: ShardMode, repo: NodeRepository) -> ShardInfo {
         ShardInfo {
             network_id: network_id,
             port: port,
@@ -157,7 +157,7 @@ impl<PE: Event> ShardInfo<PE> {
         }
     }
 
-    pub fn open_session(&self, peer: Arc<Node>, my_node: Arc<Node>, introduce: Option<&Packet<PE>>) -> Result<SocketAddr, ()> {
+    pub fn open_session(&self, peer: Arc<Node>, my_node: Arc<Node>, introduce: Option<&Packet>) -> Result<SocketAddr, ()> {
         let pkh = peer.get_hash_id();
         let saddr = peer.endpoint.clone().as_socketaddr();
 
@@ -198,7 +198,7 @@ impl<PE: Event> ShardInfo<PE> {
     }
 
     /// Evaluate a single packet and route it to a session as necessary
-    pub fn process_packet(&self, p: &Packet<PE>, addr: &SocketAddr, mut context: &mut NetworkContext<PE>) {
+    pub fn process_packet(&self, p: &Packet, addr: &SocketAddr, mut context: &mut NetworkContext) {
         {
             match self.sessions.write().unwrap().get_mut(&addr) {
                 Some(sess) => {
@@ -254,7 +254,7 @@ impl<PE: Event> ShardInfo<PE> {
         count
     }
 
-    fn send_session_packets(sess: &mut Session<PE>, s: &UdpSocket) -> u64 {
+    fn send_session_packets(sess: &mut Session, s: &UdpSocket) -> u64 {
         let mut count: u64 = 0;
 
         while let Some(p) = sess.pop_send_queue() {

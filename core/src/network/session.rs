@@ -34,19 +34,19 @@ pub const NODE_RESPONSE_SIZE: usize = 8;
 
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct RawPacket<PlotEvent: Event> {
+pub struct RawPacket {
     /// Which communication channel should be regarded for this node.
     /// This is included so nodes can have multiple connections to each other through separate shards
     /// Port 255 is reserved for connecting from remote nodes when the local port is unknown
     pub port: u8,
     /// The data which should be delivered to the session handler
-    pub payload: Packet<PlotEvent>
+    pub payload: Packet
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Packet<PlotEvent: Event> {
+pub struct Packet {
     pub seq: u32,
-    pub msg: Message<PlotEvent>,
+    pub msg: Message,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -73,7 +73,7 @@ pub enum ByeReason {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub enum Message<PlotEvent: Event> {
+pub enum Message {
     /// First message sent by a connecting node. If the other node accepts, it will reply with an "Introduce". The nodes are now connected
     Introduce {
         /// The network which this node is attempting to make a connection through
@@ -115,7 +115,7 @@ pub enum Message<PlotEvent: Event> {
     },
 
     /// Sent by reliable flooding to indicate a new transaction has entered the network and should be propogated
-    NewTransaction { txn: Txn<PlotEvent> },
+    NewTransaction { txn: Txn },
     /// Sent by reliable flooding to indicClientate that a new block has entered the network and should be propogated
     NewBlock { block: Block },
 
@@ -128,7 +128,7 @@ pub enum Message<PlotEvent: Event> {
         /// A list of blocks to import
         blocks: Vec<Block>,    
         /// A list of transactions to import                 
-        transactions: Vec<Txn<PlotEvent>>,
+        transactions: Vec<Txn>,
     },
 
     /// Sent to signal the end of the connection
@@ -145,7 +145,7 @@ pub enum Message<PlotEvent: Event> {
 
 /// Represents a single connection between another peer on the network.
 /// There may be only one session for each peer-network (AKA, a peer could have multiple sessions for separate network_id)
-pub struct Session<PlotEvent: Event> {
+pub struct Session {
 
     /// Whether or not we have received Introduce packet from the other end yet. Cannot process any packets otherwise
     introduced: bool,
@@ -181,7 +181,7 @@ pub struct Session<PlotEvent: Event> {
     last_ping_send: Option<Time>,
 
     /// A queue of packets which should be sent to the client soon
-    send_queue: Mutex<VecDeque<Packet<PlotEvent>>>,
+    send_queue: Mutex<VecDeque<Packet>>,
 
     /// The unique packet identifier to use for the next packet
     current_seq: AtomicUsize,
@@ -189,13 +189,10 @@ pub struct Session<PlotEvent: Event> {
     /// Used to help discern the number of failed replies. When this number exceeds a threshold,
     /// the connection is considered dropped
     strikes: AtomicUsize,
-
-    /// PhantomData to allow PlotEvent to be be used for RecordKeeper
-    phantom: PhantomData<PlotEvent>,
 }
 
-impl<PE: Event> Session<PE> {
-    pub fn new(local_peer: Arc<Node>, local_port: u8, remote_peer: Arc<Node>, remote_addr: SocketAddr, network_id: U256, introduce: Option<&Packet<PE>>) -> Session<PE> {
+impl Session {
+    pub fn new(local_peer: Arc<Node>, local_port: u8, remote_peer: Arc<Node>, remote_addr: SocketAddr, network_id: U256, introduce: Option<&Packet>) -> Session {
         let introduce_n = local_peer.as_ref().clone();
         
         let mut sess = Session {
@@ -213,7 +210,6 @@ impl<PE: Event> Session<PE> {
             send_queue: Mutex::new(VecDeque::new()),
             current_seq: AtomicUsize::new(0),
             strikes: AtomicUsize::new(0),
-            phantom: PhantomData
         };
 
         if let Some(p) = introduce {
@@ -243,7 +239,7 @@ impl<PE: Event> Session<PE> {
         &self.remote_addr
     }
 
-    fn handle_introduce(&mut self, msg: &Message<PE>) {
+    fn handle_introduce(&mut self, msg: &Message) {
         if let &Message::Introduce { ref node, ref network_id, ref port } = msg {
             self.remote_peer = Arc::new(node.clone());
             self.remote_port = *port;
@@ -270,7 +266,7 @@ impl<PE: Event> Session<PE> {
     }
 
     /// Provide a packet which has been received for this session
-    pub fn recv(&mut self, packet: &Packet<PE>, context: &mut NetworkContext<PE>) {
+    pub fn recv(&mut self, packet: &Packet, context: &mut NetworkContext) {
 
         if self.done.is_some() {
             return; // no need to do any additional processing
@@ -464,7 +460,7 @@ impl<PE: Event> Session<PE> {
         self.done = Some(ByeReason::Exit);
     }
 
-    pub fn pop_send_queue(&mut self) -> Option<Packet<PE>> {
+    pub fn pop_send_queue(&mut self) -> Option<Packet> {
         self.send_queue.lock().unwrap().pop_front()
     }
 

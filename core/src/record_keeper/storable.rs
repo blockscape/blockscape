@@ -1,6 +1,6 @@
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use primitives::{Block, BlockHeader, Txn, Event};
+use primitives::{Block, BlockHeader, Txn};
 
 /// Storable objects are able to be directly stored into the database and include information about
 /// what type they are and how to serialize/deserialize them.
@@ -53,7 +53,7 @@ impl Storable for BlockHeader {
     fn instance_id(&self) -> Vec<u8> { self.calculate_hash().to_vec() }
 }
 
-impl<E: Event> Storable for Txn<E> {
+impl Storable for Txn {
     fn global_id() -> &'static [u8] { b"" } // SHA256 so no need for a prefix
     fn instance_id(&self) -> Vec<u8> { self.calculate_hash().to_vec() }
 }

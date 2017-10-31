@@ -12,7 +12,7 @@ use super::PlotEvent;
 
 const PRINT_FREQUENCY: i64 = 30 * 1000; // print statistics every 30 seconds
 
-pub fn run(client: &Option<Arc<Client<PlotEvent>>>, rx: Receiver<()>) {
+pub fn run(client: &Option<Arc<Client>>, rx: Receiver<()>) {
 
     let mut last_print = Time::current();
 
