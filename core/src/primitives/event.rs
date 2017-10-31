@@ -8,7 +8,7 @@ use std::ops::{Deref, DerefMut};
 /// determine how the game computation should be impacted. The final implementation should probably
 /// be an enum, which would easily allow for multiple different kinds of events. Events may not
 /// store references to external data as they may be brought into and out of existence at any time.
-pub trait Event: Clone + Debug + DeserializeOwned + Send + Serialize + Sync + 'static {}
+pub trait Event: Clone + Debug + DeserializeOwned + Send + Serialize + Sync + PartialEq + Eq + 'static {}
 
 
 /// `EventListener`s are designed to be notified of new events as they happen so the implementing

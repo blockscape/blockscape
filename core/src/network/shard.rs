@@ -157,7 +157,7 @@ impl<PE: Event> ShardInfo<PE> {
         }
     }
 
-    pub fn open_session(&self, peer: Arc<Node>, my_node: Arc<Node>, introduce: Option<&Packet>) -> Result<SocketAddr, ()> {
+    pub fn open_session(&self, peer: Arc<Node>, my_node: Arc<Node>, introduce: Option<&Packet<PE>>) -> Result<SocketAddr, ()> {
         let pkh = peer.get_hash_id();
         let saddr = peer.endpoint.clone().as_socketaddr();
 
@@ -198,7 +198,7 @@ impl<PE: Event> ShardInfo<PE> {
     }
 
     /// Evaluate a single packet and route it to a session as necessary
-    pub fn process_packet(&self, p: &Packet, addr: &SocketAddr, mut context: &mut NetworkContext<PE>) {
+    pub fn process_packet(&self, p: &Packet<PE>, addr: &SocketAddr, mut context: &mut NetworkContext<PE>) {
         {
             match self.sessions.write().unwrap().get_mut(&addr) {
                 Some(sess) => {

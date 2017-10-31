@@ -34,19 +34,19 @@ pub const NODE_RESPONSE_SIZE: usize = 8;
 
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct RawPacket {
+pub struct RawPacket<PlotEvent: Event> {
     /// Which communication channel should be regarded for this node.
     /// This is included so nodes can have multiple connections to each other through separate shards
     /// Port 255 is reserved for connecting from remote nodes when the local port is unknown
     pub port: u8,
     /// The data which should be delivered to the session handler
-    pub payload: Packet
+    pub payload: Packet<PlotEvent>
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Packet {
+pub struct Packet<PlotEvent: Event> {
     pub seq: u32,
-    pub msg: Message,
+    pub msg: Message<PlotEvent>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -73,7 +73,7 @@ pub enum ByeReason {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub enum Message {
+pub enum Message<PlotEvent: Event> {
     /// First message sent by a connecting node. If the other node accepts, it will reply with an "Introduce". The nodes are now connected
     Introduce {
         /// The network which this node is attempting to make a connection through
@@ -115,7 +115,7 @@ pub enum Message {
     },
 
     /// Sent by reliable flooding to indicate a new transaction has entered the network and should be propogated
-    NewTransaction { txn: Txn },
+    NewTransaction { txn: Txn<PlotEvent> },
     /// Sent by reliable flooding to indicClientate that a new block has entered the network and should be propogated
     NewBlock { block: Block },
 
@@ -128,7 +128,7 @@ pub enum Message {
         /// A list of blocks to import
         blocks: Vec<Block>,    
         /// A list of transactions to import                 
-        transactions: Vec<Txn>,
+        transactions: Vec<Txn<PlotEvent>>,
     },
 
     /// Sent to signal the end of the connection
@@ -181,7 +181,7 @@ pub struct Session<PlotEvent: Event> {
     last_ping_send: Option<Time>,
 
     /// A queue of packets which should be sent to the client soon
-    send_queue: Mutex<VecDeque<Packet>>,
+    send_queue: Mutex<VecDeque<Packet<PlotEvent>>>,
 
     /// The unique packet identifier to use for the next packet
     current_seq: AtomicUsize,
@@ -195,7 +195,7 @@ pub struct Session<PlotEvent: Event> {
 }
 
 impl<PE: Event> Session<PE> {
-    pub fn new(local_peer: Arc<Node>, local_port: u8, remote_peer: Arc<Node>, remote_addr: SocketAddr, network_id: U256, introduce: Option<&Packet>) -> Session<PE> {
+    pub fn new(local_peer: Arc<Node>, local_port: u8, remote_peer: Arc<Node>, remote_addr: SocketAddr, network_id: U256, introduce: Option<&Packet<PE>>) -> Session<PE> {
         let introduce_n = local_peer.as_ref().clone();
         
         let mut sess = Session {
@@ -243,7 +243,7 @@ impl<PE: Event> Session<PE> {
         &self.remote_addr
     }
 
-    fn handle_introduce(&mut self, msg: &Message) {
+    fn handle_introduce(&mut self, msg: &Message<PE>) {
         if let &Message::Introduce { ref node, ref network_id, ref port } = msg {
             self.remote_peer = Arc::new(node.clone());
             self.remote_port = *port;
@@ -270,7 +270,7 @@ impl<PE: Event> Session<PE> {
     }
 
     /// Provide a packet which has been received for this session
-    pub fn recv(&mut self, packet: &Packet, context: &mut NetworkContext<PE>) {
+    pub fn recv(&mut self, packet: &Packet<PE>, context: &mut NetworkContext<PE>) {
 
         if self.done.is_some() {
             return; // no need to do any additional processing
@@ -464,7 +464,7 @@ impl<PE: Event> Session<PE> {
         self.done = Some(ByeReason::Exit);
     }
 
-    pub fn pop_send_queue(&mut self) -> Option<Packet> {
+    pub fn pop_send_queue(&mut self) -> Option<Packet<PE>> {
         self.send_queue.lock().unwrap().pop_front()
     }
 

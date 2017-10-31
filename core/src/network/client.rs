@@ -133,7 +133,7 @@ pub struct NetworkContext<'a, PlotEvent: Event> {
     pub config: &'a ClientConfig,
 
     /// Queue of transactions to import
-    pub import_txns: VecDeque<Txn>,
+    pub import_txns: VecDeque<Txn<PlotEvent>>,
 
     /// Queue of blocks to import
     pub import_blocks: VecDeque<Block>,
@@ -596,7 +596,7 @@ impl<PE: Event> Client<PE> {
         &self.config
     }
 
-    pub fn report_txn(&self, txn: Txn) {
+    pub fn report_txn(&self, txn: Txn<PE>) {
         // do we already have this txn? if so, stop here
 
 
