@@ -4,14 +4,16 @@ version = "0.0.1"
 authors = ["Daniel Beal <git@danb.email>", "Matthew Conover <matt@xram.co>"]
 
 [dependencies]
+blockscape_core = { path = "core" }
 chan-signal = "0.3.1"
 clap = "2.26.2"
 colored = "1.5.3"
-pretty_env_logger = "0.1.1"
 isatty = "0.1"
 log = "0.3"
 openssl = "^0.9"
-blockscape_core = { path = "core" }
+pretty_env_logger = "0.1.1"
+serde = "^1.0"
+serde_derive = "^1.0"
 
 [[bin]]
 path = "client/main.rs"

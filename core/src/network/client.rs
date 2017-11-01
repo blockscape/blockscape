@@ -11,12 +11,13 @@ use std::time::Duration;
 use time::Time;
 
 use env::get_client_name;
-use network::node::*;
-use network::ntp::*;
-use network::session::*;
-use network::shard::*;
+use network::node::{Node, NodeRepository, NodeEndpoint, LocalNode};
+use network::ntp;
+use network::session;
+use network::session::{RawPacket, Message, Session};
+use network::shard::{ShardInfo};
 use primitives::{Block, Txn, U256};
-use record_keeper::RecordKeeper;
+use record_keeper::{RecordKeeper};
 use signer::generate_private_key;
 
 
@@ -34,6 +35,9 @@ pub enum ShardMode {
 const NODE_SCAN_INTERVAL: i64 = 30000; // every 30 seconds
 const NODE_CHECK_INTERVAL: i64 = 5000; // every 5 seconds
 const NODE_NTP_INTERVAL: i64 = 20 * 60000; // every 20 minutes
+
+/// The maximum amount of data that can be in a single message object (the object itself can still be in split into pieces at the datagram level)
+pub const MAX_PACKET_SIZE: usize = 1024 * 128;
 
 //#[derive(Debug)]
 pub struct ClientConfig {
@@ -202,10 +206,6 @@ pub struct Client {
 }
 
 impl Client {
-
-    /// The maximum amount of data that can be in a single message object (the object itself can still be in split into pieces at the datagram level)
-    pub const MAX_PACKET_SIZE: usize = 1024 * 128;
-
     pub fn new(db: Arc<RecordKeeper>, config: ClientConfig) -> Client {
         
         Client {
@@ -214,7 +214,7 @@ impl Client {
             num_shards: 0,
             my_node: Arc::new(Node {
                 key: config.private_key.public_key_to_der().unwrap(), // TODO: Should be public key only!
-                version: Session::PROTOCOL_VERSION,
+                version: session::PROTOCOL_VERSION,
                 endpoint: NodeEndpoint { host: config.hostname.clone(), port: config.port },
                 name: get_client_name()
             }),
@@ -344,7 +344,7 @@ impl Client {
 
                     let mut newb: Option<(SocketAddr, Vec<u8>)> = None;
                     if let Some(b) = recv_buf.get_mut(&addr) {
-                        if b.len() > Client::MAX_PACKET_SIZE {
+                        if b.len() > MAX_PACKET_SIZE {
                             // cannot accept more packet data from this client
                             warn!("Client exceeded max packet size, dumping: {:?}", addr);
                             remove = true;
@@ -357,7 +357,7 @@ impl Client {
                         // new peer, can we take more?
                         if recv_len <= self.config.max_nodes as usize {
                             // allocate
-                            let mut v: Vec<u8> = Vec::with_capacity(Client::MAX_PACKET_SIZE);
+                            let mut v: Vec<u8> = Vec::with_capacity(MAX_PACKET_SIZE);
                             v.extend_from_slice(&buf[..n]);
                             newb = Some((addr, v));
                         }
@@ -502,7 +502,7 @@ impl Client {
 
                 if last_ntp_scan.diff(&n).millis() > NODE_NTP_INTERVAL && !this2.config.ntp_servers.is_empty() {
                     // TODO: Choose a random NTP server rather than only the first
-                    match calc_ntp_drift(this2.config.ntp_servers[0].as_str()) {
+                    match ntp::calc_drift(this2.config.ntp_servers[0].as_str()) {
                         Ok(drift) => {
                             Time::update_ntp(drift);
                             debug!("NTP time sync completed: drift is {}", drift);

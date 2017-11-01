@@ -12,6 +12,9 @@ use blockscape_core::primitives::*;
 use blockscape_core::signer::generate_private_key;
 use blockscape_core::time::Time;
 
+const ADMIN_KEY_PREFIX: &[u8] = b"ADMIN";
+const ADMIN_KEY: &[u8] = b""; //TODO: Insert Admin Key
+
 /// Loads command line arguments, and returns them as a clap ArgMatches obj
 pub fn parse_cmdline<'a>() -> ArgMatches<'a> {
     let mut workdir_arg = Arg::with_name("workdir")
@@ -90,11 +93,11 @@ pub fn make_genesis() -> (Block, Vec<Txn>) {
 
     let mut m = Mutation::new();
 
-    m.changes.push(Change {
-        key: b"ADMIN"[..].to_owned(),
+    m.changes.push(Change::SetValue {
+        key: Vec::from(ADMIN_KEY_PREFIX),
         // TODO: Put real admin key here
-        value: Some(b"0x000000000000000000000000"[..].to_owned()),
-        data: None
+        value: Some(Vec::from(ADMIN_KEY)),
+        supp: None
     });
 
     let txn = Txn {

@@ -8,6 +8,7 @@ use colored::*;
 
 use blockscape_core::network::client::Client;
 use blockscape_core::time::Time;
+use super::PlotEvent;
 
 const PRINT_FREQUENCY: i64 = 30 * 1000; // print statistics every 30 seconds
 

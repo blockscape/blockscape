@@ -1,8 +1,9 @@
+use bincode;
 use bytes::{ByteOrder, BigEndian, LittleEndian};
+use std::cmp;
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::cmp;
 use std::str::FromStr;
 
 /// A simple 256-bit storage unit that acts sort of like an integer.
@@ -197,6 +198,10 @@ impl U256 {
             BigEndian::write_u64(s, self.0[3-i]);
         }
     }
+
+    pub fn to_vec(&self) -> Vec<u8> {
+        bincode::serialize(&self, bincode::Bounded(32)).unwrap()
+     }
 }
 
 
