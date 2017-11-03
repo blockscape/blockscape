@@ -10,7 +10,7 @@ use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock, Weak};
-use super::{MutationRule, MutationRules, Error, Storable};
+use super::{MutationRule, MutationRules, Error, Storable, PlotID, PlotEvent};
 use super::database::*;
 
 const HEIGHT_PREFIX: &[u8] = b"h";
@@ -42,14 +42,13 @@ impl Event for RecordEvent {}
 /// TODO: Also add a block to the known blocks if it is only referenced.
 /// TODO: Also allow for reaching out to the network to request missing information.
 /// TODO: Allow removing state data for shards which are not being processed.
-pub struct RecordKeeper
-{
+pub struct RecordKeeper {
     db: RwLock<Database>,
     rules: RwLock<MutationRules>,
     pending_txns: RwLock<HashMap<U256, Txn>>,
 
     record_listeners: RwLock<Vec<Weak<EventListener<RecordEvent>>>>,
-    game_listeners: RwLock<Vec<Weak<EventListener<RawEvent>>>>,
+    game_listeners: RwLock<Vec<Weak<EventListener<PlotEvent>>>>,
 }
 
 impl RecordKeeper {
@@ -162,7 +161,7 @@ impl RecordKeeper {
     /// seek to reconstruct old history so `after_tick` simply allows additional filtering, e.g. if
     /// you set `after_tick` to 0, you would not get all events unless those events have not yet
     /// been removed from the cache.
-    pub fn get_plot_events(&self, plot_id: u64, after_tick: u64) -> Events<RawEvent> {
+    pub fn get_plot_events(&self, plot_id: u64, after_tick: u64) -> Events<PlotEvent> {
         unimplemented!()
     }
 
@@ -176,7 +175,7 @@ impl RecordKeeper {
 
     /// Add a new listener for plot events. This will also take a moment to remove any listeners
     /// which no longer exist.
-    pub fn register_game_listener(&mut self, listener: &Arc<EventListener<RawEvent>>) {
+    pub fn register_game_listener(&mut self, listener: &Arc<EventListener<PlotEvent>>) {
         let mut listeners = self.game_listeners.write().unwrap();
         listeners.retain(|l| l.upgrade().is_some());
         listeners.push(Arc::downgrade(listener));
