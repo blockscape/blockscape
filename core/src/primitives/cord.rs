@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use bincode;
 
 /// Square an integer
 #[inline(always)]
@@ -7,10 +8,16 @@ fn sq(x: i32) -> u64 {
 }
 
 /// A signed (x, y) coordinate. This can be used as a PlotID.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Cord {
     pub x: i32,
     pub y: i32
+}
+
+impl Cord {
+    pub fn bytes(&self) -> Vec<u8> {
+        bincode::serialize(&self, bincode::Bounded(8)).unwrap()
+    }
 }
 
 impl PartialOrd for Cord {

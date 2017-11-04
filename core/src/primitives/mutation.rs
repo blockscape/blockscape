@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
-use primitives::{U256, RawEvent};
+use primitives::{U256};
+use record_keeper::{PlotID, PlotEvent};
 
 /// A single change to the database, a mutation may be the composite of multiple changes. This is
 /// designed as a simple structure which the outer world can use to store the changes which should
@@ -10,7 +11,7 @@ use primitives::{U256, RawEvent};
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Change {
     SetValue { key: Vec<u8>, value: Option<Vec<u8>>, supp: Option<Vec<u8>> },
-    AddEvent { id: u64, tick: u64, event: RawEvent, supp: Option<Vec<u8>> }
+    AddEvent { id: PlotID, tick: u64, event: PlotEvent, supp: Option<Vec<u8>> }
 }
 
 impl PartialEq for Change {

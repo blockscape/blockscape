@@ -1,19 +1,26 @@
 use bincode;
 use env;
-use primitives::{Change, Mutation, Event};
-use primitives::U256;
+use primitives::{Event, Events, U256, Mutation, Change};
 use rocksdb::{DB, WriteBatch, Options};
 use rocksdb::Error as RocksDBError;
-use std::collections::{LinkedList, BTreeSet};
+use std::collections::BTreeSet;
 use std::fmt::Debug;
 use std::path::PathBuf;
 use std::sync::RwLock;
 use super::error::*;
-use super::storable::Storable;
+use super::{Storable, PlotEvent};
 
 pub const BLOCKCHAIN_POSTFIX: &[u8] = b"b";
 pub const CACHE_POSTFIX: &[u8] = b"c";
 pub const NETWORK_POSTFIX: &[u8] = b"n";
+
+pub const PLOT_PREFIX: &[u8] = b"PLOT";
+
+#[inline]
+fn extend_vec(mut k: Vec<u8>, post: &[u8]) -> Vec<u8> {
+    k.extend_from_slice(post); k
+}
+
 
 /// This is a wrapper around a RocksDB instance to provide the access and modifications needed for
 /// our system.
@@ -65,76 +72,107 @@ impl Database {
     /// done. Note that changes to either blockchain state or gamestate must occur through other
     /// functions.
     pub fn mutate(&mut self, mutation: &Mutation) -> Result<Mutation, Error> {
-        // mutation.assert_not_contra();
-        // let mut contra = Mutation::new_contra();
-        // let mut batch = WriteBatch::default();
-        // let mut del = BTreeSet::new();  // set of keys to be deleted
+        mutation.assert_not_contra();
+        let mut contra = Mutation::new_contra();
 
-        // for change in &mutation.changes {
-        //     let key = {
-        //         let mut k = change.key.clone();
-        //         k.extend_from_slice(NETWORK_POSTFIX); k
-        //     };
-            
-        //     contra.changes.push(Change {
-        //         key: key.clone(),
-        //         value: self.db.get(&key)?.map(|v| v.to_vec()), // Option<Vec<u8>>
-        //         data: None,
-        //     });
+        for change in &mutation.changes { match change {
+            &Change::SetValue{ref key, ref value, ..} => {
+                let db_key = extend_vec(key.clone(), NETWORK_POSTFIX);
+                
+                contra.changes.push(Change::SetValue {
+                    key: key.clone(),
+                    value: self.db.get(&db_key)?.map(|v| v.to_vec()), // Option<Vec<u8>>
+                    supp: None
+                });
 
-        //     if let Some(ref v) = change.value {
-        //         del.remove(&key);
-        //         batch.put(&key, v).expect("Failure when adding to rocksdb batch.");
-        //     } else {  // delete key
-        //         batch.delete(&key).is_ok(); // ignore error if there is one
-        //         del.insert(key.clone()); // add it to list of things to remove
-        //     }
-        // }
-        // self.db.write(batch)?;
+                if let Some(ref v) = *value {
+                    self.db.put(&db_key, v)?;
+                } else {  // delete key
+                    if self.db.delete(&db_key).is_err() {
+                        warn!("Unable to delete a key in the network state. The key may not have \
+                        existed, or there could be a problem with the database.");
+                    }
+                }
+            },
+            &Change::AddEvent{id, tick, ref event, ..} => {
+                let db_key = {
+                    let mut k = Vec::from(PLOT_PREFIX);
+                    k.append(&mut id.bytes());
+                    k.extend_from_slice(NETWORK_POSTFIX); k
+                };
 
-        // for i in del {
-        //     if self.db.delete(&i).is_err() {
-        //         warn!("Unable to delete a key in network state data. They key may not have \
-        //                existed, or there could be a problem with the database.");
-        //     }
-        // }
+                let mut events: Events<PlotEvent> = self.db.get(&db_key)?.map_or(
+                    Events::new(), //if not found, we need to create the data structure
+                    |v| bincode::deserialize(&v).unwrap()
+                );
 
-        // contra.changes.reverse();
-        // Ok(contra)
-        unimplemented!()
+
+                if !{ // get mut ref and append the event.
+                    if let Some(ref mut list) = events.get_mut(&tick)
+                    { list.push(event.clone()); true } // TODO: Do we need to handle this: if list.contains(event)?
+                    else { false }
+                }{ // no events registered at this tick, create new list and insert into events.
+                    let mut list = Vec::new();
+                    list.push(event.clone());
+                    events.insert(tick, list);
+                }
+
+                let raw_events = bincode::serialize(&events, bincode::Infinite).unwrap();
+                self.db.put(&db_key, &raw_events);
+
+                contra.changes.push(Change::AddEvent{id, tick, event: event.clone(), supp: None});
+            }
+        }}
+
+        contra.changes.reverse(); // contra goes in reverse of original actions
+        Ok(contra)
     }
 
     /// Consumes a contra mutation to undo changes made by the corresponding mutation to the
     /// network state.
     pub fn undo_mutate(&mut self, mutation: Mutation) -> Result<(), Error> {
-        // mutation.assert_contra();
-        // let mut batch = WriteBatch::default();
-        // let mut del = BTreeSet::new();
+        mutation.assert_contra();
 
-        // for change in &mutation.changes {
-        //     let key = {
-        //         let mut k = change.key.clone();
-        //         k.extend_from_slice(NETWORK_POSTFIX); k
-        //     };
+        for change in mutation.changes { match change {
+            Change::SetValue{key, value, ..} => {
+                let db_key = extend_vec(key, NETWORK_POSTFIX);
 
-        //     if let Some(ref v) = change.value {
-        //         del.remove(&key);
-        //         batch.put(&key, v).expect("Failure when adding to rocksdb batch.");
-        //     } else {  // delete key
-        //         batch.delete(&key).is_ok();
-        //         del.insert(key);
-        //     }
-        // }
+                if let Some(v) = value {
+                    self.db.put(&db_key, &v)?;
+                } else { // delete key
+                    if self.db.delete(&db_key).is_err() {
+                        warn!("Unable to delete a key in the network state! The key may not have \
+                        existed, or there could be a problem with the database.");
+                    }
+                }
+            },
+            Change::AddEvent{id, tick, event, ..} => {
+                let db_key = {
+                    let mut k = Vec::from(PLOT_PREFIX);
+                    k.append(&mut id.bytes());
+                    k.extend_from_slice(NETWORK_POSTFIX); k
+                };
 
-        // self.db.write(batch)?;
-        // for i in del {
-        //     if self.db.delete(&i).is_err() {
-        //         // TODO: should we panic?
-        //         error!("Unable to delete a key in network state when applying a contra mutation!");
-        //     }
-        // }
-        // Ok(())
-        unimplemented!()
+                if let Some(raw_events) = self.db.get(&db_key)? {
+                    let mut events: Events<PlotEvent> = bincode::deserialize(&raw_events).unwrap();
+                    if let Some(ref mut list) = events.get_mut(&tick) {
+                        list.retain(|e| *e != event);
+                    } else {
+                        warn!("Unable to remove event because it does not exist! The network state \
+                               may be desynchronized.");
+                        continue;
+                    }
+                    
+                    let raw_events = bincode::serialize(&events, bincode::Infinite).unwrap();
+                    self.db.put(&db_key, &raw_events)?;
+                } else {
+                   warn!("Unable to remove event because it does not exist! The network state \
+                              may be desynchronized.");
+                }
+            }
+        }}
+
+        Ok(())
     }
 
     /// Retrieve raw data from the database. Use this for non-storable types (mostly network stuff).

@@ -5,34 +5,14 @@ use primitives::{U256, U160, Txn, Block, BlockHeader, Mutation};
 use serde::{Serialize, Deserialize};
 use serde::de::DeserializeOwned;
 use std::collections::{HashMap, HashSet};
-use std::collections::LinkedList;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock, Weak};
-use super::{MutationRule, MutationRules, Error, Storable, PlotID, PlotEvent};
+use super::{MutationRule, MutationRules, Error, Storable, PlotID, PlotEvent, RecordEvent};
 use super::database::*;
 
 const HEIGHT_PREFIX: &[u8] = b"h";
-
-
-/// An event regarding the keeping of records, such as the introduction of a new block or shifting
-/// state.
-///
-/// **Note:** notifications will only be sent once the changes to state have been applied unless
-/// otherwise stated. This means that if there is a `NewBlock` message, a call to retrieve the block
-/// will succeed.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum RecordEvent {
-    /// A new block has been added, walk forward (or back, if back, then a state invalidated event
-    /// will also be pushed out if relevant)
-    NewBlock { uncled: bool, hash: U256 },
-    /// A new transaction that has come into the system and is now pending
-    NewTxn { hash: U256 },
-    /// The state needs to be transitioned backwards, probably onto a new branch
-    StateInvalidated { new_height: u64, after_height: u64, after_tick: u64 },
-}
-impl Event for RecordEvent {}
 
 
 /// An abstraction on the concept of states and state state data. Builds higher-level functionality
@@ -265,23 +245,19 @@ impl RecordKeeper {
 
     /// Check if a mutation is valid and then apply the changes to the network state.
     fn mutate(&mut self, mutation: &Mutation) -> Result<Mutation, Error> {
-        // mutation.assert_not_contra();
-        // let mut db_lock = self.db.write().unwrap();
-        // self.is_valid_given_lock(&*db_lock, mutation).map_err(|e| Error::InvalidMut(e))?;
+        mutation.assert_not_contra();
+        let mut db_lock = self.db.write().unwrap();
+        self.is_valid_given_lock(&*db_lock, mutation).map_err(|e| Error::InvalidMut(e))?;
         
-        // db_lock.mutate(mutation)
-
-        unimplemented!()
+        db_lock.mutate(mutation)
     }
 
     /// Apply a contra mutation to the network state. (And consumes the mutation).
     fn undo_mutate(&mut self, mutation: Mutation) -> Result<(), Error> {
-        // mutation.assert_contra();
-        // let mut db_lock = self.db.write().unwrap();
+        mutation.assert_contra();
+        let mut db_lock = self.db.write().unwrap();
         
-        // db_lock.undo_mutate(mutation)
-
-        unimplemented!()
+        db_lock.undo_mutate(mutation)
     }
 
     /// Internal use function to check if a mutation is valid given a lock of the db. While it only
@@ -291,7 +267,7 @@ impl RecordKeeper {
         for rule in &*rules_lock {
             // verify all rules are satisfied and return, propagate error if not
             rule.is_valid(db, mutation)?;
-        }use std::collections::BTreeMap;
+        }
         Ok(())
     }
 

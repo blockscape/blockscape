@@ -1,4 +1,4 @@
-use primitives::{Mutation, U256};
+use primitives::{U256, Mutation};
 use std::collections::LinkedList;
 use std::fmt::Debug;
 use super::database::Database;

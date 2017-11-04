@@ -1,16 +1,16 @@
 pub mod database;
 pub mod error;
+pub mod events;
 pub mod storable;
-pub mod plot_event;
 
 mod mutation_rule;
 mod record_keeper;
 
 pub use self::error::Error;
+pub use self::events::{PlotEvent, RecordEvent};
 pub use self::mutation_rule::{MutationRule, MutationRules};
-pub use self::record_keeper::{RecordKeeper, RecordEvent};
+pub use self::record_keeper::{RecordKeeper};
 pub use self::storable::Storable;
-pub use self::plot_event::PlotEvent;
 
 
 use primitives;
