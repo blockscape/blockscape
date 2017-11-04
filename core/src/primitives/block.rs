@@ -2,6 +2,7 @@ use bincode;
 use hash::hash_obj;
 use primitives::U256;
 use std::collections::BTreeSet;
+use std::ops::{Deref, DerefMut};
 use time::Time;
 
 /// The main infromation about a block. This noteably excludes the list of transactions.
@@ -40,6 +41,20 @@ impl HasBlockHeader for BlockHeader {
 impl HasBlockHeader for Block {
     fn get_header(&self) -> &BlockHeader {
         &self.header
+    }
+}
+
+impl Deref for Block {
+    type Target = BlockHeader;
+    
+    fn deref(&self) -> &BlockHeader {
+        &self.header
+    }
+}
+
+impl DerefMut for Block {
+    fn deref_mut(&mut self) -> &mut BlockHeader {
+        &mut self.header
     }
 }
 

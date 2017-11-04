@@ -1,12 +1,9 @@
 use bincode;
 use env;
-use primitives::{Event, Events, U256, Mutation, Change};
-use rocksdb::{DB, WriteBatch, Options};
+use primitives::{Events, U256, Mutation, Change, Block, BlockHeader, Txn};
+use rocksdb::{DB, Options};
 use rocksdb::Error as RocksDBError;
-use std::collections::BTreeSet;
-use std::fmt::Debug;
 use std::path::PathBuf;
-use std::sync::RwLock;
 use super::error::*;
 use super::{Storable, PlotEvent, PlotID};
 
@@ -122,7 +119,7 @@ impl Database {
                 }
 
                 let raw_events = bincode::serialize(&events, bincode::Infinite).unwrap();
-                self.db.put(&db_key, &raw_events);
+                self.db.put(&db_key, &raw_events)?;
 
                 contra.changes.push(Change::AddEvent{id, tick, event: event.clone(), supp: None});
             }
@@ -195,5 +192,51 @@ impl Database {
         };
 
         Ok(self.db.put(&key, &data)?)
+    }
+
+    /// Retrieve and deserialize data from the database. This will return an error if the database
+    /// has an issue, if the data cannot be deserialized or if the object is not present in the
+    /// database. Note that `instance_id` should be the object's ID/key which would normally be
+    /// returned from calling `storable.instance_id()`.
+    pub fn get<S: Storable>(&self, instance_id: &[u8], postfix: &'static [u8]) -> Result<S, Error> {
+        let key = {
+            let mut k = Vec::from(S::global_id());
+            k.extend_from_slice(instance_id); k
+        };
+
+        let raw = self.get_raw_data(&key, postfix)?;
+        Ok(bincode::deserialize::<S>(&raw)?)
+    }
+
+    /// Serialize and store data in the database. This will return an error if the database has an
+    /// issue.
+    pub fn put<S: Storable>(&mut self, obj: &S, postfix: &'static [u8]) -> Result<(), Error> {
+        let value = bincode::serialize(obj, bincode::Infinite)
+            .expect("Error serializing game data.");
+        self.put_raw_data(&obj.key(), &value, postfix)
+    }
+
+    pub fn get_block_header(&self, hash: &U256) -> Result<BlockHeader, Error> {
+        let id = hash.to_vec();
+        self.get::<BlockHeader>(&id, BLOCKCHAIN_POSTFIX)
+    }
+
+    pub fn get_block(&self, hash: &U256) -> Result<Block, Error> {
+        // Blocks are stored with their header separate from the transaction body, so get the header
+        // first to find the merkle_root, and then get the list of transactions and piece them
+        // together.
+        let header = self.get_block_header(hash)?;
+        self.complete_block(header)
+    }
+
+    pub fn complete_block(&self, header: BlockHeader) -> Result<Block, Error> {
+        let merkle_root = header.merkle_root.to_vec();
+        let raw_txns = self.get_raw_data(&merkle_root, BLOCKCHAIN_POSTFIX)?;
+        Ok(Block::deserialize(header, &raw_txns)?)
+    }
+
+    pub fn get_txn(&self, hash: &U256) -> Result<Txn, Error> {
+        let id = hash.to_vec();
+        self.get::<Txn>(&id, BLOCKCHAIN_POSTFIX)
     }
 }

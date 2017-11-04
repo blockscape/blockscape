@@ -3,12 +3,12 @@ pub mod error;
 pub mod events;
 pub mod storable;
 
-mod mutation_rule;
+mod rules;
 mod record_keeper;
 
 pub use self::error::Error;
 pub use self::events::{PlotEvent, RecordEvent};
-pub use self::mutation_rule::{MutationRule, MutationRules};
+pub use self::rules::*;
 pub use self::record_keeper::{RecordKeeper};
 pub use self::storable::Storable;
 

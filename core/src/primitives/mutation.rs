@@ -1,6 +1,4 @@
-use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
-use primitives::{U256};
 use record_keeper::{PlotID, PlotEvent};
 
 /// A single change to the database, a mutation may be the composite of multiple changes. This is
@@ -33,7 +31,7 @@ impl Hash for Change {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
             &Change::SetValue{key: ref k, ..} => k.hash(state),
-            &Change::AddEvent{id: id, tick: tick, ..} => {id.hash(state); tick.hash(state)}
+            &Change::AddEvent{id, tick, ..} => {id.hash(state); tick.hash(state)}
         };
     }
 }
@@ -88,12 +86,12 @@ impl Mutation {
 
     /// Will merge another mutation into this one. The values from this mutation will be placed
     /// after the other, thus they will have a "higher" priority should there be conflicting txns.
-    /// This will clone data from both mutations and create a new, independent mutation.
-    pub fn merge_clone(&self, other: &Mutation) -> Mutation {
+    /// This will clone data from the incoming mutation.
+    pub fn merge_clone(&mut self, other: &Mutation) {
         assert!(!self.contra && !other.contra); //Could be a bug if merging contras
         
-        let mut changes = other.changes.clone();
-        changes.extend(self.changes.iter().cloned());
-        Mutation { contra: false, changes }
+        let mut tmp: Vec<Change> = other.changes.clone();
+        tmp.append(&mut self.changes);
+        self.changes = tmp;
     }
 }

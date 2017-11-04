@@ -1,6 +1,6 @@
 use hash::hash_obj;
 use openssl::pkey::PKey;
-use primitives::{Mutation, U256, Event};
+use primitives::{Mutation, U256};
 use signer::sign_obj;
 use std::vec::Vec;
 use time::Time;
