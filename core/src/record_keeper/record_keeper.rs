@@ -70,13 +70,23 @@ impl RecordKeeper {
         let block_height = self.get_block_height(&block.header.prev)?;
         
         let mut db = self.db.write().unwrap();
+        //TODO: Handle if we need to go back and switch branches
+        self.is_valid_block_given_lock(&mut *db, block).map_err(|e| Error::BrokenRule(e))?;
+
         db.add_block_to_height(block_height, block_hash)?;
+        
+        let contra = {
+            let mut mutation = Mutation::new();
+            for txn_hash in &block.transactions {
+                let txn = db.get_txn(&txn_hash)?;
+                mutation.merge_clone(&txn.mutation);
+            }
+            db.mutate(&mutation)?
+        }; //TODO: save the contra mutation
+
         db.put_raw_data(CURRENT_BLOCK, &block_hash.to_vec(), CACHE_POSTFIX);
         *self.current_block.write().unwrap() = block_hash;
-
-        // TODO: update current hash in db and member value
-
-        unimplemented!("Need to add a block and move the state forward if it is longer than the current chain")
+        Ok(())
     }
 
     /// Add a new transaction to the pool of pending transactions after validating it.
