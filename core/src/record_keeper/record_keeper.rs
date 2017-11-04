@@ -1,5 +1,4 @@
 use bincode;
-use bytes::{BigEndian, ByteOrder};
 use primitives::{Events, EventListener};
 use primitives::{U256, U256_ZERO, U160, Txn, Block, BlockHeader, Mutation};
 use std::collections::{HashMap, HashSet};
@@ -8,7 +7,7 @@ use std::sync::{Arc, RwLock, Weak};
 use super::{MutationRule, MutationRules, Error, Storable, PlotEvent, RecordEvent};
 use super::database::*;
 
-const HEIGHT_PREFIX: &[u8] = b"h";
+pub const CURRENT_BLOCK: &[u8] = b"CURblock";
 
 /// An abstraction on the concept of states and state state data. Builds higher-level functionality
 /// On top of the database. The implementation uses RwLocks to provide many read, single write
@@ -32,16 +31,19 @@ impl RecordKeeper {
     /// Construct a new RecordKeeper from an already opened database and possibly an existing set of
     /// rules.
     pub fn new(db: Database, rules: Option<MutationRules>) -> RecordKeeper {
+        let hash = //attempt to read the current block
+        if let Ok(value) = db.get_raw_data(CURRENT_BLOCK, CACHE_POSTFIX) {
+            bincode::deserialize(&value).unwrap_or(U256_ZERO)
+        } else { U256_ZERO };
+
         RecordKeeper {
             db: RwLock::new(db),
             rules: RwLock::new(rules.unwrap_or(MutationRules::new())),
             pending_txns: RwLock::new(HashMap::new()),
-            current_block: RwLock::new(U256_ZERO),
+            current_block: RwLock::new(hash),
             record_listeners: RwLock::new(Vec::new()),
             game_listeners: RwLock::new(Vec::new())
         }
-
-        //TODO, update the current block if there is one in the database
     }
 
     /// Construct a new RecordKeeper by opening a database. This will create a new database if the
@@ -66,8 +68,13 @@ impl RecordKeeper {
     pub fn add_block(&mut self, block: &Block) -> Result<(), Error> {
         let block_hash = block.header.calculate_hash();
         let block_height = self.get_block_height(&block.header.prev)?;
-        self.add_block_to_height(block_height, block_hash)?;
-        // TODO: update current hash
+        
+        let mut db = self.db.write().unwrap();
+        db.add_block_to_height(block_height, block_hash)?;
+        db.put_raw_data(CURRENT_BLOCK, &block_hash.to_vec(), CACHE_POSTFIX);
+        *self.current_block.write().unwrap() = block_hash;
+
+        // TODO: update current hash in db and member value
 
         unimplemented!("Need to add a block and move the state forward if it is longer than the current chain")
     }
@@ -113,30 +120,15 @@ impl RecordKeeper {
     /// Calculate the height of a given block. It will follow the path until it finds the genesis
     /// block which is denoted by having a previous block reference of 0.
     pub fn get_block_height(&self, hash: &U256) -> Result<u64, Error> {
-        let mut h: u64 = 0;
-        let mut block = self.get_block_header(hash)?;
-
-        while !block.prev.is_zero() {  // while we have not reached genesis...
-            h += 1;
-            block = self.get_block_header(&block.prev)?;
-        } Ok(h)
+        let db = self.db.read().unwrap();
+        db.get_block_height(hash)
     }
 
     /// Return a list of **known** blocks which have a given height. If the block has not been added
     /// to the database, then it will not be included.
     pub fn get_blocks_of_height(&self, height: u64) -> Result<HashSet<U256>, Error> {
-        let key = Self::get_block_height_key(height);
-        let res = self.db.read().unwrap().get_raw_data(&key, CACHE_POSTFIX);
-        match res {
-            Ok(raw) => { // found something, deserialize
-                Ok(bincode::deserialize::<HashSet<U256>>(&raw)?)
-            },
-            Err(e) => match e {
-                Error::NotFound(..) => // nothing known to us, so emptyset
-                    Ok(HashSet::new()),
-                _ => Err(e) // some sort of database error
-            }
-        }
+        let db = self.db.read().unwrap();
+        db.get_blocks_of_height(height)
     }
 
     /// Returns a list of events for each tick that happened after a given tick. Note: it will not
@@ -224,28 +216,6 @@ impl RecordKeeper {
         db_lock.get_txn(hash)
     }
 
-
-    /// Add a block the set of known blocks at a given height.
-    fn add_block_to_height(&mut self, height: u64, block: U256) -> Result<(), Error> {
-        let key = Self::get_block_height_key(height);
-        let mut db = self.db.write().unwrap(); // single lock through whole process
-        let res = db.get_raw_data(&key, CACHE_POSTFIX);
-        
-        let mut height_vals: HashSet<U256> = {
-            match res {
-                Ok(raw) => bincode::deserialize(&raw)?,
-                Err(e) => match e {
-                    Error::NotFound(..) => HashSet::new(),
-                    _ => return Err(e)
-                }
-            }
-        };
-
-        height_vals.insert(block);
-        let raw = bincode::serialize(&height_vals, bincode::Infinite)?;
-        db.put_raw_data(&key, &raw, CACHE_POSTFIX)
-    }
-
     /// Internal use function to check if a block and all its sub-components are valid.
     fn is_valid_block_given_lock(&self, db: &Database, block: &Block) -> Result<(), String> {
         if block.prev != self.get_current_block_hash() {
@@ -284,13 +254,5 @@ impl RecordKeeper {
             rule.is_valid(db, mutation)?;
         }
         Ok(())
-    }
-
-    /// Get the key value for the height cache in the database. (Without the cache postfix).
-    fn get_block_height_key(height: u64) -> Vec<u8> {
-        let mut buf = [0u8; 8];
-        BigEndian::write_u64(&mut buf, height);
-        let mut k = Vec::from(HEIGHT_PREFIX);
-        k.extend_from_slice(&buf); k
     }
 }

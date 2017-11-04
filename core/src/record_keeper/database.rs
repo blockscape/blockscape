@@ -1,17 +1,20 @@
 use bincode;
+use bytes::{BigEndian, ByteOrder};
 use env;
 use primitives::{Events, U256, Mutation, Change, Block, BlockHeader, Txn};
 use rocksdb::{DB, Options};
 use rocksdb::Error as RocksDBError;
+use std::collections::HashSet;
 use std::path::PathBuf;
-use super::error::*;
 use super::{Storable, PlotEvent, PlotID};
+use super::error::*;
 
 pub const BLOCKCHAIN_POSTFIX: &[u8] = b"b";
 pub const CACHE_POSTFIX: &[u8] = b"c";
 pub const NETWORK_POSTFIX: &[u8] = b"n";
 
-pub const PLOT_PREFIX: &[u8] = b"PLOT";
+pub const PLOT_PREFIX: &[u8] = b"PLT";
+pub const HEIGHT_PREFIX: &[u8] = b"HGT";
 
 #[inline]
 fn extend_vec(mut k: Vec<u8>, post: &[u8]) -> Vec<u8> {
@@ -238,5 +241,62 @@ impl Database {
     pub fn get_txn(&self, hash: &U256) -> Result<Txn, Error> {
         let id = hash.to_vec();
         self.get::<Txn>(&id, BLOCKCHAIN_POSTFIX)
+    }
+
+    /// Add a block the set of known blocks at a given height.
+    pub fn add_block_to_height(&mut self, height: u64, block: U256) -> Result<(), Error> {
+        let key = Self::get_block_height_key(height);
+        let res = self.get_raw_data(&key, CACHE_POSTFIX);
+        
+        let mut height_vals: HashSet<U256> = {
+            match res {
+                Ok(raw) => bincode::deserialize(&raw)?,
+                Err(e) => match e {
+                    Error::NotFound(..) => HashSet::new(),
+                    _ => return Err(e)
+                }
+            }
+        };
+
+        height_vals.insert(block);
+        let raw = bincode::serialize(&height_vals, bincode::Infinite)?;
+        self.put_raw_data(&key, &raw, CACHE_POSTFIX)
+    }
+
+    /// Return a list of **known** blocks which have a given height. If the block has not been added
+    /// to the database, then it will not be included.
+    pub fn get_blocks_of_height(&self, height: u64) -> Result<HashSet<U256>, Error> {
+        let key = Database::get_block_height_key(height);
+        let res = self.get_raw_data(&key, CACHE_POSTFIX);
+        match res {
+            Ok(raw) => { // found something, deserialize
+                Ok(bincode::deserialize::<HashSet<U256>>(&raw)?)
+            },
+            Err(e) => match e {
+                Error::NotFound(..) => // nothing known to us, so emptyset
+                    Ok(HashSet::new()),
+                _ => Err(e) // some sort of database error
+            }
+        }
+    }
+
+    /// Calculate the height of a given block. It will follow the path until it finds the genesis
+    /// block which is denoted by having a previous block reference of 0.
+    pub fn get_block_height(&self, hash: &U256) -> Result<u64, Error> {
+        let mut h: u64 = 0;
+        let mut block = self.get_block_header(hash)?;
+
+        while !block.prev.is_zero() {  // while we have not reached genesis...
+            h += 1;
+            block = self.get_block_header(&block.prev)?;
+        } Ok(h)
+    }
+
+    /// Get the key value for the height cache in the database. (Without the cache postfix).
+    pub fn get_block_height_key(height: u64) -> Vec<u8> {
+        let mut buf = [0u8; 8];
+        BigEndian::write_u64(&mut buf, height);
+        let mut k = Vec::from(HEIGHT_PREFIX);
+        k.extend_from_slice(&buf); k
     }
 }
