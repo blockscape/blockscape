@@ -8,7 +8,7 @@ use std::fmt::Debug;
 use std::path::PathBuf;
 use std::sync::RwLock;
 use super::error::*;
-use super::{Storable, PlotEvent};
+use super::{Storable, PlotEvent, PlotID};
 
 pub const BLOCKCHAIN_POSTFIX: &[u8] = b"b";
 pub const CACHE_POSTFIX: &[u8] = b"c";
@@ -19,6 +19,12 @@ pub const PLOT_PREFIX: &[u8] = b"PLOT";
 #[inline]
 fn extend_vec(mut k: Vec<u8>, post: &[u8]) -> Vec<u8> {
     k.extend_from_slice(post); k
+}
+
+fn plot_key(id: &PlotID) -> Vec<u8> {
+    let mut k = Vec::from(PLOT_PREFIX);
+    k.append(&mut id.bytes());
+    k.extend_from_slice(NETWORK_POSTFIX); k
 }
 
 
@@ -32,6 +38,8 @@ fn extend_vec(mut k: Vec<u8>, post: &[u8]) -> Vec<u8> {
 /// To keep these regions separate, postfixes are appended before accessing the database, this will
 /// prevent conflicts between the different regions even if they are using non-secure hashing
 /// methods.
+///
+/// TODO: Remove events older than we allow for a fork from network state
 pub struct Database {
     db: DB
 }
@@ -95,11 +103,7 @@ impl Database {
                 }
             },
             &Change::AddEvent{id, tick, ref event, ..} => {
-                let db_key = {
-                    let mut k = Vec::from(PLOT_PREFIX);
-                    k.append(&mut id.bytes());
-                    k.extend_from_slice(NETWORK_POSTFIX); k
-                };
+                let db_key = plot_key(&id);
 
                 let mut events: Events<PlotEvent> = self.db.get(&db_key)?.map_or(
                     Events::new(), //if not found, we need to create the data structure
@@ -147,11 +151,7 @@ impl Database {
                 }
             },
             Change::AddEvent{id, tick, event, ..} => {
-                let db_key = {
-                    let mut k = Vec::from(PLOT_PREFIX);
-                    k.append(&mut id.bytes());
-                    k.extend_from_slice(NETWORK_POSTFIX); k
-                };
+                let db_key = plot_key(&id);
 
                 if let Some(raw_events) = self.db.get(&db_key)? {
                     let mut events: Events<PlotEvent> = bincode::deserialize(&raw_events).unwrap();
