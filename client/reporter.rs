@@ -8,6 +8,7 @@ use colored::*;
 
 use blockscape_core::network::client::Client;
 use blockscape_core::time::Time;
+use super::PlotEvent;
 
 use format::*;
 

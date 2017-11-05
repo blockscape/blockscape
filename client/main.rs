@@ -1,6 +1,10 @@
 extern crate blockscape_core;
 extern crate chan_signal;
 extern crate openssl;
+extern crate serde;
+
+#[macro_use]
+extern crate serde_derive;
 
 #[macro_use]
 extern crate clap;
@@ -11,6 +15,7 @@ extern crate log;
 extern crate colored;
 
 mod boot;
+mod plot_event;
 mod rules;
 mod reporter;
 mod format;
@@ -21,10 +26,11 @@ use std::sync::Arc;
 use std::thread;
 use std::sync::mpsc::channel;
 
-use blockscape_core::primitives::HasBlockHeader;
 use blockscape_core::env;
 use blockscape_core::network::client::{Client, ShardMode};
+use blockscape_core::primitives::HasBlockHeader;
 use blockscape_core::record_keeper::RecordKeeper;
+use plot_event::PlotEvent;
 
 use boot::*;
 

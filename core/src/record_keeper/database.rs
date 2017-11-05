@@ -1,6 +1,6 @@
 use bincode;
 use env;
-use primitives::{Change, Mutation};
+use primitives::{Change, Mutation, Event};
 use primitives::U256;
 use rocksdb::{DB, WriteBatch, Options};
 use rocksdb::Error as RocksDBError;
@@ -65,74 +65,76 @@ impl Database {
     /// done. Note that changes to either blockchain state or gamestate must occur through other
     /// functions.
     pub fn mutate(&mut self, mutation: &Mutation) -> Result<Mutation, Error> {
-        mutation.assert_not_contra();
-        let mut contra = Mutation::new_contra();
-        let mut batch = WriteBatch::default();
-        let mut del = BTreeSet::new();  // set of keys to be deleted
+        // mutation.assert_not_contra();
+        // let mut contra = Mutation::new_contra();
+        // let mut batch = WriteBatch::default();
+        // let mut del = BTreeSet::new();  // set of keys to be deleted
 
-        for change in &mutation.changes {
-            let key = {
-                let mut k = change.key.clone();
-                k.extend_from_slice(NETWORK_POSTFIX); k
-            };
+        // for change in &mutation.changes {
+        //     let key = {
+        //         let mut k = change.key.clone();
+        //         k.extend_from_slice(NETWORK_POSTFIX); k
+        //     };
             
-            contra.changes.push(Change {
-                key: key.clone(),
-                value: self.db.get(&key)?.map(|v| v.to_vec()), // Option<Vec<u8>>
-                data: None,
-            });
+        //     contra.changes.push(Change {
+        //         key: key.clone(),
+        //         value: self.db.get(&key)?.map(|v| v.to_vec()), // Option<Vec<u8>>
+        //         data: None,
+        //     });
 
-            if let Some(ref v) = change.value {
-                del.remove(&key);
-                batch.put(&key, v).expect("Failure when adding to rocksdb batch.");
-            } else {  // delete key
-                batch.delete(&key).is_ok(); // ignore error if there is one
-                del.insert(key.clone()); // add it to list of things to remove
-            }
-        }
-        self.db.write(batch)?;
+        //     if let Some(ref v) = change.value {
+        //         del.remove(&key);
+        //         batch.put(&key, v).expect("Failure when adding to rocksdb batch.");
+        //     } else {  // delete key
+        //         batch.delete(&key).is_ok(); // ignore error if there is one
+        //         del.insert(key.clone()); // add it to list of things to remove
+        //     }
+        // }
+        // self.db.write(batch)?;
 
-        for i in del {
-            if self.db.delete(&i).is_err() {
-                warn!("Unable to delete a key in network state data. They key may not have \
-                       existed, or there could be a problem with the database.");
-            }
-        }
+        // for i in del {
+        //     if self.db.delete(&i).is_err() {
+        //         warn!("Unable to delete a key in network state data. They key may not have \
+        //                existed, or there could be a problem with the database.");
+        //     }
+        // }
 
-        contra.changes.reverse();
-        Ok(contra)
+        // contra.changes.reverse();
+        // Ok(contra)
+        unimplemented!()
     }
 
     /// Consumes a contra mutation to undo changes made by the corresponding mutation to the
     /// network state.
     pub fn undo_mutate(&mut self, mutation: Mutation) -> Result<(), Error> {
-        mutation.assert_contra();
-        let mut batch = WriteBatch::default();
-        let mut del = BTreeSet::new();
+        // mutation.assert_contra();
+        // let mut batch = WriteBatch::default();
+        // let mut del = BTreeSet::new();
 
-        for change in &mutation.changes {
-            let key = {
-                let mut k = change.key.clone();
-                k.extend_from_slice(NETWORK_POSTFIX); k
-            };
+        // for change in &mutation.changes {
+        //     let key = {
+        //         let mut k = change.key.clone();
+        //         k.extend_from_slice(NETWORK_POSTFIX); k
+        //     };
 
-            if let Some(ref v) = change.value {
-                del.remove(&key);
-                batch.put(&key, v).expect("Failure when adding to rocksdb batch.");
-            } else {  // delete key
-                batch.delete(&key).is_ok();
-                del.insert(key);
-            }
-        }
+        //     if let Some(ref v) = change.value {
+        //         del.remove(&key);
+        //         batch.put(&key, v).expect("Failure when adding to rocksdb batch.");
+        //     } else {  // delete key
+        //         batch.delete(&key).is_ok();
+        //         del.insert(key);
+        //     }
+        // }
 
-        self.db.write(batch)?;
-        for i in del {
-            if self.db.delete(&i).is_err() {
-                // TODO: should we panic?
-                error!("Unable to delete a key in network state when applying a contra mutation!");
-            }
-        }
-        Ok(())
+        // self.db.write(batch)?;
+        // for i in del {
+        //     if self.db.delete(&i).is_err() {
+        //         // TODO: should we panic?
+        //         error!("Unable to delete a key in network state when applying a contra mutation!");
+        //     }
+        // }
+        // Ok(())
+        unimplemented!()
     }
 
     /// Retrieve raw data from the database. Use this for non-storable types (mostly network stuff).

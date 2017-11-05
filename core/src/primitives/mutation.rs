@@ -1,39 +1,39 @@
 use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
+use primitives::{U256, RawEvent};
 
 /// A single change to the database, a mutation may be the composite of multiple changes. This is
 /// designed as a simple structure which the outer world can use to store the changes which should
-/// not know anything about the database.
+/// not know anything about the database. The supplementrary data field is provided for many of the
+/// types of changes, it is designed to be information used to verify a transaction, but which does
+/// not alter the network state.
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Change {
-    pub key: Vec<u8>, // TODO: can we assume this will be a U256?
-    pub value: Option<Vec<u8>>,
-    pub data: Option<Vec<u8>>,
-}
-
-impl Ord for Change {
-    fn cmp(&self, other: &Change) -> Ordering {
-        self.key.cmp(&other.key)
-    }
-}
-
-impl PartialOrd for Change {
-    fn partial_cmp(&self, other: &Change) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
+pub enum Change {
+    SetValue { key: Vec<u8>, value: Option<Vec<u8>>, supp: Option<Vec<u8>> },
+    AddEvent { id: u64, tick: u64, event: RawEvent, supp: Option<Vec<u8>> }
 }
 
 impl PartialEq for Change {
     fn eq(&self, other: &Change) -> bool {
-        self.key == other.key
+        match (self, other) {
+            (&Change::SetValue{key: ref a, ..}, &Change::SetValue{key: ref b, ..}) => a == b,
+            (&Change::AddEvent{id: i1, tick: t1, event: ref e1, ..},
+             &Change::AddEvent{id: i2, tick: t2, event: ref e2, ..}) => {
+                (i1 == i2) && (t1 ==t2) && (e1 == e2) //TODO: will comparing the bits be accurate?
+            },
+            _ => false
+        }
     }
-}
+} //TODO: create different Eq which uses event deserialization?
 
 impl Eq for Change {}
 
 impl Hash for Change {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.key.hash(state);
+        match self {
+            &Change::SetValue{key: ref k, ..} => k.hash(state),
+            &Change::AddEvent{id: id, tick: tick, ..} => {id.hash(state); tick.hash(state)}
+        };
     }
 }
 

@@ -1,18 +1,38 @@
 use std::cmp::min;
 use std::collections::VecDeque;
+use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::sync::{Arc,Mutex};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::Relaxed;
 use std::ops::Deref;
 
-use primitives::{Block, Txn, U256};
+use primitives::{Block, Txn, U256, Event};
 use super::node::Node;
 use time::Time;
 
 use signer::RSA_KEY_SIZE;
 
 use network::client::NetworkContext;
+
+
+pub const PROTOCOL_VERSION: u16 = 1;
+
+/// How often to test ping in seconds
+pub const PING_FREQUENCY: u16 = 30;
+
+/// How much of the ping value to retain. The current value keeps a weighted average over 10 minutes
+pub const PING_RETENTION: f32 = 40.0;
+
+/// Number of milliseconds to wait before declaring a ping failed
+pub const PING_TIMEOUT: i64 = 3000;
+
+/// The number of strikes which may accumulate before declaring the connection timed out
+pub const TIMEOUT_TOLERANCE: u64 = 3;
+
+/// The number of nodes which should be sent back on a list node request
+pub const NODE_RESPONSE_SIZE: usize = 8;
+
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RawPacket {
@@ -169,28 +189,10 @@ pub struct Session {
 
     /// Used to help discern the number of failed replies. When this number exceeds a threshold,
     /// the connection is considered dropped
-    strikes: AtomicUsize
+    strikes: AtomicUsize,
 }
 
 impl Session {
-
-    pub const PROTOCOL_VERSION: u16 = 1;
-
-    /// How often to test ping in seconds
-    pub const PING_FREQUENCY: u16 = 30;
-
-    /// How much of the ping value to retain. The current value keeps a weighted average over 10 minutes
-    pub const PING_RETENTION: f32 = 40.0;
-
-    /// Number of milliseconds to wait before declaring a ping failed
-    pub const PING_TIMEOUT: i64 = 3000;
-
-    /// The number of strikes which may accumulate before declaring the connection timed out
-    pub const TIMEOUT_TOLERANCE: u64 = 3;
-
-    /// The number of nodes which should be sent back on a list node request
-    pub const NODE_RESPONSE_SIZE: usize = 8;
-
     pub fn new(local_peer: Arc<Node>, local_port: u8, remote_peer: Arc<Node>, remote_addr: SocketAddr, network_id: U256, introduce: Option<&Packet>) -> Session {
         let introduce_n = local_peer.as_ref().clone();
         
@@ -208,7 +210,7 @@ impl Session {
             last_ping_send: None,
             send_queue: Mutex::new(VecDeque::new()),
             current_seq: AtomicUsize::new(0),
-            strikes: AtomicUsize::new(0)
+            strikes: AtomicUsize::new(0),
         };
 
         if let Some(p) = introduce {
@@ -309,7 +311,7 @@ impl Session {
                     // save ping information
                     if let Some(lps) = self.last_ping_send {
                         if lps == *time {
-                            let f = 1.0 / Session::PING_RETENTION;
+                            let f = 1.0 / PING_RETENTION;
                             self.latency.apply_weight(&lps.diff(time), f);
                         }
 
@@ -324,9 +326,9 @@ impl Session {
                     // send back a list of nodes that I know about for the specified network
                     let repo = context.load_node_repo(network_id.clone());
 
-                    let mut nodes: Vec<Node> = Vec::with_capacity(min(Session::NODE_RESPONSE_SIZE, repo.len()));
+                    let mut nodes: Vec<Node> = Vec::with_capacity(min(NODE_RESPONSE_SIZE, repo.len()));
 
-                    for i in *skip..min(repo.len() as u16, (*skip as usize + Session::NODE_RESPONSE_SIZE) as u16) {
+                    for i in *skip..min(repo.len() as u16, (*skip as usize + NODE_RESPONSE_SIZE) as u16) {
                         // dont send the node if it is self
                         let d = repo.get_nodes((skip + i) as usize);
                         let n = d.deref();
@@ -408,21 +410,21 @@ impl Session {
                     }
                 });
 
-                if self.strikes.fetch_add(1, Relaxed) + 1 > Session::TIMEOUT_TOLERANCE as usize {
+                if self.strikes.fetch_add(1, Relaxed) + 1 > TIMEOUT_TOLERANCE as usize {
                     self.done = Some(ByeReason::Timeout);
                 }
             }
             else {
                 // if we still have an outgoing ping and too much time has passed, add a strike
                 if let Some(lps) = self.last_ping_send {
-                    if lps.diff(&Time::current()).millis() > Session::PING_TIMEOUT {
+                    if lps.diff(&Time::current()).millis() > PING_TIMEOUT {
                         self.strikes.fetch_add(1, Relaxed);
                     }
                 }
 
                 //debug!("Connection Strikes: {}", self.strikes.load(Relaxed));
 
-                if self.strikes.load(Relaxed) > Session::TIMEOUT_TOLERANCE as usize {
+                if self.strikes.load(Relaxed) > TIMEOUT_TOLERANCE as usize {
                     self.done = Some(ByeReason::Timeout);
                 }
                 else {

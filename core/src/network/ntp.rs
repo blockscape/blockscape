@@ -2,7 +2,7 @@ use ntp::request;
 
 use timelib::{Timespec, now_utc};
 
-pub fn calc_ntp_drift(ntp_server: &str) -> Result<i64, String> {
+pub fn calc_drift(ntp_server: &str) -> Result<i64, String> {
     debug!("NTP request server: {}", ntp_server);
     request(ntp_server)
         .map(|p| {
