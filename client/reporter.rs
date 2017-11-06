@@ -10,6 +10,8 @@ use blockscape_core::network::client::Client;
 use blockscape_core::time::Time;
 use super::PlotEvent;
 
+use format::*;
+
 const PRINT_FREQUENCY: i64 = 30 * 1000; // print statistics every 30 seconds
 
 pub fn run(client: &Option<Arc<Client>>, rx: Receiver<()>) {
@@ -37,8 +39,8 @@ pub fn run(client: &Option<Arc<Client>>, rx: Receiver<()>) {
                     value_print(net_stats.attached_networks, 0, 3),
                     value_print(net_stats.connected_peers, config.min_nodes as u32 * net_stats.attached_networks as u32, config.max_nodes as u32 * net_stats.attached_networks as u32),
                     config.max_nodes.to_string(),
-                    net_stats.rx.to_string().yellow(),
-                    net_stats.tx.to_string().yellow()
+                    as_bytes(net_stats.rx).yellow(),
+                    as_bytes(net_stats.tx).yellow()
                 );
             }
 
@@ -73,5 +75,29 @@ fn inverse_value_print<N: PartialOrd + ToString>(val: N, low: N, high: N) -> Col
     }
     else {
         val.to_string().red()
+    }
+}
+
+fn value_string_print<N: PartialOrd>(val: N, low: N, high: N, s: &str) -> ColoredString {
+    if val <= low {
+        s.red()
+    }
+    else if val < high {
+        s.cyan()
+    }
+    else {
+        s.green()
+    }
+}
+
+fn inverse_value_string_print<N: PartialOrd>(val: N, low: N, high: N, s: &str) -> ColoredString {
+    if val <= low {
+        s.green()
+    }
+    else if val < high {
+        s.cyan()
+    }
+    else {
+        s.red()
     }
 }
