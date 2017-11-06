@@ -1,10 +1,9 @@
 use bincode;
-use primitives::{Events, EventListener};
-use primitives::{U256, U256_ZERO, U160, Txn, Block, BlockHeader, Mutation};
+use primitives::{U256, U256_ZERO, U160, Txn, Block, BlockHeader, Mutation, Change, Events, EventListener, event};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock, Weak};
-use super::{MutationRule, MutationRules, Error, LogicError, Storable, PlotEvent, RecordEvent};
+use super::{MutationRule, MutationRules, Error, LogicError, Storable, PlotEvent, RecordEvent, PlotID};
 use super::database::*;
 
 pub const CURRENT_BLOCK: &[u8] = b"CURblock";
@@ -142,12 +141,28 @@ impl RecordKeeper {
         db.get_blocks_of_height(height)
     }
 
-    /// Returns a list of events for each tick that happened after a given tick. Note: it will not
+    /// Returns a map of events for each tick that happened after a given tick. Note: it will not
     /// seek to reconstruct old history so `after_tick` simply allows additional filtering, e.g. if
-    /// you set `after_tick` to 0, you would not get all events unless those events have not yet
-    /// been removed from the cache.
-    pub fn get_plot_events(&self, plot_id: u64, after_tick: u64) -> Events<PlotEvent> {
-        unimplemented!()
+    /// you set `after_tick` to 0, you would not get all events unless the oldest events have not
+    /// yet been removed from the cache.
+    pub fn get_plot_events(&self, plot_id: PlotID, after_tick: u64) -> Result<Events<PlotEvent>, Error> {
+        let mut events: Events<PlotEvent> = {
+            let db = self.db.read().unwrap();
+            db.get_plot_events(plot_id, after_tick)?
+        };
+        
+        let txns = self.pending_txns.read().unwrap();
+        for txn in txns.values() {
+            for change in &txn.mutation.changes {
+                if let &Change::AddEvent{id, tick, ref event, ..} = change {
+                    if tick >= after_tick && id == plot_id {
+                        event::add_event(&mut events, tick, event.clone());
+                    }
+                }
+            }
+        }
+        
+        Ok(events)
     }
 
     /// Add a new listener for events such as new blocks. This will also take a moment to remove any
