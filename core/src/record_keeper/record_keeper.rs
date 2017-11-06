@@ -1,39 +1,12 @@
 use bincode;
-use bytes::{BigEndian, ByteOrder};
-use primitives::{Event, RawEvent, Events, EventListener};
-use primitives::{U256, U160, Txn, Block, BlockHeader, Mutation};
-use serde::{Serialize, Deserialize};
-use serde::de::DeserializeOwned;
+use primitives::{U256, U256_ZERO, U160, Txn, Block, BlockHeader, Mutation, Change, Events, EventListener, event};
 use std::collections::{HashMap, HashSet};
-use std::collections::LinkedList;
-use std::fmt::Debug;
-use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock, Weak};
-use super::{MutationRule, MutationRules, Error, Storable};
+use super::{MutationRule, MutationRules, Error, LogicError, Storable, PlotEvent, RecordEvent, PlotID};
 use super::database::*;
 
-const HEIGHT_PREFIX: &[u8] = b"h";
-
-
-/// An event regarding the keeping of records, such as the introduction of a new block or shifting
-/// state.
-///
-/// **Note:** notifications will only be sent once the changes to state have been applied unless
-/// otherwise stated. This means that if there is a `NewBlock` message, a call to retrieve the block
-/// will succeed.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum RecordEvent {
-    /// A new block has been added, walk forward (or back, if back, then a state invalidated event
-    /// will also be pushed out if relevant)
-    NewBlock { uncled: bool, hash: U256 },
-    /// A new transaction that has come into the system and is now pending
-    NewTxn { hash: U256 },
-    /// The state needs to be transitioned backwards, probably onto a new branch
-    StateInvalidated { new_height: u64, after_height: u64, after_tick: u64 },
-}
-impl Event for RecordEvent {}
-
+pub const CURRENT_BLOCK: &[u8] = b"CURblock";
 
 /// An abstraction on the concept of states and state state data. Builds higher-level functionality
 /// On top of the database. The implementation uses RwLocks to provide many read, single write
@@ -42,24 +15,31 @@ impl Event for RecordEvent {}
 /// TODO: Also add a block to the known blocks if it is only referenced.
 /// TODO: Also allow for reaching out to the network to request missing information.
 /// TODO: Allow removing state data for shards which are not being processed.
-pub struct RecordKeeper
-{
+pub struct RecordKeeper {
     db: RwLock<Database>,
     rules: RwLock<MutationRules>,
     pending_txns: RwLock<HashMap<U256, Txn>>,
 
+    current_block: RwLock<U256>,
+
     record_listeners: RwLock<Vec<Weak<EventListener<RecordEvent>>>>,
-    game_listeners: RwLock<Vec<Weak<EventListener<RawEvent>>>>,
+    game_listeners: RwLock<Vec<Weak<EventListener<PlotEvent>>>>,
 }
 
 impl RecordKeeper {
     /// Construct a new RecordKeeper from an already opened database and possibly an existing set of
     /// rules.
     pub fn new(db: Database, rules: Option<MutationRules>) -> RecordKeeper {
+        let hash = //attempt to read the current block
+        if let Ok(value) = db.get_raw_data(CURRENT_BLOCK, CACHE_POSTFIX) {
+            bincode::deserialize(&value).unwrap_or(U256_ZERO)
+        } else { U256_ZERO };
+
         RecordKeeper {
             db: RwLock::new(db),
             rules: RwLock::new(rules.unwrap_or(MutationRules::new())),
             pending_txns: RwLock::new(HashMap::new()),
+            current_block: RwLock::new(hash),
             record_listeners: RwLock::new(Vec::new()),
             game_listeners: RwLock::new(Vec::new())
         }
@@ -76,7 +56,7 @@ impl RecordKeeper {
         Ok(Self::new(db, rules))
     }
 
-
+    /// Use pending transactions to create a new block which can then be added to the network.
     pub fn create_block(&self, txns: HashSet<U256>) -> Block {
         unimplemented!("Need to create blocks from transactions")
     }
@@ -87,14 +67,33 @@ impl RecordKeeper {
     pub fn add_block(&mut self, block: &Block) -> Result<(), Error> {
         let block_hash = block.header.calculate_hash();
         let block_height = self.get_block_height(&block.header.prev)?;
-        self.add_block_to_height(block_height, block_hash)?;
+        
+        let mut db = self.db.write().unwrap();
+        //TODO: Handle if we need to go back and switch branches
+        //TODO: Handle if we are only recording the block, and it does not become part of the current chain
+        self.is_valid_block_given_lock(&mut *db, block);
 
-        unimplemented!("Need to add a block and move the state forward if it is longer than the current chain")
+        db.add_block_to_height(block_height, block_hash)?;
+        
+        let contra = {
+            let mut mutation = Mutation::new();
+            for txn_hash in &block.transactions {
+                let txn = db.get_txn(&txn_hash)?;
+                mutation.merge_clone(&txn.mutation);
+            }
+            db.mutate(&mutation)?
+        }; //TODO: save the contra mutation
+
+        db.put_raw_data(CURRENT_BLOCK, &block_hash.to_vec(), CACHE_POSTFIX);
+        *self.current_block.write().unwrap() = block_hash;
+        Ok(())
     }
 
-    /// Add a new transaction to the pool of pending transactions.
-    pub fn add_pending_txn(&mut self, txn: &Txn) -> Result<(), Error> {
-        unimplemented!()
+    /// Add a new transaction to the pool of pending transactions after validating it.
+    pub fn add_pending_txn(&mut self, txn: Txn) -> Result<(), Error> {
+        let mut txn_lock = self.pending_txns.write().unwrap();
+        txn_lock.insert(txn.calculate_hash(), txn);
+        Ok(())
     }
 
     /// Find a validator's public key given the hash. If they are not found, then they are not a
@@ -110,60 +109,60 @@ impl RecordKeeper {
     }
 
     /// Retrieve the current block hash which the network state represents.
-    pub fn get_current_block_hash(&self) -> Result<U256, Error> {
-        let db_lock = self.db.read().unwrap();
-        Self::get_current_block_hash_given_lock(&*db_lock)
+    pub fn get_current_block_hash(&self) -> U256 {
+        *self.current_block.read().unwrap()
     }
 
     /// Retrieve the header of the current block which the network state represents.
     pub fn get_current_block_header(&self) -> Result<BlockHeader, Error> {
         let db_lock = self.db.read().unwrap();
-        let hash = Self::get_current_block_hash_given_lock(&*db_lock)?;
-        Self::get_block_header_given_lock(&*db_lock, &hash)
+        let hash = self.get_current_block_hash();
+        db_lock.get_block_header(&hash)
     }
 
     /// Retrieve the current block which the network state represents.
     pub fn get_current_block(&self) -> Result<Block, Error> {
         let db_lock = self.db.read().unwrap();
-        let hash = Self::get_current_block_hash_given_lock(&*db_lock)?;
-        Self::get_block_given_lock(&*db_lock, &hash)
+        let hash = self.get_current_block_hash();
+        db_lock.get_block(&hash)
     }
 
     /// Calculate the height of a given block. It will follow the path until it finds the genesis
     /// block which is denoted by having a previous block reference of 0.
     pub fn get_block_height(&self, hash: &U256) -> Result<u64, Error> {
-        let mut h: u64 = 0;
-        let mut block = self.get_block_header(hash)?;
-
-        while !block.prev.is_zero() {  // while we have not reached genesis...
-            h += 1;
-            block = self.get_block_header(&block.prev)?;
-        } Ok(h)
+        let db = self.db.read().unwrap();
+        db.get_block_height(hash)
     }
 
     /// Return a list of **known** blocks which have a given height. If the block has not been added
     /// to the database, then it will not be included.
     pub fn get_blocks_of_height(&self, height: u64) -> Result<HashSet<U256>, Error> {
-        let key = Self::get_block_height_key(height);
-        let res = self.get_raw_data(&key, CACHE_POSTFIX);
-        match res {
-            Ok(raw) => { // found something, deserialize
-                Ok(bincode::deserialize::<HashSet<U256>>(&raw)?)
-            },
-            Err(e) => match e {
-                Error::NotFound(..) => // nothing known to us, so emptyset
-                    Ok(HashSet::new()),
-                _ => Err(e) // some sort of database error
-            }
-        }
+        let db = self.db.read().unwrap();
+        db.get_blocks_of_height(height)
     }
 
-    /// Returns a list of events for each tick that happened after a given tick. Note: it will not
+    /// Returns a map of events for each tick that happened after a given tick. Note: it will not
     /// seek to reconstruct old history so `after_tick` simply allows additional filtering, e.g. if
-    /// you set `after_tick` to 0, you would not get all events unless those events have not yet
-    /// been removed from the cache.
-    pub fn get_plot_events(&self, plot_id: u64, after_tick: u64) -> Events<RawEvent> {
-        unimplemented!()
+    /// you set `after_tick` to 0, you would not get all events unless the oldest events have not
+    /// yet been removed from the cache.
+    pub fn get_plot_events(&self, plot_id: PlotID, after_tick: u64) -> Result<Events<PlotEvent>, Error> {
+        let mut events: Events<PlotEvent> = {
+            let db = self.db.read().unwrap();
+            db.get_plot_events(plot_id, after_tick)?
+        };
+        
+        let txns = self.pending_txns.read().unwrap();
+        for txn in txns.values() {
+            for change in &txn.mutation.changes {
+                if let &Change::AddEvent{id, tick, ref event, ..} = change {
+                    if tick >= after_tick && id == plot_id {
+                        event::add_event(&mut events, tick, event.clone());
+                    }
+                }
+            }
+        }
+        
+        Ok(events)
     }
 
     /// Add a new listener for events such as new blocks. This will also take a moment to remove any
@@ -176,7 +175,7 @@ impl RecordKeeper {
 
     /// Add a new listener for plot events. This will also take a moment to remove any listeners
     /// which no longer exist.
-    pub fn register_game_listener(&mut self, listener: &Arc<EventListener<RawEvent>>) {
+    pub fn register_game_listener(&mut self, listener: &Arc<EventListener<PlotEvent>>) {
         let mut listeners = self.game_listeners.write().unwrap();
         listeners.retain(|l| l.upgrade().is_some());
         listeners.push(Arc::downgrade(listener));
@@ -189,169 +188,97 @@ impl RecordKeeper {
         rules_lock.push_back(rule);
     }
 
-    /// Check if a mutation to the network state is valid.
-    pub fn is_valid(&self, mutation: &Mutation) -> Result<(), String> {
+    /// Check if a block is valid given the current network state including all of its transactions
+    /// and the resulting mutations.
+    pub fn is_valid_block(&self, block: &Block) -> Result<(), Error> {
         let db_lock = self.db.read().unwrap();
-        self.is_valid_given_lock(&*db_lock, mutation)
-    }
-    
-    /// Retrieve raw data from the database. Use this for non-storable types (mostly network stuff).
-    pub fn get_raw_data(&self, key: &[u8], postfix: &'static [u8]) -> Result<Vec<u8>, Error> {
-        let db_lock = self.db.read().unwrap();
-        db_lock.get_raw_data(key, postfix)
+        self.is_valid_block_given_lock(&*db_lock, block)
     }
 
-    /// Put raw data into the database. Should have no uses outside this class.
-    fn put_raw_data(&mut self, key: &[u8], data: &[u8], postfix: &'static [u8]) -> Result<(), Error> {
-        let mut db_lock = self.db.write().unwrap();
-        db_lock.put_raw_data(key, data, postfix)
+    /// Check if a txn is valid given the current network state including all of its mutations.
+    pub fn is_valid_txn(&self, txn: &Txn) -> Result<(), Error> {
+        let db_lock = self.db.read().unwrap();
+        self.is_valid_txn_given_lock(&*db_lock, txn)
+    }
+
+    /// Check if a mutation is valid given the current network state.
+    pub fn is_valid_mutation(&self, mutation: &Mutation) -> Result<(), Error> {
+        let db_lock = self.db.read().unwrap();
+        self.is_valid_mutation_given_lock(&*db_lock, mutation)
     }
 
     /// Retrieve cache data from the database. This is for library use only.
     pub fn get_cache_data<S: Storable>(&self, instance_id: &[u8]) -> Result<S, Error> {
         let db_lock = self.db.read().unwrap();
-        Self::get::<S>(&*db_lock, instance_id, CACHE_POSTFIX)
-    } //TODO: handle possible race condition?
+        db_lock.get::<S>(instance_id, CACHE_POSTFIX)
+    }
 
     /// Put cache data into the database. This is for library use only.
     pub fn put_cache_data<S: Storable>(&mut self, obj: &S) -> Result<(), Error> {
         let mut db_lock = self.db.write().unwrap();
-        Self::put::<S>(&mut *db_lock, obj, CACHE_POSTFIX)
+        db_lock.put::<S>(obj, CACHE_POSTFIX)
     }
 
     /// Retrieve a block header from the database.
     pub fn get_block_header(&self, hash: &U256) -> Result<BlockHeader, Error> {
         let db_lock = self.db.read().unwrap();
-        Self::get_block_header_given_lock(&*db_lock, hash)
+        db_lock.get_block_header(hash)
     }
 
     /// Get a block including its list of transactions from the database.
     pub fn get_block(&self, hash: &U256) -> Result<Block, Error> {
         let db_lock = self.db.read().unwrap();
-        Self::get_block_given_lock(&*db_lock, hash)
+        db_lock.get_block(hash)
     }
 
     pub fn complete_block(&self, header: BlockHeader) -> Result<Block, Error> {
         let db_lock = self.db.read().unwrap();
-        Self::complete_block_given_lock(&*db_lock, header)
+        db_lock.complete_block(header)
     }
 
     /// Get a transaction from the database.
     pub fn get_txn(&self, hash: &U256) -> Result<Txn, Error> {
         let db_lock = self.db.read().unwrap();
-        Self::get_txn_given_lock(&*db_lock, hash)
+        db_lock.get_txn(hash)
     }
 
+    /// Internal use function to check if a block and all its sub-components are valid.
+    fn is_valid_block_given_lock(&self, db: &Database, block: &Block) -> Result<(), Error> {
+        if block.prev != self.get_current_block_hash() {
+            return Err(Error::from(LogicError::MissingPrevious));
+        }
 
-    /// Add a block the set of known blocks at a given height.
-    fn add_block_to_height(&mut self, height: u64, block: U256) -> Result<(), Error> {
-        let key = Self::get_block_height_key(height);
-        let mut db = self.db.write().unwrap(); // single lock through whole process
-        let res = db.get_raw_data(&key, CACHE_POSTFIX);
+        //TODO: more validity checks
+
+        let mut mutation = Mutation::new();
+        for txn_hash in &block.transactions {
+            let txn = db.get_txn(&txn_hash)?;
+            self.is_valid_txn_header_given_lock(db, &txn)?;
+            mutation.merge_clone(&txn.mutation);
+        }
         
-        let mut height_vals: HashSet<U256> = {
-            match res {
-                Ok(raw) => bincode::deserialize(&raw)?,
-                Err(e) => match e {
-                    Error::NotFound(..) => HashSet::new(),
-                    _ => return Err(e)
-                }
-            }
-        };
-
-        height_vals.insert(block);
-        let raw = bincode::serialize(&height_vals, bincode::Infinite)?;
-        db.put_raw_data(&key, &raw, CACHE_POSTFIX)
+        self.is_valid_mutation_given_lock(db, &mutation)
     }
 
-    /// Check if a mutation is valid and then apply the changes to the network state.
-    fn mutate(&mut self, mutation: &Mutation) -> Result<Mutation, Error> {
-        // mutation.assert_not_contra();
-        // let mut db_lock = self.db.write().unwrap();
-        // self.is_valid_given_lock(&*db_lock, mutation).map_err(|e| Error::InvalidMut(e))?;
-        
-        // db_lock.mutate(mutation)
-
-        unimplemented!()
+    /// Internal use function, check if a txn is valid and its mutation.
+    fn is_valid_txn_given_lock(&self, db: &Database, txn: &Txn) -> Result<(), Error> {
+        self.is_valid_txn_header_given_lock(db, txn)?;
+        self.is_valid_mutation_given_lock(db, &txn.mutation)
     }
 
-    /// Apply a contra mutation to the network state. (And consumes the mutation).
-    fn undo_mutate(&mut self, mutation: Mutation) -> Result<(), Error> {
-        // mutation.assert_contra();
-        // let mut db_lock = self.db.write().unwrap();
-        
-        // db_lock.undo_mutate(mutation)
-
-        unimplemented!()
-    }
-
-    /// Internal use function to check if a mutation is valid given a lock of the db. While it only
-    /// takes a reference to a db, make sure a lock is in scope which is used to get the db ref.
-    fn is_valid_given_lock(&self, db: &Database, mutation: &Mutation) -> Result<(), String> {
-        let rules_lock = self.rules.read().unwrap();
-        for rule in &*rules_lock {
-            // verify all rules are satisfied and return, propagate error if not
-            rule.is_valid(db, mutation)?;
-        }use std::collections::BTreeMap;
+    /// Internal use function, check if the basics of a txn is valid, ignore its mutations.
+    fn is_valid_txn_header_given_lock(&self, db: &Database, txn: &Txn) -> Result<(), Error> {
+        //TODO: validity checks on things like timestamp, signature, and that the public key is of someone we know
         Ok(())
     }
 
-
-    /// Retrieve and deserialize data from the database. This will return an error if the database
-    /// has an issue, if the data cannot be deserialized or if the object is not present in the
-    /// database. Note that `instance_id` should be the object's ID/key which would normally be
-    /// returned from calling `storable.instance_id()`.
-    fn get<S: Storable>(db: &Database, instance_id: &[u8], postfix: &'static [u8]) -> Result<S, Error> {
-        let key = {
-            let mut k = Vec::from(S::global_id());
-            k.extend_from_slice(instance_id); k
-        };
-
-        let raw = db.get_raw_data(&key, postfix)?;
-        Ok(bincode::deserialize::<S>(&raw)?)
-    }
-
-    /// Serialize and store data in the database. This will return an error if the database has an
-    /// issue.
-    fn put<S: Storable>(db: &mut Database, obj: &S, postfix: &'static [u8]) -> Result<(), Error> {
-        let value = bincode::serialize(obj, bincode::Infinite)
-            .expect("Error serializing game data.");
-        db.put_raw_data(&obj.key(), &value, postfix)
-    }
-
-    /// Get the key value for the height cache in the database. (Without the cache postfix).
-    fn get_block_height_key(height: u64) -> Vec<u8> {
-        let mut buf = [0u8; 8];
-        BigEndian::write_u64(&mut buf, height);
-        let mut k = Vec::from(HEIGHT_PREFIX);
-        k.extend_from_slice(&buf); k
-    }
-
-    fn get_current_block_hash_given_lock(db: &Database) -> Result<U256, Error> {
-        unimplemented!()
-    }
-
-    fn get_block_header_given_lock(db: &Database, hash: &U256) -> Result<BlockHeader, Error> {
-        let id = hash.to_vec();
-        Self::get::<BlockHeader>(db, &id, BLOCKCHAIN_POSTFIX)
-    }
-
-    fn get_block_given_lock(db: &Database, hash: &U256) -> Result<Block, Error> {
-        // Blocks are stored with their header separate from the transaction body, so get the header
-        // first to find the merkle_root, and then get the list of transactions and piece them
-        // together.
-        let header = Self::get_block_header_given_lock(db, hash)?;
-        Self::complete_block_given_lock(db, header)
-    }
-
-    fn complete_block_given_lock(db: &Database, header: BlockHeader) -> Result<Block, Error> {
-        let merkle_root = header.merkle_root.to_vec();
-        let raw_txns = db.get_raw_data(&merkle_root, BLOCKCHAIN_POSTFIX)?;
-        Ok(Block::deserialize(header, &raw_txns)?)
-    }
-
-    fn get_txn_given_lock(db: &Database, hash: &U256) -> Result<Txn, Error> {
-        let id = hash.to_vec();
-        Self::get::<Txn>(db, &id, BLOCKCHAIN_POSTFIX)
+    /// Internal use function to check if a mutation is valid given a lock of the db.
+    fn is_valid_mutation_given_lock(&self, db: &Database, mutation: &Mutation) -> Result<(), Error> {
+        let rules_lock = self.rules.read().unwrap();
+        for rule in &*rules_lock {
+            // verify all rules are satisfied and return, propagate error if not
+            rule.is_valid(db, mutation).map_err(|e| LogicError::InvalidMutation(e))?;
+        }
+        Ok(())
     }
 }

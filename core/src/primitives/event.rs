@@ -1,5 +1,5 @@
 use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
@@ -25,3 +25,23 @@ pub trait EventListener<E: Event>: Send + Sync {
 
 /// Lists of events stored by their tick
 pub type Events<E: Event> = BTreeMap<u64, Vec<E>>;
+
+pub fn add_event<E: Event>(events: &mut Events<E>, tick: u64, event: E) {
+    let mut inserted_event = None;
+    if let Some(ref mut list) = events.get_mut(&tick) {
+        list.push(event);
+    } else {
+        inserted_event = Some(event);
+    }
+    if let Some(event) = inserted_event {
+        let mut list = Vec::new();
+        list.push(event);
+        events.insert(tick, list);
+    }
+}
+
+pub fn remove_event<E: Event>(events: &mut Events<E>, tick: u64, event: &E) -> bool {
+    if let Some(ref mut list) = events.get_mut(&tick) {
+        list.retain(|e| *e != *event); true
+    } else { false }
+}

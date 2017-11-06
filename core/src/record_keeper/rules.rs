@@ -1,4 +1,4 @@
-use primitives::{Mutation, U256};
+use primitives::{Mutation};
 use std::collections::LinkedList;
 use std::fmt::Debug;
 use super::database::Database;
@@ -12,9 +12,3 @@ pub trait MutationRule: Debug + Send + Sync {
 
 /// A list of mutation rules
 pub type MutationRules = LinkedList<Box<MutationRule>>;
-
-
-/// Thrown by a mutation if it is invalid
-pub enum InvalidMutation {
-
-}

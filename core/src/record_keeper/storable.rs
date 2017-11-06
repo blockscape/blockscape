@@ -1,6 +1,6 @@
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use primitives::{Block, BlockHeader, Txn};
+use primitives::{BlockHeader, Txn};
 
 /// Storable objects are able to be directly stored into the database and include information about
 /// what type they are and how to serialize/deserialize them.
