@@ -6,7 +6,7 @@ pub mod storable;
 mod rules;
 mod record_keeper;
 
-pub use self::error::Error;
+pub use self::error::{Error, LogicError};
 pub use self::events::{PlotEvent, RecordEvent};
 pub use self::rules::*;
 pub use self::record_keeper::{RecordKeeper};

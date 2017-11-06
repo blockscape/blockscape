@@ -12,9 +12,3 @@ pub trait MutationRule: Debug + Send + Sync {
 
 /// A list of mutation rules
 pub type MutationRules = LinkedList<Box<MutationRule>>;
-
-
-/// Thrown by a mutation if it is invalid
-pub enum InvalidMutation {
-
-}

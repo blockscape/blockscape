@@ -9,7 +9,7 @@ pub enum Error {
     DB(RocksDBError), // when there is an error working with the database itself
     NotFound(&'static [u8], Vec<u8>), // when data is not found in the database
     Deserialize(BincodeError), // when data cannot be deserialized
-    BrokenRule(String) // when a rule is broken by a block, txn, or mutation
+    Logic(LogicError), // When something is wrong with a block, txn, or mutation
 }
 
 impl StdErr for Error {
@@ -18,7 +18,7 @@ impl StdErr for Error {
             Error::DB(_) => "RocksDB error: aka, not my fault ☺",
             Error::NotFound(_, _) => "Could not find the data requested at that Hash (may not be an issue).",
             Error::Deserialize(_) => "Deserialization error, the data stored could not be deserialized into the requested type.",
-            Error::BrokenRule(_) => "Invalid Mutation, a rule is violated by the mutation so it will not be applied."
+            Error::Logic(_) => "Something is not right with the block, txn, or mutations."
         }
     }
 
@@ -27,7 +27,7 @@ impl StdErr for Error {
             Error::DB(ref e) => Some(e),
             Error::NotFound(_, _) => None,
             Error::Deserialize(ref e) => Some(e),
-            Error::BrokenRule(_) => None,
+            Error::Logic(ref e) => Some(e),
         }
     }
 }
@@ -40,7 +40,39 @@ impl From<BincodeError> for Error {
     fn from(e: BincodeError) -> Self { Error::Deserialize(e) }
 }
 
+impl From<LogicError> for Error {
+    fn from(e: LogicError) -> Self { Error::Logic(e) }
+}
+
 impl Display for Error {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str(self.description())
+    }
+}
+
+
+#[derive(Debug)]
+pub enum LogicError {
+    MissingPrevious,
+    InvalidTime,
+    InvalidMutation(String),
+}
+
+impl StdErr for LogicError {
+    fn description(&self) -> &str {
+        match *self {
+            LogicError::MissingPrevious => "The last block this references is not known to us.",
+            LogicError::InvalidTime => "The timestamp is after the current time or too long ago.",
+            LogicError::InvalidMutation(_) => "The mutation breaks a rule."
+        }
+    }
+
+    fn cause(&self) -> Option<&StdErr> {
+        None
+    }
+}
+
+impl Display for LogicError {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str(self.description())
     }
