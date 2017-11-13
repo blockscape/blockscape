@@ -2,7 +2,7 @@ use std::sync::{Arc, Weak, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::VecDeque;
 use std::thread;
-use primitives::{U256, Txn, Block, Event, EventListener};
+use primitives::{U256, Txn, Block, Event, EventListener, ListenerPool};
 use record_keeper;
 use record_keeper::{RecordKeeper};
 use serde::{Serialize, Deserialize};
@@ -28,24 +28,20 @@ pub enum WorkResult {
 impl Event for WorkResult {}
 use self::WorkResult::*;
 
-/// Work Result Listener
-type WRL = EventListener<WorkResult>;
-
-
 
 pub struct WorkQueue {
     rk: Arc<RecordKeeper>,
     queue: Mutex<VecDeque<WorkItem>>,
-    listener: Weak<WRL>,
+    listeners: Mutex<ListenerPool<WorkResult>>,
     run: AtomicBool
 }
 
 impl WorkQueue {
-    pub fn new(rk: Arc<RecordKeeper>, listener: &Arc<WRL>) -> WorkQueue {
+    pub fn new(rk: Arc<RecordKeeper>) -> WorkQueue {
         WorkQueue {
             rk,
             queue: Mutex::new(VecDeque::new()),
-            listener: Arc::downgrade(listener),
+            listeners: Mutex::new(ListenerPool::new()),
             run: AtomicBool::new(false)
         }
     }
@@ -61,6 +57,11 @@ impl WorkQueue {
         self.run.swap(false, Ordering::Relaxed)
     }
 
+    /// Add a reference to a listener which will be notified about completed work items.
+    pub fn register_listener(&self, listener: &Arc<EventListener<WorkResult>>) {
+        self.listeners.lock().unwrap().register(listener);
+    }
+
     /// Returns true if the event was actually added, false if it is a duplicate and therefore not
     /// added to the queue. It will also return false if the queue is stopped.
     pub fn add_event(&self, wi: WorkItem) -> bool {
@@ -73,10 +74,6 @@ impl WorkQueue {
     /// Primary running cycle to be called from a different thread. Will run until the flag `run` is
     /// marked as false.
     fn main_loop(&self) {
-        let listener =
-            if let Some(l) = self.listener.upgrade() { l }
-            else { self.run.store(false, Ordering::Relaxed); return; };
-
         while self.run.load(Ordering::Relaxed) {
             let task = {
                 let mut queue = self.queue.lock().unwrap();
@@ -93,7 +90,7 @@ impl WorkQueue {
                 NewTxn(txn) => self.process_txn(txn)
             };
             let time = Time::current().millis() as u64;
-            listener.notify(time, result);
+            self.listeners.lock().unwrap().notify(time, &result);
         }
     }
 

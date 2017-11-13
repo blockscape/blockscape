@@ -1,5 +1,5 @@
 use bincode;
-use primitives::{U256, U256_ZERO, U160, Txn, Block, BlockHeader, Mutation, Change, EventListener};
+use primitives::{U256, U256_ZERO, U160, Txn, Block, BlockHeader, Mutation, Change, EventListener, ListenerPool};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock, Weak};
@@ -23,8 +23,8 @@ pub struct RecordKeeper {
 
     current_block: RwLock<U256>,
 
-    record_listeners: RwLock<Vec<Weak<EventListener<RecordEvent>>>>,
-    game_listeners: RwLock<Vec<Weak<EventListener<PlotEvent>>>>,
+    record_listeners: RwLock<ListenerPool<RecordEvent>>,
+    game_listeners: RwLock<ListenerPool<PlotEvent>>,
 }
 
 impl RecordKeeper {
@@ -41,8 +41,8 @@ impl RecordKeeper {
             rules: RwLock::new(rules.unwrap_or(MutationRules::new())),
             pending_txns: RwLock::new(HashMap::new()),
             current_block: RwLock::new(hash),
-            record_listeners: RwLock::new(Vec::new()),
-            game_listeners: RwLock::new(Vec::new())
+            record_listeners: RwLock::new(ListenerPool::new()),
+            game_listeners: RwLock::new(ListenerPool::new())
         }
     }
 
@@ -187,17 +187,13 @@ impl RecordKeeper {
     /// Add a new listener for events such as new blocks. This will also take a moment to remove any
     /// listeners which no longer exist.
     pub fn register_record_listener(&self, listener: &Arc<EventListener<RecordEvent>>) {
-        let mut listeners = self.record_listeners.write().unwrap();
-        listeners.retain(|l| l.upgrade().is_some());
-        listeners.push(Arc::downgrade(listener));
+        self.record_listeners.write().unwrap().register(listener);
     }
 
     /// Add a new listener for plot events. This will also take a moment to remove any listeners
     /// which no longer exist.
     pub fn register_game_listener(&self, listener: &Arc<EventListener<PlotEvent>>) {
-        let mut listeners = self.game_listeners.write().unwrap();
-        listeners.retain(|l| l.upgrade().is_some());
-        listeners.push(Arc::downgrade(listener));
+        self.game_listeners.write().unwrap().register(listener);
     }
 
     /// Add a new rule to the database regarding what network mutations are valid. This will only

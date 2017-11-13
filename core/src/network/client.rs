@@ -205,6 +205,10 @@ pub struct Client {
     tx: AtomicUsize
 }
 
+// impl EventListener<WorkResult> for Client {
+//     // TODO: This
+// }
+
 impl Client {
     pub fn new(db: Arc<RecordKeeper>, config: ClientConfig) -> Client {
         
