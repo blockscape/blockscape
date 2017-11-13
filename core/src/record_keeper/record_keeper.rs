@@ -1,9 +1,10 @@
 use bincode;
-use primitives::{U256, U256_ZERO, U160, Txn, Block, BlockHeader, Mutation, Change, Events, EventListener, event};
+use primitives::{U256, U256_ZERO, U160, Txn, Block, BlockHeader, Mutation, Change, EventListener};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock, Weak};
-use super::{MutationRule, MutationRules, Error, LogicError, Storable, PlotEvent, RecordEvent, PlotID};
+use super::{MutationRule, MutationRules, Error, LogicError, Storable, RecordEvent, PlotID};
+use super::{PlotEvent, PlotEvents, events};
 use super::database::*;
 
 pub const CURRENT_BLOCK: &[u8] = b"CURblock";
@@ -64,14 +65,21 @@ impl RecordKeeper {
     /// Add a new block to the chain state after verifying it is valid. Then check pending
     /// transaction to see which ones are no longer pending, and to see which ones have been
     /// invalidated. Also move the network state to be at the new end of the chain.
-    pub fn add_block(&mut self, block: &Block) -> Result<(), Error> {
+    /// Returns true if the block was added, false if it was already in the system.
+    pub fn add_block(&self, block: &Block) -> Result<bool, Error> {
         let block_hash = block.header.calculate_hash();
         let block_height = self.get_block_height(&block.header.prev)?;
         
         let mut db = self.db.write().unwrap();
+
+        // Check if the block is already in the system
+        if db.get_raw_data(&block_hash.to_vec(), BLOCKCHAIN_POSTFIX).is_ok() {
+            return Ok(false);
+        }
+
         //TODO: Handle if we need to go back and switch branches
         //TODO: Handle if we are only recording the block, and it does not become part of the current chain
-        self.is_valid_block_given_lock(&mut *db, block);
+        self.is_valid_block_given_lock(&*db, block);
 
         db.add_block_to_height(block_height, block_hash)?;
         
@@ -86,14 +94,25 @@ impl RecordKeeper {
 
         db.put_raw_data(CURRENT_BLOCK, &block_hash.to_vec(), CACHE_POSTFIX);
         *self.current_block.write().unwrap() = block_hash;
-        Ok(())
+        Ok(true)
     }
 
-    /// Add a new transaction to the pool of pending transactions after validating it.
-    pub fn add_pending_txn(&mut self, txn: Txn) -> Result<(), Error> {
-        let mut txn_lock = self.pending_txns.write().unwrap();
-        txn_lock.insert(txn.calculate_hash(), txn);
-        Ok(())
+    /// Add a new transaction to the pool of pending transactions after validating it. Returns true
+    /// if it was added successfully to pending transactions, and returns false if it is already in
+    /// the list of pending transactions.
+    pub fn add_pending_txn(&self, txn: Txn) -> Result<bool, Error> {
+        let hash = txn.calculate_hash();
+
+        let mut txns = self.pending_txns.write().unwrap();
+        let db = self.db.read().unwrap();
+        
+        if txns.contains_key(&hash) {
+            return Ok(false);
+        }
+
+        self.is_valid_txn_given_lock(&db, &txn)?;
+        txns.insert(hash, txn);
+        Ok(true)
     }
 
     /// Find a validator's public key given the hash. If they are not found, then they are not a
@@ -145,8 +164,8 @@ impl RecordKeeper {
     /// seek to reconstruct old history so `after_tick` simply allows additional filtering, e.g. if
     /// you set `after_tick` to 0, you would not get all events unless the oldest events have not
     /// yet been removed from the cache.
-    pub fn get_plot_events(&self, plot_id: PlotID, after_tick: u64) -> Result<Events<PlotEvent>, Error> {
-        let mut events: Events<PlotEvent> = {
+    pub fn get_plot_events(&self, plot_id: PlotID, after_tick: u64) -> Result<PlotEvents, Error> {
+        let mut events: PlotEvents = {
             let db = self.db.read().unwrap();
             db.get_plot_events(plot_id, after_tick)?
         };
@@ -156,7 +175,7 @@ impl RecordKeeper {
             for change in &txn.mutation.changes {
                 if let &Change::AddEvent{id, tick, ref event, ..} = change {
                     if tick >= after_tick && id == plot_id {
-                        event::add_event(&mut events, tick, event.clone());
+                        events::add_event(&mut events, tick, event.clone());
                     }
                 }
             }
@@ -167,7 +186,7 @@ impl RecordKeeper {
 
     /// Add a new listener for events such as new blocks. This will also take a moment to remove any
     /// listeners which no longer exist.
-    pub fn register_record_listener(&mut self, listener: &Arc<EventListener<RecordEvent>>) {
+    pub fn register_record_listener(&self, listener: &Arc<EventListener<RecordEvent>>) {
         let mut listeners = self.record_listeners.write().unwrap();
         listeners.retain(|l| l.upgrade().is_some());
         listeners.push(Arc::downgrade(listener));
@@ -175,7 +194,7 @@ impl RecordKeeper {
 
     /// Add a new listener for plot events. This will also take a moment to remove any listeners
     /// which no longer exist.
-    pub fn register_game_listener(&mut self, listener: &Arc<EventListener<PlotEvent>>) {
+    pub fn register_game_listener(&self, listener: &Arc<EventListener<PlotEvent>>) {
         let mut listeners = self.game_listeners.write().unwrap();
         listeners.retain(|l| l.upgrade().is_some());
         listeners.push(Arc::downgrade(listener));
@@ -214,7 +233,7 @@ impl RecordKeeper {
     }
 
     /// Put cache data into the database. This is for library use only.
-    pub fn put_cache_data<S: Storable>(&mut self, obj: &S) -> Result<(), Error> {
+    pub fn put_cache_data<S: Storable>(&self, obj: &S) -> Result<(), Error> {
         let mut db_lock = self.db.write().unwrap();
         db_lock.put::<S>(obj, CACHE_POSTFIX)
     }
@@ -269,6 +288,13 @@ impl RecordKeeper {
     /// Internal use function, check if the basics of a txn is valid, ignore its mutations.
     fn is_valid_txn_header_given_lock(&self, db: &Database, txn: &Txn) -> Result<(), Error> {
         //TODO: validity checks on things like timestamp, signature, and that the public key is of someone we know
+        
+        // verify the txn is not already part of the blockchain
+        if let Ok(_) = db.get_raw_data(&txn.calculate_hash().to_vec(), BLOCKCHAIN_POSTFIX) {
+            return Err(Error::from(LogicError::Duplicate))
+        }
+
+        // It is valid on the surface
         Ok(())
     }
 

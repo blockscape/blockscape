@@ -593,7 +593,7 @@ impl Client {
 
     pub fn report_txn(&self, txn: Txn) {
         // do we already have this txn? if so, stop here
-
+        
 
         // validate txn
 

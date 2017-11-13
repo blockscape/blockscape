@@ -6,7 +6,7 @@ use std::ops::{Deref, DerefMut};
 use time::Time;
 
 /// The main infromation about a block. This noteably excludes the list of transactions.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct BlockHeader {
     pub version: u16,
     pub timestamp: Time,
@@ -19,6 +19,12 @@ impl BlockHeader {
         hash_obj(self)
     }
 }
+
+impl PartialEq for BlockHeader {
+    fn eq(&self, other: &BlockHeader) -> bool {
+        self.calculate_hash() == other.calculate_hash()
+    }
+} impl Eq for BlockHeader {}
 
 /// The core unit of the blockchain.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -58,6 +64,12 @@ impl DerefMut for Block {
     }
 }
 
+impl PartialEq for Block {
+    fn eq(&self, other: &Block) -> bool {
+        // The header has the merkle root so this is valid
+        self.header == other.header
+    }
+} impl Eq for Block {}
 
 impl Block {
     /// Custom deserialization implementation
