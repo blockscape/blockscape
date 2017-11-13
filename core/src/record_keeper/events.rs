@@ -53,4 +53,3 @@ pub fn remove_event(events: &mut PlotEvents, tick: u64, event: &PlotEvent) -> bo
         list.retain(|e| *e != *event); true
     } else { false }
 }
-    rk: Arc<RecordKeeper>,

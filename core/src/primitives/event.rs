@@ -15,5 +15,5 @@ pub type RawEvent = Vec<u8>;
 /// object does not have to regularly check if things have changed.
 pub trait EventListener<E: Event>: Send + Sync {
     /// Notify will be called when a new event comes in.
-    fn notify(&self, tick: u64, event: &E);
+    fn notify(&self, tick: u64, event: E);
 }
