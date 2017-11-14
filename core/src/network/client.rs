@@ -16,9 +16,10 @@ use network::ntp;
 use network::session;
 use network::session::{RawPacket, Message, Session};
 use network::shard::{ShardInfo};
-use primitives::{Block, Txn, U256};
+use primitives::{Block, Txn, U256, Event, EventListener};
 use record_keeper::{RecordKeeper};
 use signer::generate_private_key;
+use work_queue::{WorkItem, WorkQueue, WorkResult};
 
 
 /// Defines the kind of interaction this node will take with a particular shard
@@ -179,6 +180,12 @@ pub struct Client {
     /// The database
     db: Arc<RecordKeeper>,
 
+    /// Reference a `WorkQueue` which can be tasked with the heavy lifting and calling the record keeper.
+    work_queue: Arc<WorkQueue>,
+
+    /// The results from various work tasks submitted to the work queue
+    results: Mutex<VecDeque<WorkResult>>,
+
     /// Data structures associated with shard-specific information
     shards: [RwLock<Option<ShardInfo>>; 255],
 
@@ -202,18 +209,24 @@ pub struct Client {
     rx: AtomicUsize,
 
     /// Accumulator representing number of bytes sent
-    tx: AtomicUsize
+    tx: AtomicUsize,
 }
 
-// impl EventListener<WorkResult> for Client {
-//     // TODO: This
-// }
+impl EventListener<WorkResult> for Client {
+    /// Add an event to the queue of finished things such that it can be handled by the main loop at
+    /// a later point.
+    fn notify(&self, tick: u64, event: &WorkResult) {
+        self.results.lock().unwrap().push_back(event.clone())
+    }
+}
 
 impl Client {
-    pub fn new(db: Arc<RecordKeeper>, config: ClientConfig) -> Client {
+    pub fn new(db: Arc<RecordKeeper>, wq: Arc<WorkQueue>, config: ClientConfig) -> Arc<Client> {
         
-        Client {
-            db: db,
+        let mut client = Arc::new(Client {
+            db,
+            work_queue: wq,
+            results: Mutex::new(VecDeque::new()),
             shards: init_array!(RwLock<Option<ShardInfo>>, 255, RwLock::new(None)),
             num_shards: 0,
             my_node: Arc::new(Node {
@@ -229,8 +242,12 @@ impl Client {
             done: AtomicBool::new(false),
             curr_port: AtomicUsize::new(0),
             rx: AtomicUsize::new(0),
-            tx: AtomicUsize::new(0)
-        }
+            tx: AtomicUsize::new(0),
+        });
+        
+        /// register itself to the work queue
+        client.work_queue.register_listener(&client);
+        client
     }
 
     /// Connect to the specified shard by shard ID. On success, returns the number of pending connections (the number of nodes)

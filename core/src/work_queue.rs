@@ -8,6 +8,7 @@ use record_keeper::{RecordKeeper};
 use serde::{Serialize, Deserialize};
 use time::Time;
 
+/// An individual task to be completed by the `WorkQueue`.
 #[derive(PartialEq, Eq)]
 pub enum WorkItem {
     NewBlock(Block),
@@ -15,6 +16,8 @@ pub enum WorkItem {
 }
 use self::WorkItem::*;
 
+/// Work results define the completion status of a "finished" task. It is the result may be a
+/// success message or it may be passing on the error it ran into.
 #[derive(Clone, Debug)]
 pub enum WorkResult {
     AddedNewBlock(U256),
@@ -29,6 +32,10 @@ impl Event for WorkResult {}
 use self::WorkResult::*;
 
 
+/// The `WorkQueue` is designed as an overlay for the RecordKeeper (and possibly more) that allows
+/// functions to be called on a separate thread from communication and incoming information which
+/// creates the need for processing. As a result, it holds a listener pool which it will notify when
+/// tasks are completed.
 pub struct WorkQueue {
     rk: Arc<RecordKeeper>,
     queue: Mutex<VecDeque<WorkItem>>,
@@ -64,7 +71,7 @@ impl WorkQueue {
 
     /// Returns true if the event was actually added, false if it is a duplicate and therefore not
     /// added to the queue. It will also return false if the queue is stopped.
-    pub fn add_event(&self, wi: WorkItem) -> bool {
+    pub fn submit(&self, wi: WorkItem) -> bool {
         if !self.run.load(Ordering::Relaxed) { return false; }
         let mut queue = self.queue.lock().unwrap();
         if queue.contains(&wi) { false }
@@ -94,6 +101,7 @@ impl WorkQueue {
         }
     }
 
+    /// Internal function to attempt adding a block to the system. Will return the work result.
     fn process_block(&self, block: Block) -> WorkResult {
         let hash = block.calculate_hash();
         match self.rk.add_block(&block) {
@@ -103,6 +111,7 @@ impl WorkQueue {
         }
     }
 
+    /// Internal function to attempt adding a txn to the system. Will return the work result.
     fn process_txn(&self, txn: Txn) -> WorkResult {
         let hash = txn.calculate_hash();
         match self.rk.add_pending_txn(txn) {
