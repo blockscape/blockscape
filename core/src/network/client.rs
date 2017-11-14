@@ -246,7 +246,7 @@ impl Client {
         });
         
         /// register itself to the work queue
-        client.work_queue.register_listener(&client);
+        client.work_queue.register_listener(client.clone());
         client
     }
 

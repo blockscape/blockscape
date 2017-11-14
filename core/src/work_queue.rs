@@ -65,8 +65,8 @@ impl WorkQueue {
     }
 
     /// Add a reference to a listener which will be notified about completed work items.
-    pub fn register_listener(&self, listener: &Arc<EventListener<WorkResult>>) {
-        self.listeners.lock().unwrap().register(listener);
+    pub fn register_listener(&self, listener: Arc<EventListener<WorkResult>>) {
+        self.listeners.lock().unwrap().register(&listener);
     }
 
     /// Returns true if the event was actually added, false if it is a duplicate and therefore not
