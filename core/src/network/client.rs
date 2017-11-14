@@ -14,9 +14,9 @@ use env::get_client_name;
 use network::node::{Node, NodeRepository, NodeEndpoint, LocalNode};
 use network::ntp;
 use network::session;
-use network::session::{RawPacket, Message, Session};
+use network::session::{RawPacket, Message};
 use network::shard::{ShardInfo};
-use primitives::{Block, Txn, U256, Event, EventListener};
+use primitives::{Block, Txn, U256, EventListener};
 use record_keeper::{RecordKeeper};
 use signer::generate_private_key;
 use work_queue::{WorkItem, WorkQueue, WorkResult};
@@ -223,7 +223,7 @@ impl EventListener<WorkResult> for Client {
 impl Client {
     pub fn new(rk: Arc<RecordKeeper>, wq: Arc<WorkQueue>, config: ClientConfig) -> Arc<Client> {
         
-        let mut client = Arc::new(Client {
+        let client = Arc::new(Client {
             rk,
             work_queue: wq,
             results: Mutex::new(VecDeque::new()),
@@ -267,12 +267,12 @@ impl Client {
         debug!("Attached network repo size: {}", node_count);
 
         // find a suitable port
-        let mut port = 0;
+        let mut port;
         loop {
             port = (self.curr_port.fetch_add(1, Relaxed) % 255) as u8;
 
             // make sure the port is not taken (this should almost always take one try)
-            let mut sh = self.shards[port as usize].read().unwrap();
+            let sh = self.shards[port as usize].read().unwrap();
             match *sh {
 
                 None => break,
@@ -281,7 +281,7 @@ impl Client {
         }
 
         // we can now get going
-        let mut si = ShardInfo::new(network_id, port, mode, repo);
+        let si = ShardInfo::new(network_id, port, mode, repo);
 
         let mut shard = self.shards[port as usize].write().unwrap();
         *shard = Some(si);
@@ -397,7 +397,7 @@ impl Client {
                         // cannot accept more packet data from this client
                         warn!("Client exceeded max packet size, dumping: {:?}", addr);
                         remove = true;
-                        return;
+                        cont = false;
                     }
                     // use memory
                     b.extend_from_slice(&buf[..n]);
@@ -415,14 +415,17 @@ impl Client {
                     }
                 }
 
+                if remove { //TODO: Check that remove and cont checks are in the correct places, possibly remove booleans and just insert the code in place.
+                    recv_buf.remove(&addr);
+                }
+                if !cont {
+                    return;
+                }
+
                 self.rx.fetch_add(n, Relaxed);
 
                 if let Some((addr, v)) = newb {
                     recv_buf.insert(addr, v);
-                }
-
-                if remove {
-                    recv_buf.remove(&addr);
                 }
 
                 // have we received all the data yet?
@@ -449,7 +452,7 @@ impl Client {
         if let Some((p, addr)) = received_packet {
             //debug!("Got packet: {:?}, {:?}", p, addr);
             if p.port == 255 {
-                if let Message::Introduce { ref node, ref network_id, ref port } = p.payload.msg {
+                if let Message::Introduce { ref node, ref network_id, .. } = p.payload.msg {
                     // new session?
                     let idx = self.resolve_port(network_id);
                     if let Some(ref shard) = *self.shards[idx as usize].read().unwrap() {
@@ -603,10 +606,7 @@ impl Client {
 
         // detach all networks
         for i in 0..255 {
-            let mut exists = false;
-            {
-                exists = self.shards[i].read().unwrap().is_some();
-            }
+            let exists = self.shards[i].read().unwrap().is_some();
 
             if exists {
                 self.detach_network_port(i as u8);

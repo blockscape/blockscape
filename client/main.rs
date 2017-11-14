@@ -21,7 +21,6 @@ mod reporter;
 mod format;
 
 use chan_signal::Signal;
-use clap::{Arg, ArgGroup, ArgMatches, App, SubCommand};
 use std::sync::Arc;
 use std::thread;
 use std::sync::mpsc::channel;
@@ -31,7 +30,6 @@ use blockscape_core::network::client::{Client, ShardMode};
 use blockscape_core::primitives::HasBlockHeader;
 use blockscape_core::record_keeper::RecordKeeper;
 use blockscape_core::work_queue::WorkQueue;
-use plot_event::PlotEvent;
 
 use boot::*;
 
@@ -69,14 +67,15 @@ fn main() {
 
         let mut c = Client::new(rk, wq, cc);
         // should be okay because we are still on a single thread at this point, so open the client
-        Arc::get_mut(&mut c).expect("Could not mutably aquire client to open it!").open();
+        Arc::get_mut(&mut c).expect("Could not mutably aquire client to open it!")
+            .open().expect("Could not open client!");
 
         // TODO: Somewhere around here, we read a config or cmdline or something to figure out which net to work for
         // but start with the genesis
         let genesis_net = make_genesis().0.get_header().calculate_hash();
 
         // must be connected to at least one network in order to do anything, might as well be genesis for now.
-        c.attach_network(genesis_net, ShardMode::Primary);
+        c.attach_network(genesis_net, ShardMode::Primary).expect("Could not attach to a network!");
 
         net_client = Some(c);
 

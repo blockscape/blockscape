@@ -1,13 +1,12 @@
 use std::cmp::min;
 use std::collections::VecDeque;
-use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::sync::{Arc,Mutex};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::Relaxed;
 use std::ops::Deref;
 
-use primitives::{Block, Txn, U256, Event};
+use primitives::{Block, Txn, U256};
 use super::node::Node;
 use time::Time;
 

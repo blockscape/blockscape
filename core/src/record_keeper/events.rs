@@ -1,7 +1,6 @@
 use primitives::{U256, Event, RawEvent};
 use super::PlotID;
 use std::collections::BTreeMap;
-use serde::{Serialize, Deserialize};
 
 /// An event regarding the keeping of records, such as the introduction of a new block or shifting
 /// state.

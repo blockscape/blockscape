@@ -1,11 +1,10 @@
-use std::sync::{Arc, Weak, Mutex};
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::VecDeque;
 use std::thread;
 use primitives::{U256, Txn, Block, Event, EventListener, ListenerPool};
 use record_keeper;
 use record_keeper::{RecordKeeper};
-use serde::{Serialize, Deserialize};
 use time::Time;
 
 /// An individual task to be completed by the `WorkQueue`.
@@ -54,7 +53,7 @@ impl WorkQueue {
     }
 
     pub fn start(queue: &Arc<WorkQueue>) -> thread::JoinHandle<()> {
-        let mut q = Arc::clone(queue);
+        let q = Arc::clone(queue);
         thread::spawn(move || q.main_loop())
     }
 

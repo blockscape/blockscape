@@ -2,7 +2,7 @@ use bincode;
 use primitives::{U256, U256_ZERO, U160, Txn, Block, BlockHeader, Mutation, Change, EventListener, ListenerPool};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock, Weak};
+use std::sync::{Arc, RwLock};
 use super::{MutationRule, MutationRules, Error, LogicError, Storable, RecordEvent, PlotID};
 use super::{PlotEvent, PlotEvents, events};
 use super::database::*;
@@ -79,7 +79,7 @@ impl RecordKeeper {
 
         //TODO: Handle if we need to go back and switch branches
         //TODO: Handle if we are only recording the block, and it does not become part of the current chain
-        self.is_valid_block_given_lock(&*db, block);
+        self.is_valid_block_given_lock(&*db, block)?;
 
         db.add_block_to_height(block_height, block_hash)?;
         
@@ -92,7 +92,7 @@ impl RecordKeeper {
             db.mutate(&mutation)?
         }; //TODO: save the contra mutation
 
-        db.put_raw_data(CURRENT_BLOCK, &block_hash.to_vec(), CACHE_POSTFIX);
+        db.put_raw_data(CURRENT_BLOCK, &block_hash.to_vec(), CACHE_POSTFIX)?;
         *self.current_block.write().unwrap() = block_hash;
         Ok(true)
     }
