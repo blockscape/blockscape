@@ -55,8 +55,8 @@ fn main() {
             .expect("Could not automatically find work directory for blockscape! Please check your environment and try again."));
     }
 
-    let db = Arc::new(RecordKeeper::open(None, Some(rules::build_rules())).expect("Record Keeper was not able to initialize!"));
-    let wq = Arc::new(WorkQueue::new(db.clone()));
+    let rk = Arc::new(RecordKeeper::open(None, Some(rules::build_rules())).expect("Record Keeper was not able to initialize!"));
+    let wq = Arc::new(WorkQueue::new(rk.clone()));
 
 
     let mut net_client: Option<Arc<Client>> = None;
@@ -67,7 +67,7 @@ fn main() {
         // start network
         let cc = make_network_config(&cmdline);
 
-        let mut c = Client::new(db, wq, cc);
+        let mut c = Client::new(rk, wq, cc);
         // should be okay because we are still on a single thread at this point, so open the client
         Arc::get_mut(&mut c).expect("Could not mutably aquire client to open it!").open();
 

@@ -127,7 +127,7 @@ impl Statistics {
 
 pub struct NetworkContext<'a> {
     /// The database for RO access
-    pub db: &'a RecordKeeper,
+    pub rk: &'a RecordKeeper,
 
     /// The configuation associated with this client
     pub config: &'a ClientConfig,
@@ -143,10 +143,10 @@ pub struct NetworkContext<'a> {
 }
 
 impl<'a> NetworkContext<'a> {
-    pub fn new(db: &'a RecordKeeper, config: &'a ClientConfig) -> NetworkContext<'a> {
+    pub fn new(rk: &'a RecordKeeper, config: &'a ClientConfig) -> NetworkContext<'a> {
         NetworkContext {
-            db: db,
-            config: config,
+            rk,
+            config,
             import_txns: VecDeque::new(),
             import_blocks: VecDeque::new(),
             connect_peers: HashMap::new()
@@ -177,8 +177,8 @@ pub struct Client {
     /// The node object which represents my own system
     my_node: Arc<Node>,
 
-    /// The database
-    db: Arc<RecordKeeper>,
+    /// The record keeper/database
+    rk: Arc<RecordKeeper>,
 
     /// Reference a `WorkQueue` which can be tasked with the heavy lifting and calling the record keeper.
     work_queue: Arc<WorkQueue>,
@@ -221,10 +221,10 @@ impl EventListener<WorkResult> for Client {
 }
 
 impl Client {
-    pub fn new(db: Arc<RecordKeeper>, wq: Arc<WorkQueue>, config: ClientConfig) -> Arc<Client> {
+    pub fn new(rk: Arc<RecordKeeper>, wq: Arc<WorkQueue>, config: ClientConfig) -> Arc<Client> {
         
         let mut client = Arc::new(Client {
-            db,
+            rk,
             work_queue: wq,
             results: Mutex::new(VecDeque::new()),
             shards: init_array!(RwLock<Option<ShardInfo>>, 255, RwLock::new(None)),
@@ -261,7 +261,7 @@ impl Client {
         }
 
         // first, setup the node repository
-        let repo = NetworkContext::new(&self.db, &self.config).load_node_repo(network_id);
+        let repo = NetworkContext::new(&self.rk, &self.config).load_node_repo(network_id);
         let node_count = repo.len();
 
         debug!("Attached network repo size: {}", node_count);
@@ -440,7 +440,7 @@ impl Client {
                     }
                 }
                 else if let Some(ref shard) = *self.shards[p.port as usize].read().unwrap() {
-                    let mut context = NetworkContext::new(&self.db, &self.config);
+                    let mut context = NetworkContext::new(&self.rk, &self.config);
 
                     {
                         shard.process_packet(&p.payload, &addr, &mut context);
