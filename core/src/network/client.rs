@@ -228,7 +228,7 @@ impl EventListener<WorkResult> for Client {
 impl Client {
     pub fn new(rk: Arc<RecordKeeper>, wq: Arc<WorkQueue>, config: ClientConfig) -> Arc<Client> {
         
-        let client = Arc::new(Client {
+        let mut client = Client {
             rk,
             work_queue: wq,
             shards: init_array!(RwLock<Option<ShardInfo>>, 255, RwLock::new(None)),
@@ -247,11 +247,14 @@ impl Client {
             curr_port: AtomicUsize::new(0),
             rx: AtomicUsize::new(0),
             tx: AtomicUsize::new(0),
-        });
+        };
+
+        client.open().expect("Could not open client!");
+        let c = Arc::new(client);
         
         /// register itself to the work queue
-        client.work_queue.register_listener(client.clone());
-        client
+        c.work_queue.register_listener(c.clone());
+        c
     }
 
     /// Connect to the specified shard by shard ID. On success, returns the number of pending connections (the number of nodes)

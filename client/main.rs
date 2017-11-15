@@ -66,9 +66,6 @@ fn main() {
         let cc = make_network_config(&cmdline);
 
         let mut c = Client::new(rk, wq, cc);
-        // should be okay because we are still on a single thread at this point, so open the client
-        Arc::get_mut(&mut c).expect("Could not mutably aquire client to open it!")
-            .open().expect("Could not open client!");
 
         // TODO: Somewhere around here, we read a config or cmdline or something to figure out which net to work for
         // but start with the genesis
