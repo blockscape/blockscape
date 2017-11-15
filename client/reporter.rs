@@ -1,6 +1,5 @@
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
-use std::thread;
 
 use std::time::Duration;
 
@@ -8,7 +7,6 @@ use colored::*;
 
 use blockscape_core::network::client::Client;
 use blockscape_core::time::Time;
-use super::PlotEvent;
 
 use format::*;
 

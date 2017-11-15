@@ -1,4 +1,4 @@
-use clap::{Arg, ArgGroup, ArgMatches, App, SubCommand};
+use clap::{Arg, ArgGroup, ArgMatches, App};
 use openssl::pkey::PKey;
 use std::collections::BTreeSet;
 use std::fs::File;
@@ -17,7 +17,7 @@ const ADMIN_KEY: &[u8] = b""; //TODO: Insert Admin Key
 
 /// Loads command line arguments, and returns them as a clap ArgMatches obj
 pub fn parse_cmdline<'a>() -> ArgMatches<'a> {
-    let mut workdir_arg = Arg::with_name("workdir")
+    let workdir_arg = Arg::with_name("workdir")
         .short("w")
         .long("workdir")
         .value_name("DIR")
@@ -128,11 +128,11 @@ pub fn make_network_config(cmdline: &ArgMatches) -> ClientConfig {
     pub_path.push("keys");
     pub_path.set_file_name("node.pem");
 
-    let mut key: PKey;
+    let key: PKey;
 
     if let Ok(mut f) = File::open(pub_path.as_path()) {
         let mut pub_data: Vec<u8> = Vec::new();
-        f.read_to_end(&mut pub_data);
+        f.read_to_end(&mut pub_data).expect("Could not read public key file!");
 
         key = PKey::private_key_from_pem(&pub_data).expect("Could not load node private key from file! Is it corrupted?");
 
@@ -145,7 +145,8 @@ pub fn make_network_config(cmdline: &ArgMatches) -> ClientConfig {
 
         // save the key (fail if not saved)
         let mut f = File::create(pub_path.as_path()).expect("Could not create generated node keyfile");
-        f.write_all(&key.private_key_to_pem().expect("Could not export generated keyfile"));
+        f.write_all(&key.private_key_to_pem().expect("Could not export generated keyfile"))
+            .expect("Could not write private key file!");
     }
 
     let mut config = ClientConfig::from_key(key);

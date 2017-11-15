@@ -21,7 +21,6 @@ mod reporter;
 mod format;
 
 use chan_signal::Signal;
-use clap::{Arg, ArgGroup, ArgMatches, App, SubCommand};
 use std::sync::Arc;
 use std::thread;
 use std::sync::mpsc::channel;
@@ -30,7 +29,7 @@ use blockscape_core::env;
 use blockscape_core::network::client::{Client, ShardMode};
 use blockscape_core::primitives::HasBlockHeader;
 use blockscape_core::record_keeper::RecordKeeper;
-use plot_event::PlotEvent;
+use blockscape_core::work_queue::WorkQueue;
 
 use boot::*;
 
@@ -54,7 +53,8 @@ fn main() {
             .expect("Could not automatically find work directory for blockscape! Please check your environment and try again."));
     }
 
-    let db = Arc::new(RecordKeeper::open(None, Some(rules::build_rules())).expect("Record Keeper was not able to initialize!"));
+    let rk = Arc::new(RecordKeeper::open(None, Some(rules::build_rules())).expect("Record Keeper was not able to initialize!"));
+    let wq = Arc::new(WorkQueue::new(rk.clone()));
 
 
     let mut net_client: Option<Arc<Client>> = None;
@@ -65,19 +65,16 @@ fn main() {
         // start network
         let cc = make_network_config(&cmdline);
 
-        let mut c = Client::new(db, cc);
-        c.open();
+        let mut c = Client::new(rk, wq, cc);
 
         // TODO: Somewhere around here, we read a config or cmdline or something to figure out which net to work for
         // but start with the genesis
         let genesis_net = make_genesis().0.get_header().calculate_hash();
 
         // must be connected to at least one network in order to do anything, might as well be genesis for now.
-        c.attach_network(genesis_net, ShardMode::Primary);
+        c.attach_network(genesis_net, ShardMode::Primary).expect("Could not attach to a network!");
 
-        net_client = Some(
-            Arc::new(c)
-        );
+        net_client = Some(c);
 
         // start networking threads and handlers
         let mut ts = Client::run(net_client.clone().unwrap());

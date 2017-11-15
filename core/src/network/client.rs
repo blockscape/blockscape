@@ -14,11 +14,12 @@ use env::get_client_name;
 use network::node::{Node, NodeRepository, NodeEndpoint, LocalNode};
 use network::ntp;
 use network::session;
-use network::session::{RawPacket, Message, Session};
+use network::session::{RawPacket, Message};
 use network::shard::{ShardInfo};
-use primitives::{Block, Txn, U256};
+use primitives::{Block, Txn, U256, EventListener};
 use record_keeper::{RecordKeeper};
 use signer::generate_private_key;
+use work_queue::{WorkItem, WorkQueue, WorkResult};
 
 
 /// Defines the kind of interaction this node will take with a particular shard
@@ -126,7 +127,7 @@ impl Statistics {
 
 pub struct NetworkContext<'a> {
     /// The database for RO access
-    pub db: &'a RecordKeeper,
+    pub rk: &'a RecordKeeper,
 
     /// The configuation associated with this client
     pub config: &'a ClientConfig,
@@ -142,10 +143,10 @@ pub struct NetworkContext<'a> {
 }
 
 impl<'a> NetworkContext<'a> {
-    pub fn new(db: &'a RecordKeeper, config: &'a ClientConfig) -> NetworkContext<'a> {
+    pub fn new(rk: &'a RecordKeeper, config: &'a ClientConfig) -> NetworkContext<'a> {
         NetworkContext {
-            db: db,
-            config: config,
+            rk,
+            config,
             import_txns: VecDeque::new(),
             import_blocks: VecDeque::new(),
             connect_peers: HashMap::new()
@@ -176,8 +177,11 @@ pub struct Client {
     /// The node object which represents my own system
     my_node: Arc<Node>,
 
-    /// The database
-    db: Arc<RecordKeeper>,
+    /// The record keeper/database
+    rk: Arc<RecordKeeper>,
+
+    /// Reference a `WorkQueue` which can be tasked with the heavy lifting and calling the record keeper.
+    work_queue: Arc<WorkQueue>,
 
     /// Data structures associated with shard-specific information
     shards: [RwLock<Option<ShardInfo>>; 255],
@@ -202,14 +206,31 @@ pub struct Client {
     rx: AtomicUsize,
 
     /// Accumulator representing number of bytes sent
-    tx: AtomicUsize
+    tx: AtomicUsize,
+}
+
+impl EventListener<WorkResult> for Client {
+    /// Add an event to the queue of finished things such that it can be handled by the main loop at
+    /// a later point.
+    fn notify(&self, time: u64, result: &WorkResult) {
+        use self::WorkResult::*;
+        match result { //TODO: fill these out with the appropriate responses
+            &AddedNewBlock(ref hash) => {},
+            &DuplicateBlock(ref hash) => {},
+            &ErrorAddingBlock(ref hash, ref e) => {},
+            &AddedNewTxn(ref hash) => {},
+            &DuplicateTxn(ref hash) => {},
+            &ErrorAddingTxn(ref hash, ref e) => {}
+        }
+    }
 }
 
 impl Client {
-    pub fn new(db: Arc<RecordKeeper>, config: ClientConfig) -> Client {
+    pub fn new(rk: Arc<RecordKeeper>, wq: Arc<WorkQueue>, config: ClientConfig) -> Arc<Client> {
         
-        Client {
-            db: db,
+        let mut client = Client {
+            rk,
+            work_queue: wq,
             shards: init_array!(RwLock<Option<ShardInfo>>, 255, RwLock::new(None)),
             num_shards: 0,
             my_node: Arc::new(Node {
@@ -225,8 +246,15 @@ impl Client {
             done: AtomicBool::new(false),
             curr_port: AtomicUsize::new(0),
             rx: AtomicUsize::new(0),
-            tx: AtomicUsize::new(0)
-        }
+            tx: AtomicUsize::new(0),
+        };
+
+        client.open().expect("Could not open client!");
+        let c = Arc::new(client);
+        
+        /// register itself to the work queue
+        c.work_queue.register_listener(c.clone());
+        c
     }
 
     /// Connect to the specified shard by shard ID. On success, returns the number of pending connections (the number of nodes)
@@ -240,18 +268,18 @@ impl Client {
         }
 
         // first, setup the node repository
-        let repo = NetworkContext::new(&self.db, &self.config).load_node_repo(network_id);
+        let repo = NetworkContext::new(&self.rk, &self.config).load_node_repo(network_id);
         let node_count = repo.len();
 
         debug!("Attached network repo size: {}", node_count);
 
         // find a suitable port
-        let mut port = 0;
+        let mut port;
         loop {
             port = (self.curr_port.fetch_add(1, Relaxed) % 255) as u8;
 
             // make sure the port is not taken (this should almost always take one try)
-            let mut sh = self.shards[port as usize].read().unwrap();
+            let sh = self.shards[port as usize].read().unwrap();
             match *sh {
 
                 None => break,
@@ -260,7 +288,7 @@ impl Client {
         }
 
         // we can now get going
-        let mut si = ShardInfo::new(network_id, port, mode, repo);
+        let si = ShardInfo::new(network_id, port, mode, repo);
 
         let mut shard = self.shards[port as usize].write().unwrap();
         *shard = Some(si);
@@ -348,7 +376,7 @@ impl Client {
                             // cannot accept more packet data from this client
                             warn!("Client exceeded max packet size, dumping: {:?}", addr);
                             remove = true;
-                            continue;
+                            cont = false;
                         }
                         // use memory
                         b.extend_from_slice(&buf[..n]);
@@ -366,14 +394,17 @@ impl Client {
                         }
                     }
 
+                    if remove { //TODO: Check that remove and cont checks are in the correct places, possibly remove booleans and just insert the code in place.
+                        recv_buf.remove(&addr);
+                    }
+                    if !cont {
+                        continue;
+                    }
+
                     self.rx.fetch_add(n, Relaxed);
 
                     if let Some((addr, v)) = newb {
                         recv_buf.insert(addr, v);
-                    }
-
-                    if remove {
-                        recv_buf.remove(&addr);
                     }
 
                     // have we received all the data yet?
@@ -400,7 +431,7 @@ impl Client {
             if let Some((p, addr)) = received_packet {
                 //debug!("Got packet: {:?}, {:?}", p, addr);
                 if p.port == 255 {
-                    if let Message::Introduce { ref node, ref network_id, ref port } = p.payload.msg {
+                    if let Message::Introduce { ref node, ref network_id, .. } = p.payload.msg {
                         // new session?
                         let idx = self.resolve_port(network_id);
                         if let Some(ref shard) = *self.shards[idx as usize].read().unwrap() {
@@ -419,7 +450,7 @@ impl Client {
                     }
                 }
                 else if let Some(ref shard) = *self.shards[p.port as usize].read().unwrap() {
-                    let mut context = NetworkContext::new(&self.db, &self.config);
+                    let mut context = NetworkContext::new(&self.rk, &self.config);
 
                     {
                         shard.process_packet(&p.payload, &addr, &mut context);
@@ -430,11 +461,12 @@ impl Client {
                     // process data in the context: do we have anything to import?
                     // NOTE: Order is important here! We want the data to be imported in order or else it is much harder to construct
                     while let Some(txn) = context.import_txns.pop_front() {
-                        self.report_txn(txn);
+                        let unique = self.work_queue.submit(WorkItem::NewTxn(txn));
+                        // TODO: handle if it was a duplicate?
                     }
                     
                     while let Some(block) = context.import_blocks.pop_front() {
-                        self.report_block(block);
+                        let unique = self.work_queue.submit(WorkItem::NewBlock(block));
                     }
 
                     // finally, any new nodes to connect to?
@@ -559,10 +591,7 @@ impl Client {
 
         // detach all networks
         for i in 0..255 {
-            let mut exists = false;
-            {
-                exists = self.shards[i].read().unwrap().is_some();
-            }
+            let exists = self.shards[i].read().unwrap().is_some();
 
             if exists {
                 self.detach_network_port(i as u8);
@@ -589,31 +618,5 @@ impl Client {
 
     pub fn get_config(&self) -> &ClientConfig {
         &self.config
-    }
-
-    pub fn report_txn(&self, txn: Txn) {
-        // do we already have this txn? if so, stop here
-
-
-        // validate txn
-
-
-        // save txn to pool (whether that is the db or whatever)
-
-
-        // reliable flood, since this is a new txn
-    }
-
-    pub fn report_block(&self, block: Block) {
-        // do we already have this block? if so, stop here
-
-
-        // validate block
-
-
-        // save block to pool (whether that is the db or whatever)
-
-
-        // reliable flood, since this is a new block
     }
 }

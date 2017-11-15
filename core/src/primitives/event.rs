@@ -1,15 +1,12 @@
-use serde::de::DeserializeOwned;
-use serde::{Serialize, Deserialize};
-use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
+use std::sync::{Arc, Weak};
 
 /// An `Event` is an implementation defined type which will be used when processing the game to
 /// determine how the game computation should be impacted. The final implementation should probably
 /// be an enum, which would easily allow for multiple different kinds of events. Events may not
 /// store references to external data as they may be brought into and out of existence at any time.
-pub trait Event: Clone + Debug + DeserializeOwned + Send + Serialize + Sync + PartialEq + Eq + 'static {}
-
+pub trait Event: Clone + Debug + Send + Sync + 'static {}
 
 impl Event for Vec<u8> {}
 pub type RawEvent = Vec<u8>;
@@ -22,26 +19,44 @@ pub trait EventListener<E: Event>: Send + Sync {
     fn notify(&self, tick: u64, event: &E);
 }
 
+/// A set of listeners who are ready to receive events. This is designed to be a simple way to
+/// manage a list and to notify all of them at once of something which has happened.
+pub struct ListenerPool<E: Event>(Vec<Weak<EventListener<E>>>);
 
-/// Lists of events stored by their tick
-pub type Events<E: Event> = BTreeMap<u64, Vec<E>>;
-
-pub fn add_event<E: Event>(events: &mut Events<E>, tick: u64, event: E) {
-    let mut inserted_event = None;
-    if let Some(ref mut list) = events.get_mut(&tick) {
-        list.push(event);
-    } else {
-        inserted_event = Some(event);
-    }
-    if let Some(event) = inserted_event {
-        let mut list = Vec::new();
-        list.push(event);
-        events.insert(tick, list);
-    }
+impl<E: Event> Deref for ListenerPool<E> {
+    type Target = Vec<Weak<EventListener<E>>>;
+    fn deref(&self) -> &Self::Target { &self.0 }
 }
 
-pub fn remove_event<E: Event>(events: &mut Events<E>, tick: u64, event: &E) -> bool {
-    if let Some(ref mut list) = events.get_mut(&tick) {
-        list.retain(|e| *e != *event); true
-    } else { false }
+impl<E: Event> DerefMut for ListenerPool<E> {
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+}
+
+impl<E: Event> ListenerPool<E> {
+    /// Create a new, empty, listener pool.
+    pub fn new() -> ListenerPool<E> {
+        ListenerPool(Vec::new())
+    }
+
+    /// Register a new listener with the pool.
+    pub fn register(&mut self, listener: &Arc<EventListener<E>>) {
+        self.clean();
+        self.push(Arc::downgrade(listener));
+    }
+
+    /// Remove any listeners for which our references are no longer relevant.
+    pub fn clean(&mut self) {
+        self.retain(|l| l.upgrade().is_some());
+    }
+
+    /// Notify all listeners, and return the number of listeners we successfully sent messages to.
+    pub fn notify(&self, tick: u64, event: &E) -> u32 {
+        let mut count: u32 = 0;
+        for l in &self.0 {
+            if let Some(listener) = l.upgrade() {
+                count += 1;
+                listener.notify(tick, &event);
+            }
+        } count
+    }
 }

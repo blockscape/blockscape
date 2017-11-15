@@ -33,6 +33,11 @@ pub const STATE_TXN: u8 = 7;
 pub const ADMIN_TXN: u8 = 9;
 
 
+impl PartialEq for Txn {
+    fn eq(&self, other: &Txn) -> bool {
+        self.calculate_hash() == other.calculate_hash()
+    }
+} impl Eq for Txn {}
 
 impl Txn {
     /// Assume default values for a number of features and manually set the data, mutations, and

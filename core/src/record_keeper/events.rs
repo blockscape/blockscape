@@ -1,5 +1,6 @@
 use primitives::{U256, Event, RawEvent};
 use super::PlotID;
+use std::collections::BTreeMap;
 
 /// An event regarding the keeping of records, such as the introduction of a new block or shifting
 /// state.
@@ -28,3 +29,26 @@ pub struct PlotEvent {
     event: RawEvent
 }
 impl Event for PlotEvent {}
+
+/// Lists of events stored by their tick
+pub type PlotEvents = BTreeMap<u64, Vec<PlotEvent>>;
+
+pub fn add_event(events: &mut PlotEvents, tick: u64, event: PlotEvent) {
+    let mut inserted_event = None;
+    if let Some(ref mut list) = events.get_mut(&tick) {
+        list.push(event);
+    } else {
+        inserted_event = Some(event);
+    }
+    if let Some(event) = inserted_event {
+        let mut list = Vec::new();
+        list.push(event);
+        events.insert(tick, list);
+    }
+}
+
+pub fn remove_event(events: &mut PlotEvents, tick: u64, event: &PlotEvent) -> bool {
+    if let Some(ref mut list) = events.get_mut(&tick) {
+        list.retain(|e| *e != *event); true
+    } else { false }
+}

@@ -26,3 +26,4 @@ pub mod primitives;
 pub mod record_keeper;
 pub mod signer;
 pub mod time;
+pub mod work_queue;

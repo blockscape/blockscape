@@ -1,12 +1,12 @@
 use bincode;
 use bytes::{BigEndian, ByteOrder};
 use env;
-use primitives::{Events, U256, Mutation, Change, Block, BlockHeader, Txn, event};
+use primitives::{U256, Mutation, Change, Block, BlockHeader, Txn};
 use rocksdb::{DB, Options};
 use rocksdb::Error as RocksDBError;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use super::{Storable, PlotEvent, PlotID};
+use super::{Storable, PlotEvent, PlotEvents, events, PlotID};
 use super::error::*;
 
 pub const BLOCKCHAIN_POSTFIX: &[u8] = b"b";
@@ -252,8 +252,8 @@ impl Database {
                 let db_key = Self::plot_key(&id);
 
                 if let Some(raw_events) = self.db.get(&db_key)? {
-                    let mut events: Events<PlotEvent> = bincode::deserialize(&raw_events).unwrap();
-                    if !event::remove_event(&mut events, tick, &event) {
+                    let mut events: PlotEvents = bincode::deserialize(&raw_events).unwrap();
+                    if !events::remove_event(&mut events, tick, &event) {
                         warn!("Unable to remove event because it does not exist! The network state \
                                may be desynchronized.");
                         continue;
@@ -275,12 +275,12 @@ impl Database {
     pub fn add_plot_event(&mut self, plot_id: PlotID, tick: u64, event: &PlotEvent) -> Result<(), Error> {
         let db_key = Self::plot_key(&plot_id);
 
-        let mut events: Events<PlotEvent> = self.db.get(&db_key)?.map_or(
-            Events::new(), //if not found, we need to create the data structure
+        let mut events: PlotEvents = self.db.get(&db_key)?.map_or(
+            PlotEvents::new(), //if not found, we need to create the data structure
             |v| bincode::deserialize(&v).unwrap()
         );
 
-        event::add_event(&mut events, tick, event.clone());
+        events::add_event(&mut events, tick, event.clone());
 
         let raw_events = bincode::serialize(&events, bincode::Infinite).unwrap();
         self.db.put(&db_key, &raw_events)?;
@@ -291,10 +291,10 @@ impl Database {
     /// seek to reconstruct old history so `after_tick` simply allows additional filtering, e.g. if
     /// you set `after_tick` to 0, you would not get all events unless the oldest events have not
     /// yet been removed from the cache.
-    pub fn get_plot_events(&self, plot_id: PlotID, after_tick: u64) -> Result<Events<PlotEvent>, Error> {
+    pub fn get_plot_events(&self, plot_id: PlotID, after_tick: u64) -> Result<PlotEvents, Error> {
         let db_key = Self::plot_key(&plot_id);
         Ok(self.db.get(&db_key)?.map_or(
-            Events::new(),
+            PlotEvents::new(),
             |v| bincode::deserialize(&v).unwrap()
         ))
     }
