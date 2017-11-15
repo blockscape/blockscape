@@ -183,9 +183,6 @@ pub struct Client {
     /// Reference a `WorkQueue` which can be tasked with the heavy lifting and calling the record keeper.
     work_queue: Arc<WorkQueue>,
 
-    /// The results from various work tasks submitted to the work queue
-    results: Mutex<VecDeque<WorkResult>>,
-
     /// Data structures associated with shard-specific information
     shards: [RwLock<Option<ShardInfo>>; 255],
 
@@ -215,8 +212,16 @@ pub struct Client {
 impl EventListener<WorkResult> for Client {
     /// Add an event to the queue of finished things such that it can be handled by the main loop at
     /// a later point.
-    fn notify(&self, tick: u64, event: &WorkResult) {
-        self.results.lock().unwrap().push_back(event.clone())
+    fn notify(&self, time: u64, result: &WorkResult) {
+        use self::WorkResult::*;
+        match result { //TODO: fill these out with the appropriate responses
+            &AddedNewBlock(ref hash) => {},
+            &DuplicateBlock(ref hash) => {},
+            &ErrorAddingBlock(ref hash, ref e) => {},
+            &AddedNewTxn(ref hash) => {},
+            &DuplicateTxn(ref hash) => {},
+            &ErrorAddingTxn(ref hash, ref e) => {}
+        }
     }
 }
 
@@ -226,7 +231,6 @@ impl Client {
         let client = Arc::new(Client {
             rk,
             work_queue: wq,
-            results: Mutex::new(VecDeque::new()),
             shards: init_array!(RwLock<Option<ShardInfo>>, 255, RwLock::new(None)),
             num_shards: 0,
             my_node: Arc::new(Node {
@@ -352,167 +356,145 @@ impl Client {
         let mut recv_buf: HashMap<SocketAddr, Vec<u8>> = HashMap::new();
 
         loop {
-            self.process_work_results();
-            self.receive_packets(&mut buf, &mut recv_buf);
+            let mut cont = true;
+
+            let mut received_packet: Option<(RawPacket, SocketAddr)> = None;
+
+            match self.socket.as_ref().unwrap().recv_from(&mut buf) {
+                Ok((n, addr)) => {
+
+                    let mut remove = false;
+
+                    let recv_len = recv_buf.len();
+
+                    let mut newb: Option<(SocketAddr, Vec<u8>)> = None;
+                    if let Some(b) = recv_buf.get_mut(&addr) {
+                        if b.len() > MAX_PACKET_SIZE {
+                            // cannot accept more packet data from this client
+                            warn!("Client exceeded max packet size, dumping: {:?}", addr);
+                            remove = true;
+                            cont = false;
+                        }
+                        // use memory
+                        b.extend_from_slice(&buf[..n]);
+                    }
+                    else {
+                        // new peer, can we take more?
+                        if recv_len <= self.config.max_nodes as usize {
+                            // allocate
+                            let mut v: Vec<u8> = Vec::with_capacity(MAX_PACKET_SIZE);
+                            v.extend_from_slice(&buf[..n]);
+                            newb = Some((addr, v));
+                        }
+                        else {
+                            continue;
+                        }
+                    }
+
+                    if remove { //TODO: Check that remove and cont checks are in the correct places, possibly remove booleans and just insert the code in place.
+                        recv_buf.remove(&addr);
+                    }
+                    if !cont {
+                        continue;
+                    }
+
+                    self.rx.fetch_add(n, Relaxed);
+
+                    if let Some((addr, v)) = newb {
+                        recv_buf.insert(addr, v);
+                    }
+
+                    // have we received all the data yet?
+                    let b = recv_buf.get_mut(&addr).unwrap();
+                    let len: usize = deserialize::<u32>(&b[0..4]).unwrap() as usize;
+
+                    if b.len() - 4 >= len {
+                        // we have a full packet, move it into our packet list
+                        match deserialize(&b[4..]) {
+                            Ok(p) => received_packet = Some((p, addr)),
+                            Err(e) => {
+                                warn!("Packet decode failed from {}: {}", addr, e);
+                                warn!("Expected size: {}", len);
+                                // TODO: Note misbehaviors/errors
+                            }
+                        };
+
+                        b.clear();
+                    }
+                },
+                Err(err) => {}
+            }
+
+            if let Some((p, addr)) = received_packet {
+                //debug!("Got packet: {:?}, {:?}", p, addr);
+                if p.port == 255 {
+                    if let Message::Introduce { ref node, ref network_id, .. } = p.payload.msg {
+                        // new session?
+                        let idx = self.resolve_port(network_id);
+                        if let Some(ref shard) = *self.shards[idx as usize].read().unwrap() {
+                            if let Ok(addr) = shard.open_session(Arc::new(node.clone()), self.my_node.clone(), Some(&p.payload)) {
+                                info!("New contact opened from {}", addr);
+                                let lock = self.socket_mux.lock();
+                                self.tx.fetch_add(shard.send_packets(&addr, &self.socket.as_ref().unwrap()) as usize, Relaxed);
+                            }
+                        }
+                        else {
+                            debug!("Invalid network ID received in join for network: {}", network_id);
+                        }
+                    }
+                    else {
+                        debug!("Received non-introduce first packet on generic port: {:?}", p);
+                    }
+                }
+                else if let Some(ref shard) = *self.shards[p.port as usize].read().unwrap() {
+                    let mut context = NetworkContext::new(&self.rk, &self.config);
+
+                    {
+                        shard.process_packet(&p.payload, &addr, &mut context);
+                        let lock = self.socket_mux.lock();
+                        self.tx.fetch_add(shard.send_packets(&addr, &self.socket.as_ref().unwrap()) as usize, Relaxed);
+                    }
+
+                    // process data in the context: do we have anything to import?
+                    // NOTE: Order is important here! We want the data to be imported in order or else it is much harder to construct
+                    while let Some(txn) = context.import_txns.pop_front() {
+                        let unique = self.work_queue.submit(WorkItem::NewTxn(txn));
+                        // TODO: handle if it was a duplicate?
+                    }
+                    
+                    while let Some(block) = context.import_blocks.pop_front() {
+                        let unique = self.work_queue.submit(WorkItem::NewBlock(block));
+                    }
+
+                    // finally, any new nodes to connect to?
+                    for (network_id, peers) in context.connect_peers.iter() {
+                        for peer in peers {
+                            // for right now, only save for nodes of open networks
+                            let port = self.resolve_port(network_id) as usize;
+                            if port != 255 {
+                                // add to the connect queue of the network
+                                // a successful connection will result in the node being added to the permanent db
+                                let shard = self.shards[port].read().unwrap();
+                                if let Some(ref sh) = *shard {
+
+                                    sh.add_connect_queue(Arc::new(peer.clone()));
+                                }
+                            }
+                        }
+                    }
+                }
+                else {
+                    // bogus network ID received, ignore
+                    // TODO: A good debug print here might also print the packet
+                    debug!("Received unregistered network port packet: {}", p.port);
+                }
+            }
 
             if self.done.load(Relaxed) {
                 // stop receiving packets
                 break;
             }
         };
-    }
-
-    // Inner part of the `recv_loop` responsible for handing completed work events.
-    fn process_work_results(&self) {
-        use self::WorkResult::*;
-        let mut results = self.results.lock().unwrap();
-        while let Some(result) = results.pop_front() {
-            match result { //TODO: fill these out with the appropriate responses
-                AddedNewBlock(hash) => {},
-                DuplicateBlock(hash) => {},
-                ErrorAddingBlock(hash, e) => {},
-                AddedNewTxn(hash) => {},
-                DuplicateTxn(hash) => {},
-                ErrorAddingTxn(hash, e) => {}
-            }
-        }
-    }
-
-    /// Inner part of the `recv_loop` responsible for receiving packets and handing their contents.
-    fn receive_packets(&self, buf: &mut [u8], recv_buf: &mut HashMap<SocketAddr, Vec<u8>>) {
-        let mut cont = true;
-
-        let mut received_packet: Option<(RawPacket, SocketAddr)> = None;
-
-        match self.socket.as_ref().unwrap().recv_from(buf) {
-            Ok((n, addr)) => {
-
-                let mut remove = false;
-
-                let recv_len = recv_buf.len();
-
-                let mut newb: Option<(SocketAddr, Vec<u8>)> = None;
-                if let Some(b) = recv_buf.get_mut(&addr) {
-                    if b.len() > MAX_PACKET_SIZE {
-                        // cannot accept more packet data from this client
-                        warn!("Client exceeded max packet size, dumping: {:?}", addr);
-                        remove = true;
-                        cont = false;
-                    }
-                    // use memory
-                    b.extend_from_slice(&buf[..n]);
-                }
-                else {
-                    // new peer, can we take more?
-                    if recv_len <= self.config.max_nodes as usize {
-                        // allocate
-                        let mut v: Vec<u8> = Vec::with_capacity(MAX_PACKET_SIZE);
-                        v.extend_from_slice(&buf[..n]);
-                        newb = Some((addr, v));
-                    }
-                    else {
-                        return;
-                    }
-                }
-
-                if remove { //TODO: Check that remove and cont checks are in the correct places, possibly remove booleans and just insert the code in place.
-                    recv_buf.remove(&addr);
-                }
-                if !cont {
-                    return;
-                }
-
-                self.rx.fetch_add(n, Relaxed);
-
-                if let Some((addr, v)) = newb {
-                    recv_buf.insert(addr, v);
-                }
-
-                // have we received all the data yet?
-                let b = recv_buf.get_mut(&addr).unwrap();
-                let len: usize = deserialize::<u32>(&b[0..4]).unwrap() as usize;
-
-                if b.len() - 4 >= len {
-                    // we have a full packet, move it into our packet list
-                    match deserialize(&b[4..]) {
-                        Ok(p) => received_packet = Some((p, addr)),
-                        Err(e) => {
-                            warn!("Packet decode failed from {}: {}", addr, e);
-                            warn!("Expected size: {}", len);
-                            // TODO: Note misbehaviors/errors
-                        }
-                    };
-
-                    b.clear();
-                }
-            },
-            Err(err) => {}
-        }
-
-        if let Some((p, addr)) = received_packet {
-            //debug!("Got packet: {:?}, {:?}", p, addr);
-            if p.port == 255 {
-                if let Message::Introduce { ref node, ref network_id, .. } = p.payload.msg {
-                    // new session?
-                    let idx = self.resolve_port(network_id);
-                    if let Some(ref shard) = *self.shards[idx as usize].read().unwrap() {
-                        if let Ok(addr) = shard.open_session(Arc::new(node.clone()), self.my_node.clone(), Some(&p.payload)) {
-                            info!("New contact opened from {}", addr);
-                            let lock = self.socket_mux.lock();
-                            self.tx.fetch_add(shard.send_packets(&addr, &self.socket.as_ref().unwrap()) as usize, Relaxed);
-                        }
-                    }
-                    else {
-                        debug!("Invalid network ID received in join for network: {}", network_id);
-                    }
-                }
-                else {
-                    debug!("Received non-introduce first packet on generic port: {:?}", p);
-                }
-            }
-            else if let Some(ref shard) = *self.shards[p.port as usize].read().unwrap() {
-                let mut context = NetworkContext::new(&self.rk, &self.config);
-
-                {
-                    shard.process_packet(&p.payload, &addr, &mut context);
-                    let lock = self.socket_mux.lock();
-                    self.tx.fetch_add(shard.send_packets(&addr, &self.socket.as_ref().unwrap()) as usize, Relaxed);
-                }
-
-                // process data in the context: do we have anything to import?
-                // NOTE: Order is important here! We want the data to be imported in order or else it is much harder to construct
-                while let Some(txn) = context.import_txns.pop_front() {
-                    let unique = self.work_queue.submit(WorkItem::NewTxn(txn));
-                    // TODO: handle if it was a duplicate?
-                }
-                
-                while let Some(block) = context.import_blocks.pop_front() {
-                    let unique = self.work_queue.submit(WorkItem::NewBlock(block));
-                }
-
-                // finally, any new nodes to connect to?
-                for (network_id, peers) in context.connect_peers.iter() {
-                    for peer in peers {
-                        // for right now, only save for nodes of open networks
-                        let port = self.resolve_port(network_id) as usize;
-                        if port != 255 {
-                            // add to the connect queue of the network
-                            // a successful connection will result in the node being added to the permanent db
-                            let shard = self.shards[port].read().unwrap();
-                            if let Some(ref sh) = *shard {
-
-                                sh.add_connect_queue(Arc::new(peer.clone()));
-                            }
-                        }
-                    }
-                }
-            }
-            else {
-                // bogus network ID received, ignore
-                // TODO: A good debug print here might also print the packet
-                debug!("Received unregistered network port packet: {}", p.port);
-            }
-        }
     }
 
     /// Spawns the threads and puts the networking into a full working state
