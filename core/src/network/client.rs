@@ -19,7 +19,7 @@ use network::shard::{ShardInfo};
 use primitives::{Block, Txn, U256, EventListener};
 use record_keeper::{RecordKeeper};
 use signer::generate_private_key;
-use work_queue::{WorkItem, WorkQueue, WorkResult};
+use work_queue::{WorkItem, WorkQueue, WorkResult, Task, WorkResultType, MetaData};
 
 
 /// Defines the kind of interaction this node will take with a particular shard
@@ -212,8 +212,9 @@ pub struct Client {
 impl EventListener<WorkResult> for Client {
     /// Add an event to the queue of finished things such that it can be handled by the main loop at
     /// a later point.
-    fn notify(&self, time: u64, result: &WorkResult) {
-        use self::WorkResult::*;
+    fn notify(&self, time: u64, r: &WorkResult) {
+        use self::WorkResultType::*;
+        let &WorkResult(ref result, ref meta) = r; //TODO: use metadata
         match result { //TODO: fill these out with the appropriate responses
             &AddedNewBlock(ref hash) => {},
             &DuplicateBlock(ref hash) => {},
@@ -461,12 +462,16 @@ impl Client {
                     // process data in the context: do we have anything to import?
                     // NOTE: Order is important here! We want the data to be imported in order or else it is much harder to construct
                     while let Some(txn) = context.import_txns.pop_front() {
-                        let unique = self.work_queue.submit(WorkItem::NewTxn(txn));
+                        let unique = self.work_queue.submit(
+                            WorkItem(Task::NewTxn(txn), None)
+                        );
                         // TODO: handle if it was a duplicate?
                     }
                     
                     while let Some(block) = context.import_blocks.pop_front() {
-                        let unique = self.work_queue.submit(WorkItem::NewBlock(block));
+                        let unique = self.work_queue.submit(
+                            WorkItem(Task::NewBlock(block), None)
+                        );
                     }
 
                     // finally, any new nodes to connect to?

@@ -1,24 +1,35 @@
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::collections::VecDeque;
-use std::thread;
 use primitives::{U256, Txn, Block, Event, EventListener, ListenerPool};
 use record_keeper;
 use record_keeper::{RecordKeeper};
+use std::any::Any;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
 use time::Time;
+use std::fmt;
 
 /// An individual task to be completed by the `WorkQueue`.
 #[derive(PartialEq, Eq)]
-pub enum WorkItem {
+pub enum Task {
     NewBlock(Block),
     NewTxn(Txn)
 }
-use self::WorkItem::*;
+use self::Task::*;
+
+pub type MetaData = Option<Box<Any + Send + Sync>>;
+
+/// A task tagged with some meta data which will be returned when the task is completed. Note that
+/// the meta data is only passed on by the work queue and is not used in processing.
+pub struct WorkItem(pub Task, pub MetaData);
+impl PartialEq for WorkItem {
+    fn eq(&self, other: &Self) -> bool { self.0 == other.0 }
+} impl Eq for WorkItem {}
 
 /// Work results define the completion status of a "finished" task. It is the result may be a
 /// success message or it may be passing on the error it ran into.
-#[derive(Clone, Debug)]
-pub enum WorkResult {
+#[derive(Debug)]
+pub enum WorkResultType {
     AddedNewBlock(U256),
     DuplicateBlock(U256),
     ErrorAddingBlock(U256, record_keeper::Error),
@@ -27,9 +38,16 @@ pub enum WorkResult {
     DuplicateTxn(U256),
     ErrorAddingTxn(U256, record_keeper::Error)
 }
-impl Event for WorkResult {}
-use self::WorkResult::*;
+use self::WorkResultType::*;
 
+/// Includes the type of work result and also any meta data which was attached to the task,
+pub struct WorkResult(pub WorkResultType, pub MetaData);
+impl Event for WorkResult {}
+impl fmt::Debug for WorkResult {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
 
 /// The `WorkQueue` is designed as an overlay for the RecordKeeper (and possibly more) that allows
 /// functions to be called on a separate thread from communication and incoming information which
@@ -81,27 +99,29 @@ impl WorkQueue {
     /// marked as false.
     fn main_loop(&self) {
         while self.run.load(Ordering::Relaxed) {
-            let task = {
+            let next = {
                 let mut queue = self.queue.lock().unwrap();
                 queue.pop_front()
             };
 
-            if task.is_none() {
+            if next.is_none() {
                 thread::yield_now();
                 continue;
             }
-            
-            let result = match task.unwrap() {
+
+            let WorkItem(task, metadata) = next.unwrap();
+            let result = WorkResult( match task {
                 NewBlock(block) => self.process_block(block),
                 NewTxn(txn) => self.process_txn(txn)
-            };
+            }, metadata);
+
             let time = Time::current().millis() as u64;
             self.listeners.lock().unwrap().notify(time, &result);
         }
     }
 
     /// Internal function to attempt adding a block to the system. Will return the work result.
-    fn process_block(&self, block: Block) -> WorkResult {
+    fn process_block(&self, block: Block) -> WorkResultType {
         let hash = block.calculate_hash();
         match self.rk.add_block(&block) {
             Ok(true) => AddedNewBlock(hash),
@@ -111,7 +131,7 @@ impl WorkQueue {
     }
 
     /// Internal function to attempt adding a txn to the system. Will return the work result.
-    fn process_txn(&self, txn: Txn) -> WorkResult {
+    fn process_txn(&self, txn: Txn) -> WorkResultType {
         let hash = txn.calculate_hash();
         match self.rk.add_pending_txn(txn) {
             Ok(true) => AddedNewTxn(hash),
