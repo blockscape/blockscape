@@ -17,7 +17,7 @@ pub enum Task {
 }
 use self::Task::*;
 
-pub type MetaData = Option<Arc<Any + Send + Sync>>;
+pub type MetaData = Option<Box<Any + Send + Sync>>;
 
 /// A task tagged with some meta data which will be returned when the task is completed. Note that
 /// the meta data is only passed on by the work queue and is not used in processing.
@@ -28,7 +28,7 @@ impl PartialEq for WorkItem {
 
 /// Work results define the completion status of a "finished" task. It is the result may be a
 /// success message or it may be passing on the error it ran into.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum WorkResultType {
     AddedNewBlock(U256),
     DuplicateBlock(U256),
@@ -41,7 +41,6 @@ pub enum WorkResultType {
 use self::WorkResultType::*;
 
 /// Includes the type of work result and also any meta data which was attached to the task,
-#[derive(Clone)]
 pub struct WorkResult(pub WorkResultType, pub MetaData);
 impl Event for WorkResult {}
 impl fmt::Debug for WorkResult {
