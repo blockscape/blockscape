@@ -133,7 +133,7 @@ impl WorkQueue {
     /// Internal function to attempt adding a txn to the system. Will return the work result.
     fn process_txn(&self, txn: Txn) -> WorkResultType {
         let hash = txn.calculate_hash();
-        match self.rk.add_pending_txn(txn) {
+        match self.rk.add_pending_txn(&txn) {
             Ok(true) => AddedNewTxn(hash),
             Ok(false) => DuplicateTxn(hash),
             Err(e) => ErrorAddingTxn(hash, e)

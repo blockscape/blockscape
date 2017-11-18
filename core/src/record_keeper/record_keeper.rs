@@ -100,7 +100,7 @@ impl RecordKeeper {
     /// Add a new transaction to the pool of pending transactions after validating it. Returns true
     /// if it was added successfully to pending transactions, and returns false if it is already in
     /// the list of pending transactions.
-    pub fn add_pending_txn(&self, txn: Txn) -> Result<bool, Error> {
+    pub fn add_pending_txn(&self, txn: &Txn) -> Result<bool, Error> {
         let hash = txn.calculate_hash();
 
         let mut txns = self.pending_txns.write().unwrap();
@@ -110,8 +110,8 @@ impl RecordKeeper {
             return Ok(false);
         }
 
-        self.is_valid_txn_given_lock(&db, &txn)?;
-        txns.insert(hash, txn);
+        self.is_valid_txn_given_lock(&db, txn)?;
+        txns.insert(hash, txn.clone());
         Ok(true)
     }
 
