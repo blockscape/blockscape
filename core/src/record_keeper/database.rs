@@ -195,6 +195,39 @@ impl Database {
         k.extend_from_slice(&buf); k
     }
 
+    /// Will find the current head of the blockchain. This uses the last known head to find the
+    /// current one by using its block height and searching for ones of a greater height.
+    /// If two blocks have the same height, the one with the earliest timestamp will be preferred.
+    /// Note: this will need to be updated to support sharding.
+    pub fn find_chain_head(&self, last_head: U256) -> Result<U256, Error> {
+        let mut height = self.get_block_height(&last_head)?;
+        let mut blocks: HashSet<U256> = self.get_blocks_of_height(height)?;
+        loop {
+            let result = self.get_blocks_of_height(height + 1);
+            match result {
+                Ok(b) => blocks = b,
+                Err(e) => match e {
+                    Error::NotFound(..) => break, // End loop when we reach a beyond what we know
+                    e @ _ => return Err(e)
+                }
+            }
+            height += 1;
+        }
+        
+        // Blocks is now the list of highest known blocks, determine which of them is the true head.
+        assert!(blocks.len() >= 1); // make sure I did not do something stupid...
+        let mut block = &last_head;
+        let mut best = (-1i64) as u64; //u64 max
+        for b in &blocks {
+            let cur = self.get_block_header(b)?.timestamp.millis() as u64;
+            if cur < best {
+                best = cur;
+                block = b;
+            }
+        }
+        Ok(*block)
+    }
+
     /// Mutate the stored **network state** and return a contra mutation to be able to undo what was
     /// done. Note that changes to either blockchain state or gamestate must occur through other
     /// functions.
