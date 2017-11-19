@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::{Read,Write};
 use std::str::FromStr;
 
-use blockscape_core::env::get_storage_dir;
+use blockscape_core::env::*;
 use blockscape_core::network::client::ClientConfig;
 use blockscape_core::network::node::NodeEndpoint;
 use blockscape_core::primitives::*;
@@ -123,20 +123,12 @@ pub fn make_genesis() -> (Block, Vec<Txn>) {
 /// # Panics
 /// If it cannot save a newly created public key, or if the private key loaded is invalid
 pub fn make_network_config(cmdline: &ArgMatches) -> ClientConfig {
-    let mut pub_path = get_storage_dir().unwrap();
-
-    pub_path.push("keys");
-    pub_path.set_file_name("node.pem");
 
     let key: PKey;
 
-    if let Ok(mut f) = File::open(pub_path.as_path()) {
-        let mut pub_data: Vec<u8> = Vec::new();
-        f.read_to_end(&mut pub_data).expect("Could not read public key file!");
-
-        key = PKey::private_key_from_pem(&pub_data).expect("Could not load node private key from file! Is it corrupted?");
-
-        info!("Loaded node keyfile from file: {:?}", pub_path);
+    if let Some(mut k) = load_key("node") {
+        key = k;
+        info!("Loaded node keyfile from file.");
     }
     else {
         info!("Generate node keyfile...");
@@ -144,9 +136,9 @@ pub fn make_network_config(cmdline: &ArgMatches) -> ClientConfig {
         key = generate_private_key();
 
         // save the key (fail if not saved)
-        let mut f = File::create(pub_path.as_path()).expect("Could not create generated node keyfile");
-        f.write_all(&key.private_key_to_pem().expect("Could not export generated keyfile"))
-            .expect("Could not write private key file!");
+        if !save_key("node", &key) {
+            panic!("Could not save node private key file.");
+        }
     }
 
     let mut config = ClientConfig::from_key(key);
