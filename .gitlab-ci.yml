@@ -7,19 +7,22 @@ variables:
   DOCKER_HOST: tcp://localhost:2375
 
 
+before_script:
+  - export CARGO_HOME=`pwd`/.cargo
+
 services:
   - dcr.buyme360.com/devops/docker:dind
 
 cache:
-  untracked: true
+  #untracked: true
   paths:
-    # need this or else untracked files will not be regarded
-    - /usr/local/cargo
+    - .cargo
+    - target
+    
 
 build:
   stage: build
   script:
-    - echo "Home dir is $HOME"
     - cargo build
     - cargo build --release
   artifacts:
