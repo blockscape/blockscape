@@ -19,6 +19,7 @@ cache:
 build:
   stage: build
   script:
+    - echo "Home dir is $HOME"
     - cargo build
     - cargo build --release
   artifacts:
