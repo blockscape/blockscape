@@ -17,7 +17,7 @@ pub enum Task {
 }
 use self::Task::*;
 
-pub type MetaData = Option<Box<Any + Send + Sync>>;
+pub type MetaData = Option<Box<Any + Send + Sync + 'static>>;
 
 /// A task tagged with some meta data which will be returned when the task is completed. Note that
 /// the meta data is only passed on by the work queue and is not used in processing.

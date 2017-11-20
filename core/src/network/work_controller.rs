@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 use std::sync::{Arc, Mutex};
+use std::any::Any;
 
 use primitives::EventListener;
 
@@ -101,7 +102,7 @@ impl NetworkWorkController {
         let a = Arc::new(Mutex::new(cont));
 
         /// register itself to the work queue
-        wq.register_listener(a.clone());
+        wq.register_listener(Arc::clone(&a) as Arc<EventListener<WorkResult>>);
 
         a
     }
@@ -232,74 +233,82 @@ impl EventListener<WorkResult> for NetworkWorkController {
         use self::WorkResultType::*;
         let &WorkResult(ref result, ref meta) = r; //TODO: use metadata
 
-        if let Some(tag) = meta.map(|m| m.downcast::<NetworkWorkRequest>()).unwrap_or(None) {
-            match result { //TODO: fill these out with the appropriate responses
-                &AddedNewBlock(ref hash) => {
-                    if tag.item == 0 {
-                        // request the next batch
-                        if let Some(targeth) = self.active_batches.get(tag.batch) {
-                            self.last_batch += 1;
-                            
-                            self.send_ring.push(Packet {
-                                seq: self.last_batch,
-                                msg: Message::SyncBlocks {
-                                    last_block_hash: hash.clone(),
-                                    target_block_hash: targeth.clone()
-                                }
-                            });
-                        }
-                    }
-                },
-                &DuplicateBlock(ref hash) => {
-                    // here we treat it like success all the same
-                    if tag.item == 0 {
-                        // request the next batch
-                        if let Some(targeth) = self.active_batches.get(tag.batch) {
-                            self.last_batch += 1;
-                            
-                            self.send_ring.push(Packet {
-                                seq: self.last_batch,
-                                msg: Message::SyncBlocks {
-                                    last_block_hash: hash.clone(),
-                                    target_block_hash: targeth.clone()
-                                }
-                            });
-                        }
-                    }
-                },
-                &ErrorAddingBlock(ref hash, ref e) => {
-                    // add new targets?
-                    if let &Error::NotFound(prefix, hash) = e {
-                        if prefix != BLOCKCHAIN_POSTFIX {
-                            // TODO: Possibly panic
-                            return;
-                        }
+        let tag = {
+            let t = {
+                if let &Some(m) = meta {
+                    (&m as &Any).downcast_ref::<NetworkWorkRequest>()
+                } else {None}
+            };
+            if t.is_none() { return; }
+            t.unwrap()
+        };
 
-                        self.targets.insert(WorkTarget::new(deserialize(&hash).unwrap()));
+        match result { //TODO: fill these out with the appropriate responses
+            &AddedNewBlock(ref hash) => {
+                if tag.item == 0 {
+                    // request the next batch
+                    if let Some(targeth) = self.active_batches.get(&tag.batch) {
+                        self.last_batch += 1;
+                        
+                        self.send_ring.push(Packet {
+                            seq: self.last_batch,
+                            msg: Message::SyncBlocks {
+                                last_block_hash: hash.clone(),
+                                target_block_hash: targeth.clone()
+                            }
+                        });
                     }
-                    else if let &Error::Logic(err) = e {
-                        // TODO: Figure out if action needs to be taken to the submitting node
+                }
+            },
+            &DuplicateBlock(ref hash) => {
+                // here we treat it like success all the same
+                if tag.item == 0 {
+                    // request the next batch
+                    if let Some(targeth) = self.active_batches.get(&tag.batch) {
+                        self.last_batch += 1;
+                        
+                        self.send_ring.push(Packet {
+                            seq: self.last_batch,
+                            msg: Message::SyncBlocks {
+                                last_block_hash: hash.clone(),
+                                target_block_hash: targeth.clone()
+                            }
+                        });
                     }
-                },
-                &AddedNewTxn(ref hash) => {
-                    // right now do not care except error
-                },
-                &DuplicateTxn(ref hash) => {
-                    // right now do not care except error
-                },
-                &ErrorAddingTxn(ref hash, ref e) => {
-                    // add new targets?
-                    if let &Error::NotFound(prefix, hash) = e {
-                        if prefix != BLOCKCHAIN_POSTFIX {
-                            // TODO: Possibly panic
-                            return;
-                        }
+                }
+            },
+            &ErrorAddingBlock(ref hash, ref e) => {
+                // add new targets?
+                if let &Error::NotFound(prefix, hash) = e {
+                    if prefix != BLOCKCHAIN_POSTFIX {
+                        // TODO: Possibly panic
+                        return;
+                    }
 
-                        self.targets.insert(WorkTarget::new(deserialize(&hash).unwrap()));
+                    self.targets.insert(WorkTarget::new(deserialize(&hash).unwrap()));
+                }
+                else if let &Error::Logic(err) = e {
+                    // TODO: Figure out if action needs to be taken to the submitting node
+                }
+            },
+            &AddedNewTxn(ref hash) => {
+                // right now do not care except error
+            },
+            &DuplicateTxn(ref hash) => {
+                // right now do not care except error
+            },
+            &ErrorAddingTxn(ref hash, ref e) => {
+                // add new targets?
+                if let &Error::NotFound(prefix, hash) = e {
+                    if prefix != BLOCKCHAIN_POSTFIX {
+                        // TODO: Possibly panic
+                        return;
                     }
-                    else if let &Error::Logic(err) = e {
-                        // TODO: Figure out if action needs to be taken to the submitting node
-                    }
+
+                    self.targets.insert(WorkTarget::new(deserialize(&hash).unwrap()));
+                }
+                else if let &Error::Logic(err) = e {
+                    // TODO: Figure out if action needs to be taken to the submitting node
                 }
             }
         }

@@ -176,7 +176,7 @@ pub struct Client {
     /// The record keeper/database
     rk: Arc<RecordKeeper>,
 
-    work_controller: Mutex<NetworkWorkController>,
+    work_controller: Arc<Mutex<NetworkWorkController>>,
 
     /// Data structures associated with shard-specific information
     shards: [RwLock<Option<ShardInfo>>; 255],
@@ -208,8 +208,8 @@ impl Client {
     pub fn new(rk: Arc<RecordKeeper>, wq: Arc<WorkQueue>, config: ClientConfig) -> Arc<Client> {
         
         let mut client = Client {
-            rk,
-            work_controller: Mutex::new(NetworkWorkController::new(rk.clone(), wq)),
+            rk: Arc::clone(&rk),
+            work_controller: NetworkWorkController::new(rk, wq),
             shards: init_array!(RwLock<Option<ShardInfo>>, 255, RwLock::new(None)),
             num_shards: 0,
             my_node: Arc::new(Node {

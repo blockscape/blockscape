@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Weak, Mutex};
 
 /// An `Event` is an implementation defined type which will be used when processing the game to
 /// determine how the game computation should be impacted. The final implementation should probably
@@ -17,6 +17,16 @@ pub type RawEvent = Vec<u8>;
 pub trait EventListener<E: Event>: Send + Sync {
     /// Notify will be called when a new event comes in.
     fn notify(&self, tick: u64, event: &E);
+}
+
+impl<E, L> EventListener<E> for Mutex<L>
+where
+    E: Event,
+    L: EventListener<E> + ?Sized
+{
+    fn notify(&self, tick: u64, event: &E) {
+        self.lock().unwrap().notify(tick, event);
+    }
 }
 
 /// A set of listeners who are ready to receive events. This is designed to be a simple way to
