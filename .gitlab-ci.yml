@@ -8,7 +8,7 @@ variables:
 
 
 before_script:
-  - export CARGO_HOME=`pwd`/.cargo
+  - export CARGO_HOME=$CI_PROJECT_DIR/cargo
 
 services:
   - dcr.buyme360.com/devops/docker:dind
@@ -16,8 +16,8 @@ services:
 cache:
   #untracked: true
   paths:
-    - .cargo
-    - target
+    - cargo/
+    - target/
     
 
 build:
