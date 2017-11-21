@@ -65,8 +65,7 @@ impl PartialEq for WorkTarget {
 
 impl Eq for WorkTarget {}
 
-/// Organizes and queues up work efficiently from the network for WorkQueue
-pub struct NetworkWorkController {
+struct NetworkWorkControllerData {
     /// The record keeper/database
     rk: Arc<RecordKeeper>,
 
@@ -86,20 +85,23 @@ pub struct NetworkWorkController {
     send_ring: Vec<Packet>
 }
 
+/// Organizes and queues up work efficiently from the network for WorkQueue
+pub struct NetworkWorkController(Mutex<NetworkWorkControllerData>);
+
 impl NetworkWorkController {
-    pub fn new(rk: Arc<RecordKeeper>, wq: Arc<WorkQueue>) -> Arc<Mutex<NetworkWorkController>> {
-        let cont = NetworkWorkController {
+    pub fn new(rk: Arc<RecordKeeper>, wq: Arc<WorkQueue>) -> Arc<NetworkWorkController> {
+        let mut cont = NetworkWorkController(Mutex::new(NetworkWorkControllerData {
             rk: rk,
             work_queue: wq.clone(),
             targets: HashSet::new(),
             active_batches: HashMap::new(),
             last_batch: 0,
             send_ring: Vec::new()
-        };
+        }));
 
-        cont.targets.insert(WorkTarget::new(U256_ZERO));
+        cont.0.lock().unwrap().targets.insert(WorkTarget::new(U256_ZERO));
 
-        let a = Arc::new(Mutex::new(cont));
+        let a = Arc::new(cont);
 
         /// register itself to the work queue
         wq.register_listener(Arc::clone(&a) as Arc<EventListener<WorkResult>>);
@@ -109,22 +111,24 @@ impl NetworkWorkController {
 
     /// Process a block which has been received from the network. Return whether or not it would make sense
     /// to retransmit due to sufficient validation.
-    pub fn import_block(&mut self, block: &Block) -> bool {
+    pub fn import_block(&self, block: &Block) -> bool {
         let h = block.calculate_hash();
 
-        if self.targets.contains(&WorkTarget::new(h)) {
+        let mut s = self.0.lock().unwrap();
+
+        if s.targets.contains(&WorkTarget::new(h)) {
             return false;
         }
 
         let prev_target = WorkTarget::new(block.prev);
-        if self.targets.contains(&prev_target) {
+        if s.targets.contains(&prev_target) {
             // augment our current target
             let mut wt = WorkTarget::new(h);
 
-            self.targets.remove(&prev_target);
-            self.targets.insert(wt);
+            s.targets.remove(&prev_target);
+            s.targets.insert(wt);
 
-            for v in self.active_batches.values_mut() {
+            for v in s.active_batches.values_mut() {
                 if v == prev_target.get_target() {
                     *v = h;
                 }
@@ -134,7 +138,7 @@ impl NetworkWorkController {
         }
 
         // try to attach to the chain
-        let res = self.rk.add_block(&block);
+        let res = s.rk.add_block(&block);
         if let Ok(added) = res {
             added
         }
@@ -147,13 +151,17 @@ impl NetworkWorkController {
                 }
 
                 // need to resolvetxns.len() + 
-                self.targets.insert(WorkTarget::new(h));
+                s.targets.insert(WorkTarget::new(h));
  
-                self.last_batch += 1;                
-                self.send_ring.push(Packet {
-                    seq: self.last_batch,
+                s.last_batch += 1; 
+
+                let seq = s.last_batch;
+                let cur_block_hash = s.rk.get_current_block_hash();
+
+                s.send_ring.push(Packet {
+                    seq: seq,
                     msg: Message::SyncBlocks {
-                        last_block_hash: self.rk.get_current_block_hash(),
+                        last_block_hash: cur_block_hash,
                         target_block_hash: h
                     }
                 });
@@ -166,9 +174,12 @@ impl NetworkWorkController {
         }
     }
 
-    pub fn import_txn(&mut self, txn: &Txn) -> bool {
+    pub fn import_txn(&self, txn: &Txn) -> bool {
         // try to attach to the chain
-        let res = self.rk.add_pending_txn(txn);
+
+        let s = self.0.lock().unwrap();
+
+        let res = s.rk.add_pending_txn(txn);
         if let Ok(added) = res {
             added
         }
@@ -201,9 +212,12 @@ impl NetworkWorkController {
         }
     }
 
-    pub fn import_bulk(&mut self, seq: u32, provider: &U160, blocks: Vec<Block>, txns: Vec<Txn>) {
+    pub fn import_bulk(&self, seq: u32, provider: &U160, mut blocks: Vec<Block>, mut txns: Vec<Txn>) {
+
+        let mut s = self.0.lock().unwrap();
+
         while let Some(txn) = txns.pop() {
-            self.work_queue.submit(WorkItem(
+            s.work_queue.submit(WorkItem(
                 Task::NewTxn(txn),
                 Some(Box::new(NetworkWorkRequest {
                     batch: seq,
@@ -214,7 +228,7 @@ impl NetworkWorkController {
         }
 
         while let Some(block) = blocks.pop() {
-            self.work_queue.submit(WorkItem(
+            s.work_queue.submit(WorkItem(
                 Task::NewBlock(block),
                 Some(Box::new(NetworkWorkRequest {
                     batch: seq,
@@ -231,84 +245,89 @@ impl EventListener<WorkResult> for NetworkWorkController {
     /// a later point.
     fn notify(&self, time: u64, r: &WorkResult) {
         use self::WorkResultType::*;
+
+        let mut s = self.0.lock().unwrap();
+
         let &WorkResult(ref result, ref meta) = r; //TODO: use metadata
 
-        let tag = {
-            let t = {
-                if let &Some(m) = meta {
-                    (&m as &Any).downcast_ref::<NetworkWorkRequest>()
-                } else {None}
-            };
-            if t.is_none() { return; }
-            t.unwrap()
-        };
+        /*if let tag = meta.map(|m| (m as Box<Any>).downcast_ref::<NetworkWorkRequest>()).unwrap_or(None) {
+            
+        }*/
 
-        match result { //TODO: fill these out with the appropriate responses
-            &AddedNewBlock(ref hash) => {
-                if tag.item == 0 {
-                    // request the next batch
-                    if let Some(targeth) = self.active_batches.get(&tag.batch) {
-                        self.last_batch += 1;
-                        
-                        self.send_ring.push(Packet {
-                            seq: self.last_batch,
-                            msg: Message::SyncBlocks {
-                                last_block_hash: hash.clone(),
-                                target_block_hash: targeth.clone()
+        if meta.is_some() {
+            let tmp = &meta.unwrap() as &Any;
+
+            let tagr = tmp.downcast_ref::<NetworkWorkRequest>();
+
+            if let Some(ref tag) = tagr {
+                match result { //TODO: fill these out with the appropriate responses
+                    &AddedNewBlock(ref hash) => {
+                        if tag.item == 0 {
+                            // request the next batch
+                            if let Some(targeth) = s.active_batches.get(&tag.batch) {
+                                s.last_batch += 1;
+                                
+                                s.send_ring.push(Packet {
+                                    seq: s.last_batch,
+                                    msg: Message::SyncBlocks {
+                                        last_block_hash: hash.clone(),
+                                        target_block_hash: targeth.clone()
+                                    }
+                                });
                             }
-                        });
-                    }
-                }
-            },
-            &DuplicateBlock(ref hash) => {
-                // here we treat it like success all the same
-                if tag.item == 0 {
-                    // request the next batch
-                    if let Some(targeth) = self.active_batches.get(&tag.batch) {
-                        self.last_batch += 1;
-                        
-                        self.send_ring.push(Packet {
-                            seq: self.last_batch,
-                            msg: Message::SyncBlocks {
-                                last_block_hash: hash.clone(),
-                                target_block_hash: targeth.clone()
+                        }
+                    },
+                    &DuplicateBlock(ref hash) => {
+                        // here we treat it like success all the same
+                        if tag.item == 0 {
+                            // request the next batch
+                            if let Some(targeth) = s.active_batches.get(&tag.batch) {
+                                s.last_batch += 1;
+                                
+                                s.send_ring.push(Packet {
+                                    seq: s.last_batch,
+                                    msg: Message::SyncBlocks {
+                                        last_block_hash: hash.clone(),
+                                        target_block_hash: targeth.clone()
+                                    }
+                                });
                             }
-                        });
-                    }
-                }
-            },
-            &ErrorAddingBlock(ref hash, ref e) => {
-                // add new targets?
-                if let &Error::NotFound(prefix, hash) = e {
-                    if prefix != BLOCKCHAIN_POSTFIX {
-                        // TODO: Possibly panic
-                        return;
-                    }
+                        }
+                    },
+                    &ErrorAddingBlock(ref hash, ref e) => {
+                        // add new targets?
+                        if let &Error::NotFound(ref prefix, ref hash) = e {
+                            if prefix != &BLOCKCHAIN_POSTFIX {
+                                // TODO: Possibly panic
+                                return;
+                            }
 
-                    self.targets.insert(WorkTarget::new(deserialize(&hash).unwrap()));
-                }
-                else if let &Error::Logic(err) = e {
-                    // TODO: Figure out if action needs to be taken to the submitting node
-                }
-            },
-            &AddedNewTxn(ref hash) => {
-                // right now do not care except error
-            },
-            &DuplicateTxn(ref hash) => {
-                // right now do not care except error
-            },
-            &ErrorAddingTxn(ref hash, ref e) => {
-                // add new targets?
-                if let &Error::NotFound(prefix, hash) = e {
-                    if prefix != BLOCKCHAIN_POSTFIX {
-                        // TODO: Possibly panic
-                        return;
-                    }
+                            s.targets.insert(WorkTarget::new(deserialize(&hash).unwrap()));
+                        }
+                        else if let &Error::Logic(ref err) = e {
+                            // TODO: Figure out if action needs to be taken to the submitting node
+                        }
+                    },
+                    &AddedNewTxn(ref hash) => {
+                        // right now do not care except error
+                    },
+                    &DuplicateTxn(ref hash) => {
+                        // right now do not care except error
+                    },
+                    &ErrorAddingTxn(ref hash, ref e) => {
+                        // add new targets?
+                        if let &Error::NotFound(ref prefix, ref hash) = e {
+                            if prefix != &BLOCKCHAIN_POSTFIX {
+                                // TODO: Possibly panic
+                                return;
+                            }
 
-                    self.targets.insert(WorkTarget::new(deserialize(&hash).unwrap()));
-                }
-                else if let &Error::Logic(err) = e {
-                    // TODO: Figure out if action needs to be taken to the submitting node
+                            s.targets.insert(WorkTarget::new(deserialize(&hash).unwrap()));
+                        }
+                        else if let &Error::Logic(ref err) = e {
+                            // TODO: Figure out if action needs to be taken to the submitting node
+                        }
+                    }
                 }
             }
         }

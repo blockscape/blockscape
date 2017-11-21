@@ -133,14 +133,14 @@ pub struct NetworkContext<'a> {
     /// The configuation associated with this client
     pub config: &'a ClientConfig,
 
-    pub work_controller: &'a Mutex<NetworkWorkController>,
+    pub work_controller: &'a Arc<NetworkWorkController>,
 
     /// Nodes which can be connected to which were recently supplied
     pub connect_peers: HashMap<U256, Vec<Node>>,
 }
 
 impl<'a> NetworkContext<'a> {
-    pub fn new(rk: &'a RecordKeeper, config: &'a ClientConfig, work_controller: &'a Mutex<NetworkWorkController>) -> NetworkContext<'a> {
+    pub fn new(rk: &'a RecordKeeper, config: &'a ClientConfig, work_controller: &'a Arc<NetworkWorkController>) -> NetworkContext<'a> {
         NetworkContext {
             rk,
             config,
@@ -176,7 +176,7 @@ pub struct Client {
     /// The record keeper/database
     rk: Arc<RecordKeeper>,
 
-    work_controller: Arc<Mutex<NetworkWorkController>>,
+    work_controller: Arc<NetworkWorkController>,
 
     /// Data structures associated with shard-specific information
     shards: [RwLock<Option<ShardInfo>>; 255],

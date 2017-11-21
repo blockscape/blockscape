@@ -359,11 +359,11 @@ impl Session {
                 },
 
                 Message::NewTransaction { ref txn } => {
-                    context.work_controller.lock().unwrap().import_txn(&txn.clone());
+                    context.work_controller.import_txn(&txn.clone());
                 },
 
                 Message::NewBlock { ref block } => {
-                    context.work_controller.lock().unwrap().import_block(&block.clone());
+                    context.work_controller.import_block(&block.clone());
                 },
 
                 Message::SyncBlocks { ref last_block_hash, ref target_block_hash } => {
@@ -372,10 +372,10 @@ impl Session {
 
                 Message::QueryData { ref hashes } => {
                     // get stuff form the db
-                    let blocks: Vec<Block> = Vec::new();
-                    let txns: Vec<Txn> = Vec::new();
+                    let mut blocks: Vec<Block> = Vec::new();
+                    let mut txns: Vec<Txn> = Vec::new();
 
-                    let failed: Vec<U256> = Vec::new();
+                    let mut failed: Vec<U256> = Vec::new();
 
                     for hash in hashes {
                         if let Ok(txn) = context.rk.get_txn(&hash) {
@@ -409,7 +409,7 @@ impl Session {
                 },
 
                 Message::DataList { ref blocks, ref transactions } => {
-                    context.work_controller.lock().unwrap().import_bulk(
+                    context.work_controller.import_bulk(
                         packet.seq, 
                         &self.remote_peer.get_hash_id(), 
                         blocks.clone(), 
