@@ -255,7 +255,7 @@ impl EventListener<WorkResult> for NetworkWorkController {
         }*/
 
         if meta.is_some() {
-            let tmp = &meta.unwrap() as &Any;
+            let tmp = meta.as_ref().unwrap() as &Any;
 
             let tagr = tmp.downcast_ref::<NetworkWorkRequest>();
 
@@ -264,11 +264,12 @@ impl EventListener<WorkResult> for NetworkWorkController {
                     &AddedNewBlock(ref hash) => {
                         if tag.item == 0 {
                             // request the next batch
-                            if let Some(targeth) = s.active_batches.get(&tag.batch) {
+                            if let Some(targeth) = s.active_batches.get(&tag.batch).cloned() {
                                 s.last_batch += 1;
                                 
+                                let b = s.last_batch;
                                 s.send_ring.push(Packet {
-                                    seq: s.last_batch,
+                                    seq: b,
                                     msg: Message::SyncBlocks {
                                         last_block_hash: hash.clone(),
                                         target_block_hash: targeth.clone()
@@ -281,11 +282,12 @@ impl EventListener<WorkResult> for NetworkWorkController {
                         // here we treat it like success all the same
                         if tag.item == 0 {
                             // request the next batch
-                            if let Some(targeth) = s.active_batches.get(&tag.batch) {
+                            if let Some(targeth) = s.active_batches.get(&tag.batch).cloned() {
                                 s.last_batch += 1;
                                 
+                                let b = s.last_batch;
                                 s.send_ring.push(Packet {
-                                    seq: s.last_batch,
+                                    seq: b,
                                     msg: Message::SyncBlocks {
                                         last_block_hash: hash.clone(),
                                         target_block_hash: targeth.clone()
