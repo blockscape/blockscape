@@ -8,9 +8,15 @@ use time::Time;
 /// The main infromation about a block. This noteably excludes the list of transactions.
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct BlockHeader {
+    /// The version used to make the block, allows for backwards compatibility
     pub version: u16,
+    /// The time when the block was created
     pub timestamp: Time,
+    /// The shard is the hash of the origin block for the shard, or 0 if it is an origin block
+    pub shard: U256,
+    /// The previous block in the chain
     pub prev: U256,
+    /// Hash identifer of the txn list
     pub merkle_root: U256,
 }
 
