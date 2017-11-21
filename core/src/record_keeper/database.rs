@@ -4,7 +4,8 @@ use env;
 use primitives::{U256, Mutation, Change, Block, BlockHeader, Txn};
 use rocksdb::{DB, Options};
 use rocksdb::Error as RocksDBError;
-use std::collections::HashSet;
+use serde::{Serialize, Deserialize};
+use std::collections::{HashSet, HashMap};
 use std::path::PathBuf;
 use super::{Storable, PlotEvent, PlotEvents, events, PlotID};
 use super::error::*;
@@ -16,9 +17,31 @@ pub const NETWORK_POSTFIX: &[u8] = b"n";
 pub const PLOT_PREFIX: &[u8] = b"PLT";
 pub const HEIGHT_PREFIX: &[u8] = b"HGT";
 
+pub const CURRENT_BLOCK: &[u8] = b"CURblock";
+
 #[inline]
 fn extend_vec(mut k: Vec<u8>, post: &[u8]) -> Vec<u8> {
     k.extend_from_slice(post); k
+}
+
+
+/// Represents the current head of the blockchain
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+struct HeadRef {
+    pub block: U256,
+    pub height: u64
+}
+
+impl Default for HeadRef {
+    fn default() -> HeadRef {
+        use primitives::u256::U256_ZERO;
+        HeadRef{block: U256_ZERO, height: 0}
+    }
+}
+
+impl HeadRef {
+    #[inline]
+    pub fn is_null(&self) -> bool { self.block.is_zero() }
 }
 
 
@@ -34,15 +57,22 @@ fn extend_vec(mut k: Vec<u8>, post: &[u8]) -> Vec<u8> {
 /// methods.
 ///
 /// TODO: Remove events older than we allow for a fork from network state
+/// TODO: Convert this to Shard and split of Network State?
 pub struct Database {
-    db: DB
+    db: DB,
+    head: HeadRef
 }
 
 
-impl Database {
+impl Database {    
     /// Create a new Database from a RocksDB instance
     pub fn new(db: DB) -> Database {
-        Database{ db }
+        let head = //attempt to read the current block
+            if let Ok(value) = Self::get_raw_data_static(&db, CURRENT_BLOCK, CACHE_POSTFIX) {
+                bincode::deserialize(&value).unwrap_or(HeadRef::default())
+            } else { HeadRef::default() };
+
+        Database{ db, head }
     }
 
     /// Open the RocksDB database based on the environment or by the given path. Construct a new
@@ -71,25 +101,35 @@ impl Database {
     }
 
     /// Retrieve raw data from the database. Use this for non-storable types (mostly network stuff).
+    #[inline]
     pub fn get_raw_data(&self, key: &[u8], postfix: &'static [u8]) -> Result<Vec<u8>, Error> {
+        Self::get_raw_data_static(&self.db, key, postfix)
+    }
+
+    fn get_raw_data_static(db: &DB, key: &[u8], postfix: &'static [u8]) -> Result<Vec<u8>, Error> {
         let key = {
             let mut k = Vec::from(key);
             k.extend_from_slice(postfix); k
         };
 
-        self.db.get(&key)?
+        db.get(&key)?
             .map(|d| d.to_vec())
             .ok_or(Error::NotFound(postfix, Vec::from(key)))
     }
 
     /// Put raw data into the database. Should have no uses outside this class.
+    #[inline]
     pub fn put_raw_data(&mut self, key: &[u8], data: &[u8], postfix: &'static [u8]) -> Result<(), Error> {
+        Self::put_raw_data_static(&self.db, key, data, postfix)
+    }
+
+    fn put_raw_data_static(db: &DB, key: &[u8], data: &[u8], postfix: &'static [u8]) -> Result<(), Error> {
         let key = {
             let mut k = Vec::from(key);
             k.extend_from_slice(postfix); k
         };
 
-        Ok(self.db.put(&key, &data)?)
+        Ok(db.put(&key, &data)?)
     }
 
     /// Retrieve and deserialize data from the database. This will return an error if the database
@@ -114,11 +154,13 @@ impl Database {
         self.put_raw_data(&obj.key(), &value, postfix)
     }
 
+    /// Retrieve a block header form the database given a hash.
     pub fn get_block_header(&self, hash: &U256) -> Result<BlockHeader, Error> {
         let id = hash.to_vec();
         self.get::<BlockHeader>(&id, BLOCKCHAIN_POSTFIX)
     }
 
+    /// Retrieve an entire block object from the database given a hash.
     pub fn get_block(&self, hash: &U256) -> Result<Block, Error> {
         // Blocks are stored with their header separate from the transaction body, so get the header
         // first to find the merkle_root, and then get the list of transactions and piece them
@@ -127,6 +169,30 @@ impl Database {
         self.complete_block(header)
     }
 
+    /// Update the head ref and save it to the database
+    pub fn update_current_block(&mut self, hash: U256, height: Option<u64>) -> Result<(), Error> {
+        let h = { // set the height value if it does not exist
+            if let Some(h) = height { h }
+            else { self.get_block_height(&hash)? }
+        };
+
+        self.head.height = h;
+        self.head.block = hash;
+
+        let raw: Vec<u8> = bincode::serialize(&self.head, bincode::Bounded(264)).unwrap();
+        self.put_raw_data(CURRENT_BLOCK, &raw, CACHE_POSTFIX)?;
+
+        Ok(())
+    }
+
+    /// Get the hash of the current head of the blockchain as it lines up with the network state.
+    /// That is, the current head is that which the network state represents.
+    #[inline]
+    pub fn get_current_block_hash(&self) -> U256 {
+        self.head.block
+    }
+
+    /// Retrieve the transactions for a block to complete a `BlockHeader` as a `Block` object.
     pub fn complete_block(&self, header: BlockHeader) -> Result<Block, Error> {
         let merkle_root = header.merkle_root.to_vec();
         let raw_txns = self.get_raw_data(&merkle_root, BLOCKCHAIN_POSTFIX)?;
@@ -175,16 +241,65 @@ impl Database {
         }
     }
 
-    /// Calculate the height of a given block. It will follow the path until it finds the genesis
+    /// Determine the height of a given block. It will follow the path until it finds the genesis
     /// block which is denoted by having a previous block reference of 0.
     pub fn get_block_height(&self, hash: &U256) -> Result<u64, Error> {
-        let mut h: u64 = 0;
-        let mut block = self.get_block_header(hash)?;
+        // Height of the null block before genesis is zero.
+        if hash.is_zero() { return Ok(0); }
 
-        while !block.prev.is_zero() {  // while we have not reached genesis...
-            h += 1;
-            block = self.get_block_header(&block.prev)?;
-        } Ok(h)
+        // Find the latest common ancestor of the block and the head chain.
+        // `a` represents the blocks and their heights we have discovered by descending from the
+        // current head, and `b` represents the blocks discovered from descending form the new hash.
+        // The height listed in `a` is the true height of that block, and the height listed in `b`
+        // is its distance from the block in question.
+        let mut a: HashMap<U256, u64> = HashMap::new();
+        let mut b: HashMap<U256, u64> = HashMap::new();
+
+        a.insert(self.head.block, self.head.height);
+        let mut last_a: U256 = self.head.block;
+        
+        b.insert(*hash, 0);
+        let mut last_b: U256 = *hash;
+
+        // Current running distance from the block in question
+        let mut dist: u64 = 1;
+        let mut height: u64 = self.head.height - 1;
+
+        // The goal is to traverse the last blocks in each of them until one of them collides with
+        // the other, at that point we can calculate the true height. Technically, we are running
+        // until the intersection of `a` and `b` is nonempty, but to save on computation simply
+        // check if the new value is in either of them.
+        while !a.contains_key(&last_b) &&
+              !b.contains_key(&last_a) &&
+              !last_b.is_zero() 
+        { // extend each search by 1.
+            if height > 0 { //if we reach genesis, do not continue down this path
+                let cur_a = self.get_block_header(&last_a)?.prev;
+                a.insert(cur_a, height);
+                height -= 1;
+            }
+
+            let cur_b = self.get_block_header(&last_b)?.prev;
+            b.insert(cur_b, dist);
+            dist += 1;
+        }
+
+        if last_b.is_zero() {
+            // b reached the genesis block before intersecting, so we know the height is equal to
+            // its distance.
+            return Ok(dist)
+        }
+
+        // We have had a collision! Now we can calculate the height.
+        Ok(if let Some(d) = b.get(&last_a) {
+            // d = distance to the last common ancestor
+            let h = a.get(&last_a).unwrap(); // the height of the last common ancestor
+            h + d
+        } else {
+            // d = dist of the one we just added, but since we inc at end of loop, - 1.
+            let h = a.get(&last_b).unwrap();
+            h + dist - 1
+        })
     }
 
     /// Get the key value for the height cache in the database. (Without the cache postfix).
