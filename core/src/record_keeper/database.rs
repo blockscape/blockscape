@@ -16,6 +16,7 @@ pub const NETWORK_POSTFIX: &[u8] = b"n";
 
 pub const PLOT_PREFIX: &[u8] = b"PLT";
 pub const HEIGHT_PREFIX: &[u8] = b"HGT";
+pub const CONTRA_PREFIX: &[u8] = b"CMT";
 
 pub const CURRENT_BLOCK: &[u8] = b"CURblock";
 
@@ -170,14 +171,14 @@ impl Database {
     }
 
     /// Update the head ref and save it to the database
-    pub fn update_current_block(&mut self, hash: U256, height: Option<u64>) -> Result<(), Error> {
+    pub fn update_current_block(&mut self, hash: &U256, height: Option<u64>) -> Result<(), Error> {
         let h = { // set the height value if it does not exist
             if let Some(h) = height { h }
             else { self.get_block_height(&hash)? }
         };
 
         self.head.height = h;
-        self.head.block = hash;
+        self.head.block = *hash;
 
         let raw: Vec<u8> = bincode::serialize(&self.head, bincode::Bounded(264)).unwrap();
         self.put_raw_data(CURRENT_BLOCK, &raw, CACHE_POSTFIX)?;
@@ -190,6 +191,20 @@ impl Database {
     #[inline]
     pub fn get_current_block_hash(&self) -> U256 {
         self.head.block
+    }
+
+    /// Add a contra for a given block
+    pub fn add_contra(&mut self, hash: &U256, contra: &Mutation) -> Result<(), Error> {
+        let key = Self::contra_kay(hash);
+        let raw = bincode::serialize(contra, bincode::Infinite).unwrap();
+        self.put_raw_data(&key, &raw, CACHE_POSTFIX)
+    }
+
+    /// Retrieve the contra to undo a given block
+    pub fn get_contra(&self, hash: &U256) -> Result<Mutation, Error> {
+        let key = Self::contra_kay(hash);
+        let raw = self.get_raw_data(&key, CACHE_POSTFIX)?;
+        Ok(bincode::deserialize(&raw)?)
     }
 
     /// Retrieve the transactions for a block to complete a `BlockHeader` as a `Block` object.
@@ -440,9 +455,14 @@ impl Database {
 
 
 
-    pub fn plot_key(id: &PlotID) -> Vec<u8> {
+    fn plot_key(id: &PlotID) -> Vec<u8> {
         let mut k = Vec::from(PLOT_PREFIX);
         k.append(&mut id.bytes());
         k.extend_from_slice(NETWORK_POSTFIX); k
+    }
+
+    fn contra_kay(hash: &U256) -> Vec<u8> {
+        let mut k = Vec::from(CONTRA_PREFIX);
+        k.append(&mut hash.to_vec()); k        
     }
 }

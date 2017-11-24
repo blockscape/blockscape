@@ -1,4 +1,4 @@
-use primitives::{U256, U256_ZERO, U160, Txn, Block, BlockHeader, Mutation, Change, EventListener, ListenerPool};
+use primitives::{U256, U160, Txn, Block, BlockHeader, Mutation, Change, EventListener, ListenerPool};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -72,17 +72,28 @@ impl RecordKeeper {
 
         db.add_block_to_height(block_height, block_hash)?;
         
-        let contra = {
-            let mut mutation = Mutation::new();
-            for txn_hash in &block.transactions {
-                let txn = db.get_txn(&txn_hash)?;
-                mutation.merge_clone(&txn.mutation);
-            }
-            db.mutate(&mutation)?
-        }; //TODO: save the contra mutation
-
-        db.update_current_block(block_hash, Some(block_height))?;
+        let mut mutation = Mutation::new();
+        for txn_hash in &block.transactions {
+            let txn = db.get_txn(&txn_hash)?;
+            mutation.merge_clone(&txn.mutation);
+        }
+        let contra = db.mutate(&mutation)?;
+        db.add_contra(&block_hash, &contra)?;
+        db.update_current_block(&block_hash, Some(block_height))?;
         Ok(true)
+    }
+
+    /// Step the network state back one block to the previous in the chain.
+    /// This will throw an error if it is asked to step back over an origin block.
+    pub fn step_back(&self) -> Result<(), Error> {
+        let mut db = self.db.write().unwrap();
+        let start_hash = db.get_current_block_hash();
+        let start_block = db.get_block_header(&start_hash)?;
+        let head = db.get_block_header(&start_hash)?;
+        if head.shard.is_zero() { return Err(Error::from(LogicError::UndoOrigin)) }
+        let contra = db.get_contra(&start_hash)?;
+        db.undo_mutate(contra)?;
+        db.update_current_block(&start_block.prev, None)
     }
 
     /// Add a new transaction to the pool of pending transactions after validating it. Returns true

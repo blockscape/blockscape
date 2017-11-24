@@ -53,6 +53,7 @@ impl Display for Error {
 
 #[derive(Clone, Debug)]
 pub enum LogicError {
+    UndoOrigin,
     MissingPrevious,
     InvalidTime,
     InvalidMutation(String),
@@ -62,6 +63,7 @@ pub enum LogicError {
 impl StdErr for LogicError {
     fn description(&self) -> &str {
         match *self {
+            LogicError::UndoOrigin => "Cannot walk backwards past an origin block.",
             LogicError::MissingPrevious => "The last block this references is not known to us.",
             LogicError::InvalidTime => "The timestamp is after the current time or too long ago.",
             LogicError::InvalidMutation(_) => "The mutation breaks a rule.",
