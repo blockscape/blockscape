@@ -57,3 +57,20 @@ package:
   dependencies:
     - build
     
+deploy:
+  image: dcr.buyme360.com/devops/docker:latest
+  stage: deploy
+  only:
+  - daniel-spike
+  tags:
+    - blockscape
+  script:
+    - cd kube
+    - create_kubeconfig
+    - apply_template namespace.yaml
+    - apply_template blockscape-client-1.yaml
+    - apply_template blockscape-client-2.yaml
+    - apply_template blockscape-client-3.yaml
+  environment:
+    name: staging
+    url: https://explore.blockscape.xram.co
