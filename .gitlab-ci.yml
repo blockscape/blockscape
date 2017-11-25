@@ -75,9 +75,8 @@ deploy:
     - cd kube
     - create_kubeconfig
     - apply_template namespace.yaml
+    - apply_template blockscape-client-0.yaml
     - apply_template blockscape-client-1.yaml
-    - apply_template blockscape-client-2.yaml
-    - apply_template blockscape-client-3.yaml
   environment:
     name: staging
     url: https://explore.blockscape.xram.co
