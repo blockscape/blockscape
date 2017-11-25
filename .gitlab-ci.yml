@@ -36,6 +36,7 @@ build:
   # depending on your build setup it's most likely a good idea to cache outputs to reduce the build time
 
 pages:
+  stage: deploy
   script:
     - cargo doc
     - mkdir public
