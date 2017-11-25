@@ -7,6 +7,12 @@ variables:
   DOCKER_HOST: tcp://localhost:2375
 
 
+stages:
+- build
+- check
+- package
+- deploy
+
 services:
   - dcr.buyme360.com/devops/docker:dind
 
@@ -42,14 +48,14 @@ pages:
 
 # run tests using the binary built before
 test:
-  stage: test
+  stage: check
   script:
     - cargo test
     - cargo test -p blockscape_core
   
 package:
   image: dcr.buyme360.com/devops/docker:latest
-  stage: deploy
+  stage: package
   script:
     - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
     - docker build -t $IMAGE_TAG .
@@ -58,7 +64,7 @@ package:
     - build
     
 deploy:
-  image: dcr.buyme360.com/devops/docker:latest
+  image: dcr.buyme360.com/devops/kube-deploy:latest
   stage: deploy
   only:
   - daniel-spike
