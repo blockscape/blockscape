@@ -1,0 +1,75 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: client-%%
+  namespace: blockscape
+spec:
+  ports:
+  - port: 35653
+    name: blockscape-p2p
+  - port: 8356
+    name: blockscape-rpc
+  selector:
+    app: blockscape_client
+    instance: "%%"
+
+
+---
+apiVersion: apps/v1beta2
+kind: Deployment
+metadata:
+  name: client-%%
+  namespace: blockscape
+  labels:
+    app: blockscape_client
+    instance: "%%"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: blockscape_client
+      instance: "%%"
+  template:
+    metadata:
+      name: client-%%
+      namespace: blockscape
+      labels:
+        app: blockscape_client
+        instance: "%%"
+    spec:
+      affinity:
+        # Do not schedule blockscape-client on the same node with another
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - blockscape_client
+              topologyKey: "kubernetes.io/hostname"
+      imagePullSecrets:
+      - name: buyme-registry
+      containers:
+      - image: dcr.buyme360.com/plu-capstone/blockscape:${TAG}
+        name: blockscape
+        env:
+        - name: RUST_LOG
+          value: debug
+        ports:
+        - containerPort: 35653
+        volumeMounts:
+        - name: blockscape-client-data
+          mountPath: /data
+        command:
+        - /blockscape
+        - -h
+        - client-%%.blockscape
+        - --seed-node
+        - client-0.blockscape:35653
+      volumes:
+      - name: blockscape-client-data
+        hostPath:
+          path: /var/lib/blockscape
