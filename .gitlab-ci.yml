@@ -6,21 +6,24 @@ variables:
   IMAGE_TAG: $CI_REGISTRY_IMAGE:latest
   DOCKER_HOST: tcp://localhost:2375
 
-
 stages:
 - build
 - check
 - package
 - deploy
 
+before_script:
+  - export CARGO_HOME=$CI_PROJECT_DIR/cargo
+
 services:
   - dcr.buyme360.com/devops/docker:dind
 
 cache:
-  untracked: true
+  #untracked: true
   paths:
-    # need this or else untracked files will not be regarded
-    - /root/.cargo
+    - cargo/
+    - target/
+    
 
 build:
   stage: build
