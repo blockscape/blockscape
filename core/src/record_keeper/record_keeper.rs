@@ -57,30 +57,19 @@ impl RecordKeeper {
     /// Returns true if the block was added, false if it was already in the system.
     pub fn add_block(&self, block: &Block) -> Result<bool, Error> {
         let block_hash = block.header.calculate_hash();
-        let block_height = self.get_block_height(&block.header.prev)?;
-        
         let mut db = self.db.write().unwrap();
-
-        // Check if the block is already in the system
-        if db.get_raw_data(&block_hash.to_vec(), BLOCKCHAIN_POSTFIX).is_ok() {
-            return Ok(false);
-        }
 
         //TODO: Handle if we need to go back and switch branches
         //TODO: Handle if we are only recording the block, and it does not become part of the current chain
         self.is_valid_block_given_lock(&*db, block)?;
 
-        db.add_block_to_height(block_height, block_hash)?;
-        
-        let mut mutation = Mutation::new();
-        for txn_hash in &block.transactions {
-            let txn = db.get_txn(&txn_hash)?;
-            mutation.merge_clone(&txn.mutation);
+        // record the block
+        if db.add_block(block)? {
+            db.walk_to_head()?;
+            Ok(true)
+        } else {
+            Ok(false)
         }
-        let contra = db.mutate(&mutation)?;
-        db.add_contra(&block_hash, &contra)?;
-        db.update_current_block(&block_hash, Some(block_height))?;
-        Ok(true)
     }
 
     /// Step the network state back one block to the previous in the chain.

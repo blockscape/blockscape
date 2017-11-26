@@ -161,6 +161,30 @@ impl Database {
         self.get::<BlockHeader>(&id, BLOCKCHAIN_POSTFIX)
     }
 
+    /// Adds a block to the database and records it in the height cache.
+    /// Returns true if the block was added, and false if it was already in the system.
+    pub fn add_block(&mut self, &Block) -> Result<bool, Error> {
+        let header = block.get_block_header();
+        let hash = block.calculate_hash();
+
+        if self.get_block_header(&hash).is_ok() { return Ok(false) }
+
+        // put the header in the db
+        self.put(header, BLOCKCHAIN_POSTFIX)?;
+
+        // put the transactions into the system
+        let merkle_root = header.merkle_root.to_vec();
+        let raw_txns = bincode::serialize(&block.transactions, bincode::Infinite)
+                .expect("Error serilizing transactions!");
+        self.put_raw_data(&merkle_root, &raw_txns, BLOCKCHAIN_POSTFIX)?;
+        
+        // add the block to the height cache
+        let hash = block.caluate_hash();
+        let height = self.get_block_height(&hash)?;
+        self.add_block_to_height()?;
+        Ok(true)
+    }
+
     /// Retrieve an entire block object from the database given a hash.
     pub fn get_block(&self, hash: &U256) -> Result<Block, Error> {
         // Blocks are stored with their header separate from the transaction body, so get the header
@@ -220,7 +244,7 @@ impl Database {
     }
 
     /// Add a block the set of known blocks at a given height.
-    pub fn add_block_to_height(&mut self, height: u64, block: U256) -> Result<(), Error> {
+    fn add_block_to_height(&mut self, height: u64, block: U256) -> Result<(), Error> {
         let key = Self::get_block_height_key(height);
         let res = self.get_raw_data(&key, CACHE_POSTFIX);
         
@@ -262,23 +286,46 @@ impl Database {
         // Height of the null block before genesis is zero.
         if hash.is_zero() { return Ok(0); }
 
-        // Find the latest common ancestor of the block and the head chain.
-        // `a` represents the blocks and their heights we have discovered by descending from the
-        // current head, and `b` represents the blocks discovered from descending form the new hash.
+        let (a, b, last_a, last_b) = latest_common_ancestor(head.hash, hash)?;
+
+        if last_b.is_zero() {
+            // b reached the genesis block before intersecting, so we know the height is equal to
+            // its distance.
+            return Ok(b.get(last_b).unwrap())
+        }
+
+        // We have had a collision! Now we can calculate the height.
+        let (a_dist, b_dist) = Self::intersect_dist(&a, &b, &last_a, &last_b);
+        assert!(self.head.height >= a_dist);
+        let intersect_height = self.head.height - a_dist; // the height of the last common ancestor
+        
+        // total distance is height from LCA to the distance up another chain it must go
+        Ok(intersect_height + b_dist)
+    }
+
+    /// Find the latest common ancestor of the block and the head chain.
+    /// `a` represents the blocks and their heights we have discovered by descending from the
+    /// current head, and `b` represents the blocks discovered from descending form the new hash.
+    /// If this succeeds, it returns the path maps of the search, and the `last_a` and `last_b`
+    /// values which can be used to interpret the result.
+    fn latest_common_ancestor(&self, hash_a: &U256, hash_b: &U256) ->
+        Result<(HashMap<U256, u64>, HashMap<U256, u64>, U256, U256), Error>
+    {
         // The height listed in `a` is the true height of that block, and the height listed in `b`
         // is its distance from the block in question.
         let mut a: HashMap<U256, u64> = HashMap::new();
         let mut b: HashMap<U256, u64> = HashMap::new();
-
-        a.insert(self.head.block, self.head.height);
-        let mut last_a: U256 = self.head.block;
         
-        b.insert(*hash, 0);
-        let mut last_b: U256 = *hash;
+        // insert the starting blocks with a distnce from themselves of zero
+        a.insert(*hash_a, 0);
+        b.insert(*hash_b, 0);
+        
+        // the last hash added for both chains
+        let mut last_a: U256 = *hash_a;
+        let mut last_b: U256 = *hash_b;
 
         // Current running distance from the block in question
         let mut dist: u64 = 1;
-        let mut height: u64 = self.head.height - 1;
 
         // The goal is to traverse the last blocks in each of them until one of them collides with
         // the other, at that point we can calculate the true height. Technically, we are running
@@ -286,35 +333,20 @@ impl Database {
         // check if the new value is in either of them.
         while !a.contains_key(&last_b) &&
               !b.contains_key(&last_a) &&
-              !last_b.is_zero() 
+              !(last_a.is_zero() && last_b.is_zero())
         { // extend each search by 1.
-            if height > 0 { //if we reach genesis, do not continue down this path
+            if !last_a.is_zero() {
                 let cur_a = self.get_block_header(&last_a)?.prev;
-                a.insert(cur_a, height);
-                height -= 1;
+                a.insert(cur_a, dist);
             }
-
-            let cur_b = self.get_block_header(&last_b)?.prev;
-            b.insert(cur_b, dist);
+            if !last_b.is_zero() {
+                let cur_b = self.get_block_header(&last_b)?.prev;
+                b.insert(cur_b, dist);
+            }
             dist += 1;
         }
 
-        if last_b.is_zero() {
-            // b reached the genesis block before intersecting, so we know the height is equal to
-            // its distance.
-            return Ok(dist)
-        }
-
-        // We have had a collision! Now we can calculate the height.
-        Ok(if let Some(d) = b.get(&last_a) {
-            // d = distance to the last common ancestor
-            let h = a.get(&last_a).unwrap(); // the height of the last common ancestor
-            h + d
-        } else {
-            // d = dist of the one we just added, but since we inc at end of loop, - 1.
-            let h = a.get(&last_b).unwrap();
-            h + dist - 1
-        })
+        Ok((a, b, last_a, last_b))
     }
 
     /// Get the key value for the height cache in the database. (Without the cache postfix).
@@ -330,9 +362,9 @@ impl Database {
     /// blocks have the same height, it will choose the last head if it is of the maximum height, or
     /// it will pick randomly from those which are of the greatest known height.
     /// Note: this will need to be updated to support sharding.
-    pub fn find_chain_head(&self, last_head: U256) -> Result<U256, Error> {
-        let mut height = self.get_block_height(&last_head)?;
-        let mut choice = last_head;
+    pub fn find_chain_head(&self) -> Result<U256, Error> {
+        let mut height = self.head.height;
+        let mut choice = self.head.block;
     
         loop {
             let result = self.get_blocks_of_height(height + 1);
@@ -349,10 +381,40 @@ impl Database {
         }
     }
 
+    /// Walk the network state to a given block in the block chain
+    pub fn walk(&mut self, to_hash: &U256) -> Result<(), Error> {
+        let (a_hashes, b_hashes, last_a, last_b) = latest_common_ancestor(head.hash, to_hash)?;
+        
+        let a_heights: BtreeMap<u64, U256> = a_hashes.iter().cloned().map(|(k, d)| {
+            assert!(self.head.height >= d);
+            (self.head.height - d, k)
+        }).collect();
+
+        let (a_dist, b_dist) = Self::intersect_dist(&a_hashes, &b_hashes, &last_a, &last_b);
+        let b_height = self.head.height - a_dist + b_dist;
+
+        let b_heights: BtreeMap<u64, U256> = b_hashes.iter().cloned().map(|(k, d)| {
+            assert!(b_height >= d);
+            (b_height - d, k)
+        }).collect();
+
+        // let mutation = self.get_block_mutation(&to_block)?;
+
+        // let contra = db.mutate(&mutation)?;
+        // db.add_contra(&block_hash, &contra)?;
+    }
+
+    /// Find the current head of the block chain and then walk to it.
+    #[inline]
+    pub fn walk_to_head(&mut self) -> Result<(), Error> {
+        let head = self.find_chain_head()?;
+        self.walk(&head)
+    }
+
     /// Mutate the stored **network state** and return a contra mutation to be able to undo what was
     /// done. Note that changes to either blockchain state or gamestate must occur through other
     /// functions.
-    pub fn mutate(&mut self, mutation: &Mutation) -> Result<Mutation, Error> {
+    fn mutate(&mut self, mutation: &Mutation) -> Result<Mutation, Error> {
         mutation.assert_not_contra();
         let mut contra = Mutation::new_contra();
 
@@ -386,7 +448,7 @@ impl Database {
 
     /// Consumes a contra mutation to undo changes made by the corresponding mutation to the
     /// network state.
-    pub fn undo_mutate(&mut self, mutation: Mutation) -> Result<(), Error> {
+    fn undo_mutate(&mut self, mutation: Mutation) -> Result<(), Error> {
         mutation.assert_contra();
 
         for change in mutation.changes { match change {
@@ -453,6 +515,16 @@ impl Database {
         ))
     }
 
+    /// Put together a mutation object from all of the individual transactions
+    pub fn get_block_mutation(&self, block: &Block) -> Result<Mutation, Error> {
+        let mut mutation = Mutation::new();
+        for txn_hash in &block.transactions {
+            let txn = self.get_txn(&txn_hash)?;
+            mutation.merge_clone(&txn.mutation);
+        }
+        Ok(mutation)
+    }
+
 
 
     fn plot_key(id: &PlotID) -> Vec<u8> {
@@ -464,5 +536,18 @@ impl Database {
     fn contra_kay(hash: &U256) -> Vec<u8> {
         let mut k = Vec::from(CONTRA_PREFIX);
         k.append(&mut hash.to_vec()); k        
+    }
+
+    /// Get the distance of the inrsection for the LCA on both paths. Returns
+    /// (distance on path a, distance on path b)
+    /// Note, this assumes there is a single element which is a member of both `a` and `b`.
+    fn intersect_dist(a: &HashMap<U256, u64>, b: &HashMap<U256, u64>, last_a: &U256, last_b: &U256) -> (u64, u64) {
+        ({ //distance down `a` path to collision
+            if let Some(d) = a.get(&last_b) { d } // b collided with a
+            else { a.get(&last_a).unwrap() } // last added block was collision
+        },{ //distance down `b` path to collision
+            if let Some(d) = b.get(&last_a) { d }  // a collided with b
+            else { b.get(&last_b).unwrap() }  // last added block was collision
+        })
     }
 }
