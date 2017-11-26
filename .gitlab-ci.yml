@@ -73,7 +73,6 @@ deploy:
     - blockscape
   script:
     - cd kube
-    - create_kubeconfig
     - apply_template namespace.yaml
     - apply_template blockscape-client-0.yaml
     - apply_template blockscape-client-1.yaml
