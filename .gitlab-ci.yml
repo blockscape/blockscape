@@ -73,6 +73,9 @@ deploy:
     - blockscape
   script:
     - cd kube
+    - env
+    - kubectl version
+    - kubectl get po -n default
     - apply_template namespace.yaml
     - apply_template blockscape-client-0.yaml
     - apply_template blockscape-client-1.yaml
