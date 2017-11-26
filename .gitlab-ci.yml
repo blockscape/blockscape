@@ -73,6 +73,8 @@ deploy:
     - blockscape
   script:
     - cd kube
+    - rm -rf kubeconfig
+    - create_kubeconfig
     - env
     - kubectl version
     - kubectl get po -n default
