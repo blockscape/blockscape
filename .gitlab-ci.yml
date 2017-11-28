@@ -3,9 +3,14 @@
 image: rust:1.21-stretch
 
 variables:
-  IMAGE_TAG: $CI_REGISTRY_IMAGE:latest
+  IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
   DOCKER_HOST: tcp://localhost:2375
 
+stages:
+- build
+- check
+- package
+- deploy
 
 before_script:
   - export CARGO_HOME=$CI_PROJECT_DIR/cargo
@@ -34,6 +39,7 @@ build:
   # depending on your build setup it's most likely a good idea to cache outputs to reduce the build time
 
 pages:
+  stage: deploy
   script:
     - cargo doc
     - mkdir public
@@ -46,14 +52,14 @@ pages:
 
 # run tests using the binary built before
 test:
-  stage: test
+  stage: check
   script:
     - cargo test
     - cargo test -p blockscape_core
   
 package:
   image: dcr.buyme360.com/devops/docker:latest
-  stage: deploy
+  stage: package
   script:
     - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
     - docker build -t $IMAGE_TAG .
@@ -61,3 +67,18 @@ package:
   dependencies:
     - build
     
+deploy:
+  image: dcr.buyme360.com/devops/kube-deploy:latest
+  stage: deploy
+  tags:
+    - blockscape
+  script:
+    - cd kube
+    - create_kubeconfig
+    - kubectl version
+    - kubectl get po -n blockscape
+    - apply_template blockscape-client-0.yaml
+    - apply_template blockscape-client-1.yaml
+  environment:
+    name: staging
+    url: https://explore.blockscape.xram.co

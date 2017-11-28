@@ -17,7 +17,7 @@ pub enum Task {
 }
 use self::Task::*;
 
-pub type MetaData = Option<Box<Any + Send + Sync>>;
+pub type MetaData = Option<Box<Any + Send + Sync + 'static>>;
 
 /// A task tagged with some meta data which will be returned when the task is completed. Note that
 /// the meta data is only passed on by the work queue and is not used in processing.
@@ -133,7 +133,7 @@ impl WorkQueue {
     /// Internal function to attempt adding a txn to the system. Will return the work result.
     fn process_txn(&self, txn: Txn) -> WorkResultType {
         let hash = txn.calculate_hash();
-        match self.rk.add_pending_txn(txn) {
+        match self.rk.add_pending_txn(&txn) {
             Ok(true) => AddedNewTxn(hash),
             Ok(false) => DuplicateTxn(hash),
             Err(e) => ErrorAddingTxn(hash, e)

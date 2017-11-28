@@ -16,6 +16,7 @@ use network::ntp;
 use network::session;
 use network::session::{RawPacket, Message};
 use network::shard::{ShardInfo};
+use network::work_controller::NetworkWorkController;
 use primitives::{Block, Txn, U256, EventListener};
 use record_keeper::{RecordKeeper};
 use signer::generate_private_key;
@@ -132,23 +133,18 @@ pub struct NetworkContext<'a> {
     /// The configuation associated with this client
     pub config: &'a ClientConfig,
 
-    /// Queue of transactions to import
-    pub import_txns: VecDeque<Txn>,
-
-    /// Queue of blocks to import
-    pub import_blocks: VecDeque<Block>,
+    pub work_controller: &'a Arc<NetworkWorkController>,
 
     /// Nodes which can be connected to which were recently supplied
     pub connect_peers: HashMap<U256, Vec<Node>>,
 }
 
 impl<'a> NetworkContext<'a> {
-    pub fn new(rk: &'a RecordKeeper, config: &'a ClientConfig) -> NetworkContext<'a> {
+    pub fn new(rk: &'a RecordKeeper, config: &'a ClientConfig, work_controller: &'a Arc<NetworkWorkController>) -> NetworkContext<'a> {
         NetworkContext {
             rk,
             config,
-            import_txns: VecDeque::new(),
-            import_blocks: VecDeque::new(),
+            work_controller: work_controller,
             connect_peers: HashMap::new()
         }
     }
@@ -180,8 +176,7 @@ pub struct Client {
     /// The record keeper/database
     rk: Arc<RecordKeeper>,
 
-    /// Reference a `WorkQueue` which can be tasked with the heavy lifting and calling the record keeper.
-    work_queue: Arc<WorkQueue>,
+    work_controller: Arc<NetworkWorkController>,
 
     /// Data structures associated with shard-specific information
     shards: [RwLock<Option<ShardInfo>>; 255],
@@ -209,29 +204,12 @@ pub struct Client {
     tx: AtomicUsize,
 }
 
-impl EventListener<WorkResult> for Client {
-    /// Add an event to the queue of finished things such that it can be handled by the main loop at
-    /// a later point.
-    fn notify(&self, time: u64, r: &WorkResult) {
-        use self::WorkResultType::*;
-        let &WorkResult(ref result, ref meta) = r; //TODO: use metadata
-        match result { //TODO: fill these out with the appropriate responses
-            &AddedNewBlock(ref hash) => {},
-            &DuplicateBlock(ref hash) => {},
-            &ErrorAddingBlock(ref hash, ref e) => {},
-            &AddedNewTxn(ref hash) => {},
-            &DuplicateTxn(ref hash) => {},
-            &ErrorAddingTxn(ref hash, ref e) => {}
-        }
-    }
-}
-
 impl Client {
     pub fn new(rk: Arc<RecordKeeper>, wq: Arc<WorkQueue>, config: ClientConfig) -> Arc<Client> {
         
         let mut client = Client {
-            rk,
-            work_queue: wq,
+            rk: Arc::clone(&rk),
+            work_controller: NetworkWorkController::new(rk, wq),
             shards: init_array!(RwLock<Option<ShardInfo>>, 255, RwLock::new(None)),
             num_shards: 0,
             my_node: Arc::new(Node {
@@ -253,8 +231,6 @@ impl Client {
         client.open().expect("Could not open client!");
         let c = Arc::new(client);
         
-        /// register itself to the work queue
-        c.work_queue.register_listener(c.clone());
         c
     }
 
@@ -269,7 +245,7 @@ impl Client {
         }
 
         // first, setup the node repository
-        let repo = NetworkContext::new(&self.rk, &self.config).load_node_repo(network_id);
+        let repo = NetworkContext::new(&self.rk, &self.config, &self.work_controller).load_node_repo(network_id);
         let node_count = repo.len();
 
         debug!("Attached network repo size: {}", node_count);
@@ -451,27 +427,12 @@ impl Client {
                     }
                 }
                 else if let Some(ref shard) = *self.shards[p.port as usize].read().unwrap() {
-                    let mut context = NetworkContext::new(&self.rk, &self.config);
+                    let mut context = NetworkContext::new(&self.rk, &self.config, &self.work_controller);
 
                     {
                         shard.process_packet(&p.payload, &addr, &mut context);
                         let lock = self.socket_mux.lock();
                         self.tx.fetch_add(shard.send_packets(&addr, &self.socket.as_ref().unwrap()) as usize, Relaxed);
-                    }
-
-                    // process data in the context: do we have anything to import?
-                    // NOTE: Order is important here! We want the data to be imported in order or else it is much harder to construct
-                    while let Some(txn) = context.import_txns.pop_front() {
-                        let unique = self.work_queue.submit(
-                            WorkItem(Task::NewTxn(txn), None)
-                        );
-                        // TODO: handle if it was a duplicate?
-                    }
-                    
-                    while let Some(block) = context.import_blocks.pop_front() {
-                        let unique = self.work_queue.submit(
-                            WorkItem(Task::NewBlock(block), None)
-                        );
                     }
 
                     // finally, any new nodes to connect to?
