@@ -64,9 +64,9 @@ spec:
         command:
         - /blockscape
         - -h
-        - client-1.blockscape
+        - client-${CI_COMMIT_REF_SLUG}-1.blockscape
         - --seed-node
-        - client-0.blockscape:35653
+        - client-${CI_COMMIT_REF_SLUG}-0.blockscape:35653
       volumes:
       - name: blockscape-client-data
         hostPath:
