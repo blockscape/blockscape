@@ -70,8 +70,6 @@ package:
 deploy:
   image: dcr.buyme360.com/devops/kube-deploy:latest
   stage: deploy
-  only:
-  - daniel-spike
   tags:
     - blockscape
   script:
