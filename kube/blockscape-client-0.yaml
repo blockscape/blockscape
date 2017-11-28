@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: client-0
+  name: client-${CI_COMMIT_REF_SLUG}-0
   namespace: blockscape
 spec:
   ports:
@@ -10,31 +10,29 @@ spec:
   - port: 8356
     name: blockscape-rpc
   selector:
-    app: blockscape_client
+    app: blockscape-${CI_COMMIT_REF_SLUG}-client
     instance: "0"
-
-
 ---
 apiVersion: apps/v1beta2
 kind: Deployment
 metadata:
-  name: client-0
+  name: client-${CI_COMMIT_REF_SLUG}-0
   namespace: blockscape
   labels:
-    app: blockscape_client
+    app: blockscape-${CI_COMMIT_REF_SLUG}-client
     instance: "0"
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: blockscape_client
+      app: blockscape-${CI_COMMIT_REF_SLUG}-client
       instance: "0"
   template:
     metadata:
-      name: client-0
+      name: client-${CI_COMMIT_REF_SLUG}-0
       namespace: blockscape
       labels:
-        app: blockscape_client
+        app: blockscape-${CI_COMMIT_REF_SLUG}-client
         instance: "0"
     spec:
       affinity:
@@ -48,7 +46,7 @@ spec:
                 - key: app
                   operator: In
                   values:
-                  - blockscape_client
+                  - blockscape-${CI_COMMIT_REF_SLUG}-client
               topologyKey: "kubernetes.io/hostname"
       imagePullSecrets:
       - name: buyme-registry
@@ -72,4 +70,5 @@ spec:
       volumes:
       - name: blockscape-client-data
         hostPath:
-          path: /var/lib/blockscape
+          type: DirectoryOrCreate
+          path: /var/lib/blockscape/client-${CI_COMMIT_REF_SLUG}-0
