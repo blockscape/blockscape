@@ -80,5 +80,5 @@ deploy:
     - apply_template blockscape-client-0.yaml
     - apply_template blockscape-client-1.yaml
   environment:
-    name: staging
-    url: https://explore.blockscape.xram.co
+    name: staging/$CI_COMMIT_REF_NAME
+    url: https://explore-$CI_COMMIT_REF_SLUG.blockscape.xram.co
