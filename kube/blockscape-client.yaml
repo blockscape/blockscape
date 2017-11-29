@@ -9,6 +9,7 @@ spec:
   ports:
   - port: 35653
     name: blockscape-p2p
+    protocol: UDP
   - port: 8356
     name: blockscape-rpc
   selector:
