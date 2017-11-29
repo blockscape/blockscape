@@ -82,3 +82,21 @@ deploy:
   environment:
     name: staging/$CI_COMMIT_REF_NAME
     url: https://explore-$CI_COMMIT_REF_SLUG.blockscape.xram.co
+    on_stop: stop_deploy
+
+stop_deploy:
+  image: dcr.buyme360.com/devops/kube-deploy:latest
+  stage: deploy
+  tags:
+    - blockscape
+  script:
+    - cd kube
+    - create_kubeconfig
+    - kubectl version
+    - delete_template blockscape-client-0.yaml
+    - delete_template blockscape-client-1.yaml
+  when: manual
+  environment:
+    name: staging/$CI_COMMIT_REF_NAME
+    action: stop
+    #url: https://explore-$CI_COMMIT_REF_SLUG.blockscape.xram.co
