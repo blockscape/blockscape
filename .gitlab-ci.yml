@@ -3,18 +3,27 @@
 image: rust:1.21-stretch
 
 variables:
-  IMAGE_TAG: $CI_REGISTRY_IMAGE:latest
+  IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
   DOCKER_HOST: tcp://localhost:2375
 
+stages:
+- build
+- check
+- package
+- deploy
+
+before_script:
+  - export CARGO_HOME=$CI_PROJECT_DIR/cargo
 
 services:
   - dcr.buyme360.com/devops/docker:dind
 
 cache:
-  untracked: true
+  #untracked: true
   paths:
-    # need this or else untracked files will not be regarded
-    - /root/.cargo
+    - cargo/
+    - target/
+    
 
 build:
   stage: build
@@ -30,6 +39,7 @@ build:
   # depending on your build setup it's most likely a good idea to cache outputs to reduce the build time
 
 pages:
+  stage: deploy
   script:
     - cargo doc
     - mkdir public
@@ -42,14 +52,14 @@ pages:
 
 # run tests using the binary built before
 test:
-  stage: test
+  stage: check
   script:
     - cargo test
     - cargo test -p blockscape_core
   
 package:
   image: dcr.buyme360.com/devops/docker:latest
-  stage: deploy
+  stage: package
   script:
     - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
     - docker build -t $IMAGE_TAG .
@@ -57,3 +67,36 @@ package:
   dependencies:
     - build
     
+deploy:
+  image: dcr.buyme360.com/devops/kube-deploy:latest
+  stage: deploy
+  tags:
+    - blockscape
+  script:
+    - cd kube
+    - create_kubeconfig
+    - kubectl version
+    - kubectl get po -n blockscape
+    - apply_template blockscape-client-0.yaml
+    - apply_template blockscape-client-1.yaml
+  environment:
+    name: staging/$CI_COMMIT_REF_NAME
+    url: https://explore-$CI_COMMIT_REF_SLUG.blockscape.xram.co
+    on_stop: stop_deploy
+
+stop_deploy:
+  image: dcr.buyme360.com/devops/kube-deploy:latest
+  stage: deploy
+  tags:
+    - blockscape
+  script:
+    - cd kube
+    - create_kubeconfig
+    - kubectl version
+    - delete_template blockscape-client-0.yaml
+    - delete_template blockscape-client-1.yaml
+  when: manual
+  environment:
+    name: staging/$CI_COMMIT_REF_NAME
+    action: stop
+    #url: https://explore-$CI_COMMIT_REF_SLUG.blockscape.xram.co

@@ -4,8 +4,9 @@ use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::{Read,Write};
 use std::str::FromStr;
+use std::net::SocketAddr;
 
-use blockscape_core::env::get_storage_dir;
+use blockscape_core::env::*;
 use blockscape_core::network::client::ClientConfig;
 use blockscape_core::network::node::NodeEndpoint;
 use blockscape_core::primitives::*;
@@ -58,6 +59,12 @@ pub fn parse_cmdline<'a>() -> ArgMatches<'a> {
                 .value_name("NUM")
                 // TODO: Better port string support for pulling directly from const, its just hard to do with the string convert
                 .default_value("35653"))
+            .arg(Arg::with_name("bind")
+                .long("bind")
+                .short("b")
+                .help("IP address for interface to listen on")
+                .value_name("IP")
+                .default_value("0.0.0.0"))
             .arg(Arg::with_name("disable-net")
                 .long("disable-net")
                 .help("Disables the entire P2P interface, making the game only available for local play with no updates")
@@ -124,20 +131,12 @@ pub fn make_genesis() -> (Block, Vec<Txn>) {
 /// # Panics
 /// If it cannot save a newly created public key, or if the private key loaded is invalid
 pub fn make_network_config(cmdline: &ArgMatches) -> ClientConfig {
-    let mut pub_path = get_storage_dir().unwrap();
-
-    pub_path.push("keys");
-    pub_path.set_file_name("node.pem");
 
     let key: PKey;
 
-    if let Ok(mut f) = File::open(pub_path.as_path()) {
-        let mut pub_data: Vec<u8> = Vec::new();
-        f.read_to_end(&mut pub_data).expect("Could not read public key file!");
-
-        key = PKey::private_key_from_pem(&pub_data).expect("Could not load node private key from file! Is it corrupted?");
-
-        info!("Loaded node keyfile from file: {:?}", pub_path);
+    if let Some(mut k) = load_key("node") {
+        key = k;
+        info!("Loaded node keyfile from file.");
     }
     else {
         info!("Generate node keyfile...");
@@ -145,9 +144,9 @@ pub fn make_network_config(cmdline: &ArgMatches) -> ClientConfig {
         key = generate_private_key();
 
         // save the key (fail if not saved)
-        let mut f = File::create(pub_path.as_path()).expect("Could not create generated node keyfile");
-        f.write_all(&key.private_key_to_pem().expect("Could not export generated keyfile"))
-            .expect("Could not write private key file!");
+        if !save_key("node", &key) {
+            panic!("Could not save node private key file.");
+        }
     }
 
     let mut config = ClientConfig::from_key(key);
@@ -163,6 +162,8 @@ pub fn make_network_config(cmdline: &ArgMatches) -> ClientConfig {
                 .expect(format!("Invalid hostname for seed node: {}. Did you include the port?", x).as_str()))
             .collect();
     }
+
+    config.bind_addr = SocketAddr::new(cmdline.value_of("bind").unwrap().parse().expect("Invalid bind IP"), config.port);
 
     config
 }

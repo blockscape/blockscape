@@ -52,7 +52,7 @@ pub struct Packet {
 #[derive(Serialize, Deserialize, Debug)]
 pub enum DataRequestError {
     /// The requested hash does not exist on this node
-    HashNotFound,
+    HashesNotFound(Vec<U256>),
     /// Too many requests have come from your node to be processed in quick succession
     RateExceeded,
     /// This node is not an authoritative source for information on the requested shard ID
@@ -120,9 +120,9 @@ pub enum Message {
     NewBlock { block: Block },
 
     /// Request block synchronization data, starting from the given block hash, proceeding to the last block hash
-    SyncBlocks { last_block_hash: U256 },
+    SyncBlocks { last_block_hash: U256, target_block_hash: U256 },
     /// Request specific block or transaction data as indicated by the list of hashes given
-    QueryData { hashes: U256 },
+    QueryData { hashes: Vec<U256> },
     /// Returned in response to a request for txn/block data (either SyncBlocks or QueryData) to provide bulk data to import from the blockchain
     DataList {
         /// A list of blocks to import
@@ -359,24 +359,62 @@ impl Session {
                 },
 
                 Message::NewTransaction { ref txn } => {
-                    context.import_txns.push_back(txn.clone());
+                    context.work_controller.import_txn(&txn.clone());
                 },
 
                 Message::NewBlock { ref block } => {
-                    context.import_blocks.push_back(block.clone());
+                    context.work_controller.import_block(&block.clone());
                 },
 
-                Message::SyncBlocks { ref last_block_hash } => {
+                Message::SyncBlocks { ref last_block_hash, ref target_block_hash } => {
                     // get stuff from the db
                 },
 
                 Message::QueryData { ref hashes } => {
                     // get stuff form the db
+                    let mut blocks: Vec<Block> = Vec::new();
+                    let mut txns: Vec<Txn> = Vec::new();
+
+                    let mut failed: Vec<U256> = Vec::new();
+
+                    for hash in hashes {
+                        if let Ok(txn) = context.rk.get_txn(&hash) {
+                            txns.push(txn);
+                        }
+                        else if let Ok(block) = context.rk.get_block(&hash) {
+                            blocks.push(block);
+                        }
+                        else {
+                            failed.push(hash.clone());
+                        }
+                    }
+
+                    if !blocks.is_empty() || !txns.is_empty() {
+                        self.send_queue.lock().unwrap().push_back(Packet {
+                            seq: packet.seq,
+                            msg: Message::DataList {
+                                blocks: blocks,
+                                transactions: txns
+                            }
+                        });
+                    }
+                    if !failed.is_empty() {
+                        self.send_queue.lock().unwrap().push_back(Packet {
+                            seq: packet.seq,
+                            msg: Message::DataError {
+                                err: DataRequestError::HashesNotFound(failed)
+                            }
+                        });
+                    }
                 },
 
                 Message::DataList { ref blocks, ref transactions } => {
-                    context.import_txns.extend(transactions.iter().cloned());
-                    context.import_blocks.extend(blocks.iter().cloned());
+                    context.work_controller.import_bulk(
+                        packet.seq, 
+                        &self.remote_peer.get_hash_id(), 
+                        blocks.clone(), 
+                        transactions.clone()
+                    );
                 },
 
                 Message::DataError { ref err } => {
