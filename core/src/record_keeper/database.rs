@@ -4,8 +4,7 @@ use env;
 use primitives::{U256, Mutation, Change, Block, BlockHeader, Txn};
 use rocksdb::{DB, Options};
 use rocksdb::Error as RocksDBError;
-use serde::{Serialize, Deserialize};
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashSet, HashMap, BTreeMap};
 use std::path::PathBuf;
 use super::{Storable, PlotEvent, PlotEvents, events, PlotID};
 use super::error::*;
@@ -163,25 +162,24 @@ impl Database {
 
     /// Adds a block to the database and records it in the height cache.
     /// Returns true if the block was added, and false if it was already in the system.
-    pub fn add_block(&mut self, &Block) -> Result<bool, Error> {
-        let header = block.get_block_header();
+    pub fn add_block(&mut self, block: &Block) -> Result<bool, Error> {
         let hash = block.calculate_hash();
 
         if self.get_block_header(&hash).is_ok() { return Ok(false) }
 
         // put the header in the db
-        self.put(header, BLOCKCHAIN_POSTFIX)?;
+        self.put(&block.header, BLOCKCHAIN_POSTFIX)?;
 
         // put the transactions into the system
-        let merkle_root = header.merkle_root.to_vec();
+        let merkle_root = block.header.merkle_root.to_vec();
         let raw_txns = bincode::serialize(&block.transactions, bincode::Infinite)
                 .expect("Error serilizing transactions!");
         self.put_raw_data(&merkle_root, &raw_txns, BLOCKCHAIN_POSTFIX)?;
         
         // add the block to the height cache
-        let hash = block.caluate_hash();
+        let hash = block.calculate_hash();
         let height = self.get_block_height(&hash)?;
-        self.add_block_to_height()?;
+        self.add_block_to_height(height, hash)?;
         Ok(true)
     }
 
@@ -217,20 +215,6 @@ impl Database {
         self.head.block
     }
 
-    /// Add a contra for a given block
-    pub fn add_contra(&mut self, hash: &U256, contra: &Mutation) -> Result<(), Error> {
-        let key = Self::contra_kay(hash);
-        let raw = bincode::serialize(contra, bincode::Infinite).unwrap();
-        self.put_raw_data(&key, &raw, CACHE_POSTFIX)
-    }
-
-    /// Retrieve the contra to undo a given block
-    pub fn get_contra(&self, hash: &U256) -> Result<Mutation, Error> {
-        let key = Self::contra_kay(hash);
-        let raw = self.get_raw_data(&key, CACHE_POSTFIX)?;
-        Ok(bincode::deserialize(&raw)?)
-    }
-
     /// Retrieve the transactions for a block to complete a `BlockHeader` as a `Block` object.
     pub fn complete_block(&self, header: BlockHeader) -> Result<Block, Error> {
         let merkle_root = header.merkle_root.to_vec();
@@ -241,26 +225,6 @@ impl Database {
     pub fn get_txn(&self, hash: &U256) -> Result<Txn, Error> {
         let id = hash.to_vec();
         self.get::<Txn>(&id, BLOCKCHAIN_POSTFIX)
-    }
-
-    /// Add a block the set of known blocks at a given height.
-    fn add_block_to_height(&mut self, height: u64, block: U256) -> Result<(), Error> {
-        let key = Self::get_block_height_key(height);
-        let res = self.get_raw_data(&key, CACHE_POSTFIX);
-        
-        let mut height_vals: HashSet<U256> = {
-            match res {
-                Ok(raw) => bincode::deserialize(&raw)?,
-                Err(e) => match e {
-                    Error::NotFound(..) => HashSet::new(),
-                    _ => return Err(e)
-                }
-            }
-        };
-
-        height_vals.insert(block);
-        let raw = bincode::serialize(&height_vals, bincode::Infinite)?;
-        self.put_raw_data(&key, &raw, CACHE_POSTFIX)
     }
 
     /// Return a list of **known** blocks which have a given height. If the block has not been added
@@ -286,12 +250,12 @@ impl Database {
         // Height of the null block before genesis is zero.
         if hash.is_zero() { return Ok(0); }
 
-        let (a, b, last_a, last_b) = latest_common_ancestor(head.hash, hash)?;
+        let (a, b, last_a, last_b) = self.latest_common_ancestor(&self.head.block, &hash)?;
 
         if last_b.is_zero() {
             // b reached the genesis block before intersecting, so we know the height is equal to
             // its distance.
-            return Ok(b.get(last_b).unwrap())
+            return Ok(*b.get(&last_b).unwrap())
         }
 
         // We have had a collision! Now we can calculate the height.
@@ -301,52 +265,6 @@ impl Database {
         
         // total distance is height from LCA to the distance up another chain it must go
         Ok(intersect_height + b_dist)
-    }
-
-    /// Find the latest common ancestor of the block and the head chain.
-    /// `a` represents the blocks and their heights we have discovered by descending from the
-    /// current head, and `b` represents the blocks discovered from descending form the new hash.
-    /// If this succeeds, it returns the path maps of the search, and the `last_a` and `last_b`
-    /// values which can be used to interpret the result.
-    fn latest_common_ancestor(&self, hash_a: &U256, hash_b: &U256) ->
-        Result<(HashMap<U256, u64>, HashMap<U256, u64>, U256, U256), Error>
-    {
-        // The height listed in `a` is the true height of that block, and the height listed in `b`
-        // is its distance from the block in question.
-        let mut a: HashMap<U256, u64> = HashMap::new();
-        let mut b: HashMap<U256, u64> = HashMap::new();
-        
-        // insert the starting blocks with a distnce from themselves of zero
-        a.insert(*hash_a, 0);
-        b.insert(*hash_b, 0);
-        
-        // the last hash added for both chains
-        let mut last_a: U256 = *hash_a;
-        let mut last_b: U256 = *hash_b;
-
-        // Current running distance from the block in question
-        let mut dist: u64 = 1;
-
-        // The goal is to traverse the last blocks in each of them until one of them collides with
-        // the other, at that point we can calculate the true height. Technically, we are running
-        // until the intersection of `a` and `b` is nonempty, but to save on computation simply
-        // check if the new value is in either of them.
-        while !a.contains_key(&last_b) &&
-              !b.contains_key(&last_a) &&
-              !(last_a.is_zero() && last_b.is_zero())
-        { // extend each search by 1.
-            if !last_a.is_zero() {
-                let cur_a = self.get_block_header(&last_a)?.prev;
-                a.insert(cur_a, dist);
-            }
-            if !last_b.is_zero() {
-                let cur_b = self.get_block_header(&last_b)?.prev;
-                b.insert(cur_b, dist);
-            }
-            dist += 1;
-        }
-
-        Ok((a, b, last_a, last_b))
     }
 
     /// Get the key value for the height cache in the database. (Without the cache postfix).
@@ -382,26 +300,92 @@ impl Database {
     }
 
     /// Walk the network state to a given block in the block chain
-    pub fn walk(&mut self, to_hash: &U256) -> Result<(), Error> {
-        let (a_hashes, b_hashes, last_a, last_b) = latest_common_ancestor(head.hash, to_hash)?;
+    pub fn walk(&mut self, b_block: &U256) -> Result<(), Error> {
+        let a_block = self.head.block;
+        assert!(!b_block.is_zero());
         
-        let a_heights: BtreeMap<u64, U256> = a_hashes.iter().cloned().map(|(k, d)| {
-            assert!(self.head.height >= d);
-            (self.head.height - d, k)
-        }).collect();
+        { // verify that we are not crossing shards within reason
+            let a_head = self.get_block_header(&a_block)?;
+            let b_head = self.get_block_header(b_block)?;
+            assert!(a_head.shard == b_head.shard || a_head.shard.is_zero() || b_head.shard.is_zero());
+        }
 
+        let (a_hashes, b_hashes, last_a, last_b) =
+                self.latest_common_ancestor(&a_block, b_block)?;
         let (a_dist, b_dist) = Self::intersect_dist(&a_hashes, &b_hashes, &last_a, &last_b);
-        let b_height = self.head.height - a_dist + b_dist;
 
-        let b_heights: BtreeMap<u64, U256> = b_hashes.iter().cloned().map(|(k, d)| {
-            assert!(b_height >= d);
-            (b_height - d, k)
+        let a_height = self.head.height;
+        let b_height = a_height - a_dist + b_dist;
+        
+        // create lists of the `a` and `b` chains sorted by height
+        let a_heights: BTreeMap<u64, U256> = a_hashes.into_iter()
+            .filter(|&(_, d)| d <= a_dist)  // keep only values before intersection
+            .map(|(k, d)| {
+                assert!(a_height >= d);
+                (a_height - d, k)
         }).collect();
 
-        // let mutation = self.get_block_mutation(&to_block)?;
+        let b_heights: BTreeMap<u64, U256> = b_hashes.into_iter()
+            .filter(|&(_, d)| d <= b_dist)  // keep only values before intersection
+            .map(|(k, d)| {
+                assert!(b_height >= d);
+                (b_height - d, k)
+        }).collect();
 
-        // let contra = db.mutate(&mutation)?;
-        // db.add_contra(&block_hash, &contra)?;
+
+        { // verify validity; remove this check later on
+            let mut collision = None;
+            let mut last = None; // (height, block_hash)
+
+            for (&h, &b) in &a_heights {
+                if let Some((lh, _)) = last {
+                    assert_eq!(h, lh - 1);
+                } else { //check first element
+                    collision = Some(b);
+                    assert_eq!(h, a_height - a_dist);  // collision should be the first
+                }
+                last = Some((h, b));
+            }{ // check last element
+                let (h, b) = last.unwrap();
+                assert_eq!(a_block, b);
+                assert_eq!(a_height, h);
+            }
+
+            last = None;
+            for (&h, &b) in &b_heights {
+                if let Some((lh, _)) = last {
+                    assert_eq!(h, lh - 1);
+                } else { //check first element
+                    assert_eq!(collision.unwrap(), b);
+                    assert_eq!(h, a_height - a_dist);  // collision should be the first
+                }
+                last = Some((h, b));
+            }{ // check last element
+                let (h, b) = last.unwrap();
+                assert_eq!(*b_block, b);
+                assert_eq!(b_height, h);
+            }
+        }
+
+        // go down `a` chain and then go up `b` chain.
+        for (h, b) in a_heights.iter().rev() {
+            assert!(*h > 0);
+            let header = self.get_block_header(&b)?;
+            let contra = self.get_contra(&b)?;
+            self.undo_mutate(contra)?;
+            self.head = HeadRef{block: header.prev, height: h - 1};
+        }
+        for (h, b) in b_heights {
+            assert!(h > 1);
+            let block = self.get_block(&b)?;
+            let mutation = self.get_mutation(&block)?;
+            let contra = self.mutate(&mutation)?;
+            self.add_contra(&b, &contra)?;
+            self.head = HeadRef{block: b, height: h};
+        }
+
+        debug!("Walked network state from {} to {}.", a_block, b_block);
+        Ok(())
     }
 
     /// Find the current head of the block chain and then walk to it.
@@ -410,6 +394,45 @@ impl Database {
         let head = self.find_chain_head()?;
         self.walk(&head)
     }
+
+    /// Add a new event to a plot
+    pub fn add_plot_event(&mut self, plot_id: PlotID, tick: u64, event: &PlotEvent) -> Result<(), Error> {
+        let db_key = Self::plot_key(&plot_id);
+
+        let mut events: PlotEvents = self.db.get(&db_key)?.map_or(
+            PlotEvents::new(), //if not found, we need to create the data structure
+            |v| bincode::deserialize(&v).unwrap()
+        );
+
+        events::add_event(&mut events, tick, event.clone());
+
+        let raw_events = bincode::serialize(&events, bincode::Infinite).unwrap();
+        self.db.put(&db_key, &raw_events)?;
+        Ok(())
+    }
+
+    /// Returns a map of events for each tick that happened after a given tick. Note: it will not
+    /// seek to reconstruct old history so `after_tick` simply allows additional filtering, e.g. if
+    /// you set `after_tick` to 0, you would not get all events unless the oldest events have not
+    /// yet been removed from the cache.
+    pub fn get_plot_events(&self, plot_id: PlotID, after_tick: u64) -> Result<PlotEvents, Error> {
+        let db_key = Self::plot_key(&plot_id);
+        Ok(self.db.get(&db_key)?.map_or(
+            PlotEvents::new(),
+            |v| bincode::deserialize(&v).unwrap()
+        ))
+    }
+
+    /// Put together a mutation object from all of the individual transactions
+    pub fn get_block_mutation(&self, block: &Block) -> Result<Mutation, Error> {
+        let mut mutation = Mutation::new();
+        for txn_hash in &block.transactions {
+            let txn = self.get_txn(&txn_hash)?;
+            mutation.merge_clone(&txn.mutation);
+        }
+        Ok(mutation)
+    }
+
 
     /// Mutate the stored **network state** and return a contra mutation to be able to undo what was
     /// done. Note that changes to either blockchain state or gamestate must occur through other
@@ -487,44 +510,98 @@ impl Database {
         Ok(())
     }
 
-    /// Add a new event to a plot
-    pub fn add_plot_event(&mut self, plot_id: PlotID, tick: u64, event: &PlotEvent) -> Result<(), Error> {
-        let db_key = Self::plot_key(&plot_id);
+    /// Find the latest common ancestor of the block and the head chain.
+    /// `a` represents the blocks and their heights we have discovered by descending from the
+    /// current head, and `b` represents the blocks discovered from descending form the new hash.
+    /// If this succeeds, it returns the path maps of the search, and the `last_a` and `last_b`
+    /// values which can be used to interpret the result.
+    fn latest_common_ancestor(&self, hash_a: &U256, hash_b: &U256) ->
+        Result<(HashMap<U256, u64>, HashMap<U256, u64>, U256, U256), Error>
+    {
+        // The height listed in `a` is the true height of that block, and the height listed in `b`
+        // is its distance from the block in question.
+        let mut a: HashMap<U256, u64> = HashMap::new();
+        let mut b: HashMap<U256, u64> = HashMap::new();
+        
+        // insert the starting blocks with a distnce from themselves of zero
+        a.insert(*hash_a, 0);
+        b.insert(*hash_b, 0);
+        
+        // the last hash added for both chains
+        let mut last_a: U256 = *hash_a;
+        let mut last_b: U256 = *hash_b;
 
-        let mut events: PlotEvents = self.db.get(&db_key)?.map_or(
-            PlotEvents::new(), //if not found, we need to create the data structure
-            |v| bincode::deserialize(&v).unwrap()
-        );
+        // Current running distance from the block in question
+        let mut dist: u64 = 1;
 
-        events::add_event(&mut events, tick, event.clone());
+        // The goal is to traverse the last blocks in each of them until one of them collides with
+        // the other, at that point we can calculate the true height. Technically, we are running
+        // until the intersection of `a` and `b` is nonempty, but to save on computation simply
+        // check if the new value is in either of them.
+        while !a.contains_key(&last_b) &&
+              !b.contains_key(&last_a) &&
+              !(last_a.is_zero() && last_b.is_zero())
+        { // extend each search by 1.
+            if !last_a.is_zero() {
+                let cur_a = self.get_block_header(&last_a)?.prev;
+                a.insert(cur_a, dist);
+                last_a = cur_a;
+            }
+            if !last_b.is_zero() {
+                let cur_b = self.get_block_header(&last_b)?.prev;
+                b.insert(cur_b, dist);
+                last_b = cur_b;
+            }
+            dist += 1;
+        }
 
-        let raw_events = bincode::serialize(&events, bincode::Infinite).unwrap();
-        self.db.put(&db_key, &raw_events)?;
-        Ok(())
+        Ok((a, b, last_a, last_b))
     }
 
-    /// Returns a map of events for each tick that happened after a given tick. Note: it will not
-    /// seek to reconstruct old history so `after_tick` simply allows additional filtering, e.g. if
-    /// you set `after_tick` to 0, you would not get all events unless the oldest events have not
-    /// yet been removed from the cache.
-    pub fn get_plot_events(&self, plot_id: PlotID, after_tick: u64) -> Result<PlotEvents, Error> {
-        let db_key = Self::plot_key(&plot_id);
-        Ok(self.db.get(&db_key)?.map_or(
-            PlotEvents::new(),
-            |v| bincode::deserialize(&v).unwrap()
-        ))
+    /// Add a block the set of known blocks at a given height.
+    fn add_block_to_height(&mut self, height: u64, block: U256) -> Result<(), Error> {
+        let key = Self::get_block_height_key(height);
+        let res = self.get_raw_data(&key, CACHE_POSTFIX);
+        
+        let mut height_vals: HashSet<U256> = {
+            match res {
+                Ok(raw) => bincode::deserialize(&raw)?,
+                Err(e) => match e {
+                    Error::NotFound(..) => HashSet::new(),
+                    _ => return Err(e)
+                }
+            }
+        };
+
+        height_vals.insert(block);
+        let raw = bincode::serialize(&height_vals, bincode::Infinite)?;
+        self.put_raw_data(&key, &raw, CACHE_POSTFIX)
     }
 
-    /// Put together a mutation object from all of the individual transactions
-    pub fn get_block_mutation(&self, block: &Block) -> Result<Mutation, Error> {
+    /// Construct a mutation given a block and its transactions by querying the DB for the txns and
+    /// then merging their mutations.
+    fn get_mutation(&self, block: &Block) -> Result<Mutation, Error> {
         let mut mutation = Mutation::new();
-        for txn_hash in &block.transactions {
-            let txn = self.get_txn(&txn_hash)?;
-            mutation.merge_clone(&txn.mutation);
+        for txn_h in &block.transactions {
+            let txn = self.get_txn(txn_h)?;
+            mutation.merge(txn.mutation);
         }
         Ok(mutation)
     }
 
+    /// Retrieve the contra from the db to undo the given block
+    fn get_contra(&self, hash: &U256) -> Result<Mutation, Error> {
+        let key = Self::contra_kay(hash);
+        let raw = self.get_raw_data(&key, CACHE_POSTFIX)?;
+        Ok(bincode::deserialize(&raw)?)
+    }
+
+    /// Add a contra for a given block
+    fn add_contra(&mut self, hash: &U256, contra: &Mutation) -> Result<(), Error> {
+        let key = Self::contra_kay(hash);
+        let raw = bincode::serialize(contra, bincode::Infinite).unwrap();
+        self.put_raw_data(&key, &raw, CACHE_POSTFIX)
+    }
 
 
     fn plot_key(id: &PlotID) -> Vec<u8> {
@@ -543,11 +620,11 @@ impl Database {
     /// Note, this assumes there is a single element which is a member of both `a` and `b`.
     fn intersect_dist(a: &HashMap<U256, u64>, b: &HashMap<U256, u64>, last_a: &U256, last_b: &U256) -> (u64, u64) {
         ({ //distance down `a` path to collision
-            if let Some(d) = a.get(&last_b) { d } // b collided with a
-            else { a.get(&last_a).unwrap() } // last added block was collision
+            if let Some(&d) = a.get(&last_b) { d } // b collided with a
+            else { *a.get(&last_a).unwrap() } // last added block was collision
         },{ //distance down `b` path to collision
-            if let Some(d) = b.get(&last_a) { d }  // a collided with b
-            else { b.get(&last_b).unwrap() }  // last added block was collision
+            if let Some(&d) = b.get(&last_a) { d }  // a collided with b
+            else { *b.get(&last_b).unwrap() }  // last added block was collision
         })
     }
 }

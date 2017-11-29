@@ -72,19 +72,6 @@ impl RecordKeeper {
         }
     }
 
-    /// Step the network state back one block to the previous in the chain.
-    /// This will throw an error if it is asked to step back over an origin block.
-    pub fn step_back(&self) -> Result<(), Error> {
-        let mut db = self.db.write().unwrap();
-        let start_hash = db.get_current_block_hash();
-        let start_block = db.get_block_header(&start_hash)?;
-        let head = db.get_block_header(&start_hash)?;
-        if head.shard.is_zero() { return Err(Error::from(LogicError::UndoOrigin)) }
-        let contra = db.get_contra(&start_hash)?;
-        db.undo_mutate(contra)?;
-        db.update_current_block(&start_block.prev, None)
-    }
-
     /// Add a new transaction to the pool of pending transactions after validating it. Returns true
     /// if it was added successfully to pending transactions, and returns false if it is already in
     /// the list of pending transactions.
