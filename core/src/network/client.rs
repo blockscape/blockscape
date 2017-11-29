@@ -330,7 +330,10 @@ impl Client {
 
                 Ok(())
             },
-            Err(e) => Err(e)
+            Err(e) => {
+                warn!("Failed to bind to addr: {:?}", self.config.bind_addr);
+                Err(e)
+            }
         }
     }
 
