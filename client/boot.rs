@@ -92,6 +92,7 @@ pub fn make_genesis() -> (Block, Vec<Txn>) {
         header: BlockHeader {
             version: 1,
             timestamp: Time::from_seconds(1508009036),
+            shard: U256_ZERO,
             prev: U256_ZERO,
             merkle_root: U256_ZERO
         },

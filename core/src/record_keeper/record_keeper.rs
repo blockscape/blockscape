@@ -1,13 +1,10 @@
-use bincode;
-use primitives::{U256, U256_ZERO, U160, Txn, Block, BlockHeader, Mutation, Change, EventListener, ListenerPool};
+use primitives::{U256, U160, Txn, Block, BlockHeader, Mutation, Change, EventListener, ListenerPool};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use super::{MutationRule, MutationRules, Error, LogicError, Storable, RecordEvent, PlotID};
 use super::{PlotEvent, PlotEvents, events};
 use super::database::*;
-
-pub const CURRENT_BLOCK: &[u8] = b"CURblock";
 
 /// An abstraction on the concept of states and state state data. Builds higher-level functionality
 /// On top of the database. The implementation uses RwLocks to provide many read, single write
@@ -21,8 +18,6 @@ pub struct RecordKeeper {
     rules: RwLock<MutationRules>,
     pending_txns: RwLock<HashMap<U256, Txn>>,
 
-    current_block: RwLock<U256>,
-
     record_listeners: RwLock<ListenerPool<RecordEvent>>,
     game_listeners: RwLock<ListenerPool<PlotEvent>>,
 }
@@ -31,16 +26,10 @@ impl RecordKeeper {
     /// Construct a new RecordKeeper from an already opened database and possibly an existing set of
     /// rules.
     pub fn new(db: Database, rules: Option<MutationRules>) -> RecordKeeper {
-        let hash = //attempt to read the current block
-        if let Ok(value) = db.get_raw_data(CURRENT_BLOCK, CACHE_POSTFIX) {
-            bincode::deserialize(&value).unwrap_or(U256_ZERO)
-        } else { U256_ZERO };
-
         RecordKeeper {
             db: RwLock::new(db),
             rules: RwLock::new(rules.unwrap_or(MutationRules::new())),
             pending_txns: RwLock::new(HashMap::new()),
-            current_block: RwLock::new(hash),
             record_listeners: RwLock::new(ListenerPool::new()),
             game_listeners: RwLock::new(ListenerPool::new())
         }
@@ -68,33 +57,19 @@ impl RecordKeeper {
     /// Returns true if the block was added, false if it was already in the system.
     pub fn add_block(&self, block: &Block) -> Result<bool, Error> {
         let block_hash = block.header.calculate_hash();
-        let block_height = self.get_block_height(&block.header.prev)?;
-        
         let mut db = self.db.write().unwrap();
-
-        // Check if the block is already in the system
-        if db.get_raw_data(&block_hash.to_vec(), BLOCKCHAIN_POSTFIX).is_ok() {
-            return Ok(false);
-        }
 
         //TODO: Handle if we need to go back and switch branches
         //TODO: Handle if we are only recording the block, and it does not become part of the current chain
         self.is_valid_block_given_lock(&*db, block)?;
 
-        db.add_block_to_height(block_height, block_hash)?;
-        
-        let contra = {
-            let mut mutation = Mutation::new();
-            for txn_hash in &block.transactions {
-                let txn = db.get_txn(&txn_hash)?;
-                mutation.merge_clone(&txn.mutation);
-            }
-            db.mutate(&mutation)?
-        }; //TODO: save the contra mutation
-
-        db.put_raw_data(CURRENT_BLOCK, &block_hash.to_vec(), CACHE_POSTFIX)?;
-        *self.current_block.write().unwrap() = block_hash;
-        Ok(true)
+        // record the block
+        if db.add_block(block)? {
+            db.walk_to_head()?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     /// Add a new transaction to the pool of pending transactions after validating it. Returns true
@@ -129,21 +104,21 @@ impl RecordKeeper {
 
     /// Retrieve the current block hash which the network state represents.
     pub fn get_current_block_hash(&self) -> U256 {
-        *self.current_block.read().unwrap()
+        self.db.read().unwrap().get_current_block_hash()
     }
 
     /// Retrieve the header of the current block which the network state represents.
     pub fn get_current_block_header(&self) -> Result<BlockHeader, Error> {
-        let db_lock = self.db.read().unwrap();
-        let hash = self.get_current_block_hash();
-        db_lock.get_block_header(&hash)
+        let db = self.db.read().unwrap();
+        let hash = db.get_current_block_hash();
+        db.get_block_header(&hash)
     }
 
     /// Retrieve the current block which the network state represents.
     pub fn get_current_block(&self) -> Result<Block, Error> {
-        let db_lock = self.db.read().unwrap();
-        let hash = self.get_current_block_hash();
-        db_lock.get_block(&hash)
+        let db = self.db.read().unwrap();
+        let hash = db.get_current_block_hash();
+        db.get_block(&hash)
     }
 
     /// Calculate the height of a given block. It will follow the path until it finds the genesis
@@ -158,6 +133,18 @@ impl RecordKeeper {
     pub fn get_blocks_of_height(&self, height: u64) -> Result<HashSet<U256>, Error> {
         let db = self.db.read().unwrap();
         db.get_blocks_of_height(height)
+    }
+
+    pub fn get_blocks_between(start: U256, target: U256, limit: u32) -> Vec<U256> {
+        unimplemented!()
+    }
+
+    pub fn get_blocks_after_hash(start: U256, limit: u32) -> Vec<U256> {
+        unimplemented!()
+    }
+
+    pub fn get_blocks_after_height(start: u64, limit: u32) -> Vec<U256> {
+        unimplemented!()
     }
 
     /// Returns a map of events for each tick that happened after a given tick. Note: it will not
