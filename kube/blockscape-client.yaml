@@ -58,6 +58,7 @@ spec:
       - name: buyme-registry
       containers:
       - image: dcr.buyme360.com/plu-capstone/blockscape:${CI_COMMIT_REF_SLUG}
+        imagePullPolicy: Always
         name: blockscape
         env:
         - name: RUST_LOG
