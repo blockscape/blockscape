@@ -3,6 +3,8 @@ kind: Service
 metadata:
   name: client-${CI_COMMIT_REF_SLUG}-%%
   namespace: blockscape
+  annotations:
+    sha: ${CI_COMMIT_SHA}
 spec:
   ports:
   - port: 35653
@@ -18,6 +20,8 @@ kind: Deployment
 metadata:
   name: client-${CI_COMMIT_REF_SLUG}-%%
   namespace: blockscape
+  annotations:
+    sha: ${CI_COMMIT_SHA}
   labels:
     app: blockscape-${CI_COMMIT_REF_SLUG}-client
     instance: "%%"
@@ -31,6 +35,8 @@ spec:
     metadata:
       name: client-${CI_COMMIT_REF_SLUG}-%%
       namespace: blockscape
+      annotations:
+        sha: ${CI_COMMIT_SHA}
       labels:
         app: blockscape-${CI_COMMIT_REF_SLUG}-client
         instance: "%%"
