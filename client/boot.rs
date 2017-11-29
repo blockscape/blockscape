@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::{Read,Write};
 use std::str::FromStr;
+use std::net::SocketAddr;
 
 use blockscape_core::env::*;
 use blockscape_core::network::client::ClientConfig;
@@ -58,6 +59,12 @@ pub fn parse_cmdline<'a>() -> ArgMatches<'a> {
                 .value_name("NUM")
                 // TODO: Better port string support for pulling directly from const, its just hard to do with the string convert
                 .default_value("35653"))
+            .arg(Arg::with_name("bind")
+                .long("bind")
+                .short("b")
+                .help("IP address for interface to listen on")
+                .value_name("IP")
+                .default_value("0.0.0.0"))
             .arg(Arg::with_name("disable-net")
                 .long("disable-net")
                 .help("Disables the entire P2P interface, making the game only available for local play with no updates")
@@ -154,6 +161,8 @@ pub fn make_network_config(cmdline: &ArgMatches) -> ClientConfig {
                 .expect(format!("Invalid hostname for seed node: {}. Did you include the port?", x).as_str()))
             .collect();
     }
+
+    config.bind_addr = SocketAddr::new(cmdline.value_of("bind").unwrap().parse().expect("Invalid bind IP"), config.port);
 
     config
 }

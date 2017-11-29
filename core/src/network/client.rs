@@ -55,9 +55,14 @@ pub struct ClientConfig {
     /// Sets the maximum simultaneous node connections
     pub max_nodes: u16,
 
+    /// Synchronization servers for calculating time offset
     pub ntp_servers: Vec<String>,
 
+    /// Endpoints to connect for a network initially if no node is available to connect to
     pub seed_nodes: Vec<NodeEndpoint>,
+
+    /// The address used for listening (for open)
+    pub bind_addr: SocketAddr,
 
     /// A private key used to sign and identify our own node data
     pub private_key: PKey
@@ -90,7 +95,8 @@ impl ClientConfig {
             min_nodes: 8,
             max_nodes: 16,
             hostname: String::from(""),
-            port: ClientConfig::DEFAULT_PORT
+            port: ClientConfig::DEFAULT_PORT,
+            bind_addr: SocketAddr::new("0.0.0.0".parse().unwrap(), ClientConfig::DEFAULT_PORT)
         }
     }
 }
@@ -313,7 +319,7 @@ impl Client {
     }
 
     pub fn open(&mut self) -> Result<(), Error> {
-        match UdpSocket::bind(self.my_node.endpoint.clone().as_socketaddr().expect("Could not parse hostname... is it valid?")) {
+        match UdpSocket::bind(self.config.bind_addr) {
             Ok(s) => {
 
                 // socket should read indefinitely
