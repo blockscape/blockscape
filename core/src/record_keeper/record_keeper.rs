@@ -59,8 +59,6 @@ impl RecordKeeper {
         let block_hash = block.header.calculate_hash();
         let mut db = self.db.write().unwrap();
 
-        //TODO: Handle if we need to go back and switch branches
-        //TODO: Handle if we are only recording the block, and it does not become part of the current chain
         self.is_valid_block_given_lock(&*db, block)?;
 
         // record the block
