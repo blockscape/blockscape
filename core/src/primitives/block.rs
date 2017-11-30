@@ -36,7 +36,7 @@ impl PartialEq for BlockHeader {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Block {
     pub header: BlockHeader,
-    pub transactions: BTreeSet<U256>,
+    pub txns: BTreeSet<U256>,
 }
 
 pub trait HasBlockHeader {
@@ -80,11 +80,11 @@ impl PartialEq for Block {
 impl Block {
     /// Custom deserialization implementation
     pub fn deserialize(header: BlockHeader, raw_txns: &[u8]) -> Result<Block, bincode::Error> {
-        let transactions = bincode::deserialize::<BTreeSet<U256>>(raw_txns)?;
-        Ok(Block{header, transactions})
+        let txns = bincode::deserialize::<BTreeSet<U256>>(raw_txns)?;
+        Ok(Block{header, txns})
     }
 
-    pub fn calculate_merkle_root(&self) -> U256 {
+    pub fn calculate_merkle_root(txns: &BTreeSet<U256>) -> U256 {
         unimplemented!("Calculate merkle root has not yet been completed!");
     }
 }

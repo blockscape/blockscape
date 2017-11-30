@@ -1,12 +1,13 @@
 use primitives::{U256, U160, Txn, Block, BlockHeader, Mutation, Change, EventListener, ListenerPool};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, BTreeSet};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use super::{MutationRule, MutationRules, Error, LogicError, Storable, RecordEvent, PlotID};
 use super::{PlotEvent, PlotEvents, events};
 use super::database::*;
+use time::Time;
 
-/// An abstraction on the concept of states and state state data. Builds higher-level functionality
+/// An abstraction on the concept of states and state state data. Builds higher-lsuperevel functionality
 /// On top of the database. The implementation uses RwLocks to provide many read, single write
 /// thread safety.
 ///
@@ -47,8 +48,27 @@ impl RecordKeeper {
     }
 
     /// Use pending transactions to create a new block which can then be added to the network.
-    pub fn create_block(&self, txns: HashSet<U256>) -> Block {
-        unimplemented!("Need to create blocks from transactions")
+    pub fn create_block(&self) -> Result<Block, Error> {
+        let pending_txns = self.pending_txns.read().unwrap();
+        let rules = self.rules.read().unwrap();
+        let db = self.db.read().unwrap();
+
+        // for (txn_h, txn) in &*pending_txns {
+
+        // }
+
+        let cbh = db.get_current_block_header()?;
+        let cbh_h = cbh.calculate_hash();
+        Ok(Block{
+            header: BlockHeader{
+                version: 1,
+                timestamp: Time::current(),
+                shard: if cbh.shard.is_zero() { cbh_h } else { cbh.shard },
+                prev: cbh_h,
+                merkle_root: U256::from(0)
+            },
+            txns: BTreeSet::new()
+        })
     }
 
     /// Add a new block to the chain state after verifying it is valid. Then check pending
@@ -251,7 +271,7 @@ impl RecordKeeper {
         //TODO: more validity checks
 
         let mut mutation = Mutation::new();
-        for txn_hash in &block.transactions {
+        for txn_hash in &block.txns {
             let txn = db.get_txn(&txn_hash)?;
             self.is_valid_txn_header_given_lock(db, &txn)?;
             mutation.merge_clone(&txn.mutation);
