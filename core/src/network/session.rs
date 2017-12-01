@@ -143,6 +143,15 @@ pub enum Message {
     }
 }
 
+/// Statistical information object for detailed information about a session
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SessionInfo {
+    network_id: U256,
+    peer: Node,
+    latency: Time,
+    pending_send: usize
+}
+
 /// Represents a single connection between another peer on the network.
 /// There may be only one session for each peer-network (AKA, a peer could have multiple sessions for separate network_id)
 pub struct Session {
@@ -490,6 +499,15 @@ impl Session {
                     skip: 0
                 }
             });
+        }
+    }
+
+    pub fn get_info(&self) -> SessionInfo {
+        SessionInfo {
+            peer: self.remote_peer.as_ref().clone(),
+            network_id: self.network_id,
+            latency: self.latency,
+            pending_send: self.send_queue.lock().unwrap().len()
         }
     }
 

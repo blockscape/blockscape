@@ -3,6 +3,10 @@ use std::time::Instant;
 
 use jsonrpc_core;
 use jsonrpc_core::futures::Future;
+use jsonrpc_core::error::Error;
+use jsonrpc_core::Params;
+
+use serde_json::Value;
 
 pub type RpcResult = Result<jsonrpc_core::Value, jsonrpc_core::Error>;
 
@@ -44,8 +48,26 @@ impl jsonrpc_core::Middleware<SocketMetadata> for LogMiddleware {
 		debug!("Processing RPC request: {:?}", request);
 
 		Box::new(next(request, meta).map(move |res| {
-			println!("Processing took: {:?}", start.elapsed());
+			debug!("Processing took: {:?}", start.elapsed());
 			res
 		}))
     }
+}
+
+pub fn parse_args_simple(p: Params) -> Result<Vec<String>, jsonrpc_core::Error> {
+	match p.parse() {
+		Ok(Value::Array(vec)) => {
+
+			let pv: Vec<Option<String>> = vec.into_iter().map(|v| v.as_str().map(|s| s.into())).collect();
+
+			for v in &pv {
+				if v.is_none() {
+					return Err(Error::invalid_params("All parameters should be simple strings"));
+				}
+			}
+
+			Ok(pv.into_iter().map(|v| v.unwrap()).collect())
+		}
+		_ => Err(Error::invalid_params("Could not parse or args missing"))
+	}
 }
