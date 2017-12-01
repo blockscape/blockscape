@@ -19,7 +19,7 @@ pub fn as_bytes_per_sec(val: u64) -> String {
     as_bytes(val) + "/s"
 }
 
-pub fn as_secs(val: u64) -> String {
+/*pub fn as_secs(val: u64) -> String {
     if val < 1000 {
         val.to_string() + "ms"
     }
@@ -32,4 +32,4 @@ pub fn as_secs(val: u64) -> String {
     else {
         format!("{:.2}", val as f64 / (60.0 * 60.0 * 1000.0)) + "h"
     }
-}
+}*/

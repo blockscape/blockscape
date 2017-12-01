@@ -2,6 +2,11 @@ extern crate blockscape_core;
 extern crate chan_signal;
 extern crate openssl;
 extern crate serde;
+extern crate serde_json;
+
+extern crate futures;
+extern crate hyper;
+extern crate tokio_core;
 
 #[macro_use]
 extern crate serde_derive;
@@ -14,11 +19,18 @@ extern crate log;
 
 extern crate colored;
 
+extern crate jsonrpc_core;
+extern crate jsonrpc_macros;
+extern crate jsonrpc_http_server;
+
 mod boot;
+mod context;
 mod plot_event;
 mod rules;
 mod reporter;
 mod format;
+
+mod rpc;
 
 use chan_signal::Signal;
 use std::sync::Arc;
@@ -33,11 +45,19 @@ use blockscape_core::work_queue::WorkQueue;
 
 use boot::*;
 
+use context::Context;
+
 fn main() {
     pretty_env_logger::init().unwrap();
 
     // Parse cmdline
     let cmdline = parse_cmdline();
+
+    // are we to be executing an RPC command on a running instance?
+    if cmdline.is_present("rpccmd") {
+        call_rpc(&cmdline);
+        return;
+    }
 
     // Ready to boot
     println!("Welcome to Blockscape v{}", env!("CARGO_PKG_VERSION"));
@@ -65,7 +85,7 @@ fn main() {
         // start network
         let cc = make_network_config(&cmdline);
 
-        let mut c = Client::new(rk, wq, cc);
+        let c = Client::new(rk.clone(), wq, cc);
 
         // TODO: Somewhere around here, we read a config or cmdline or something to figure out which net to work for
         // but start with the genesis
@@ -84,8 +104,13 @@ fn main() {
         }
     }
 
-    // Open RPC interface
+    let ctx = Context {
+        rk: rk.clone(),
+        network: net_client.clone()
+    };
 
+    // Open RPC interface
+    let rpc = make_rpc(&cmdline, ctx.clone());
 
     // startup the reporter
     let (tx, rx) = channel();
@@ -103,6 +128,8 @@ fn main() {
     signal.recv().unwrap();
 
     println!("Finishing work, please wait...");
+
+    rpc.close();
 
     // close the network
     if let Some(client) = net_client {
