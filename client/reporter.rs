@@ -63,7 +63,8 @@ fn value_print<N: PartialOrd + ToString>(val: N, low: N, high: N) -> ColoredStri
     }
 }
 
-/// Same as `value_print`, but prints the "oppoite" colors when high values are the extreme/bad
+/*
+// Same as `value_print`, but prints the "oppoite" colors when high values are the extreme/bad
 fn inverse_value_print<N: PartialOrd + ToString>(val: N, low: N, high: N) -> ColoredString {
     if val <= low {
         val.to_string().green()
@@ -98,4 +99,4 @@ fn inverse_value_string_print<N: PartialOrd>(val: N, low: N, high: N, s: &str) -
     else {
         s.red()
     }
-}
+}*/
