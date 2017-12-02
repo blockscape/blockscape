@@ -14,7 +14,7 @@ use env::get_client_name;
 use network::node::{Node, NodeRepository, NodeEndpoint, LocalNode};
 use network::ntp;
 use network::session;
-use network::session::{RawPacket, Message};
+use network::session::{SessionInfo, RawPacket, Message};
 use network::shard::{ShardInfo};
 use network::work_controller::NetworkWorkController;
 use primitives::{Block, Txn, U256, EventListener};
@@ -102,7 +102,7 @@ impl ClientConfig {
 }
 
 /// Statistical information which can be queried from the network client
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Statistics {
     /// The number of networks currently registered/working on this node
     pub attached_networks: u8,
@@ -572,6 +572,19 @@ impl Client {
                 self.detach_network_port(i as u8);
             }
         }
+    }
+
+    pub fn get_peer_info(&self) -> Vec<SessionInfo> {
+
+        let mut p = Vec::new();
+
+        for i in 0..255 {
+            if let Some(ref s) = *self.shards[i].read().unwrap() {
+                p.append(&mut s.get_session_info());
+            }
+        }
+
+        p
     }
 
     pub fn get_stats(&self) -> Statistics {

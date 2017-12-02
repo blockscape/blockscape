@@ -7,6 +7,7 @@ use std::fmt;
 use std::time::Duration;
 //use serde::{Serialize, Deserialize};
 use serde_json;
+use serde_json::Value;
 use hyper::{Client, Method, Request, self};
 use hyper::header::{ContentLength, ContentType, Accept};
 use tokio_core::reactor::Core;
@@ -87,13 +88,13 @@ impl JsonRpcRequest {
 pub struct JsonRpcError {
     code: i64,
     message: String,
-    //data: String
+    data: Option<Value>
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct JsonRpcResponse {
     jsonrpc: String,
-    result: Option<String>,
+    result: Option<Value>,
     error: Option<JsonRpcError>,
     id: u64
 }
@@ -101,10 +102,10 @@ pub struct JsonRpcResponse {
 impl fmt::Display for JsonRpcResponse {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if let Some(ref err) = self.error {
-            write!(f, "Error {}: {}", err.code, err.message)
+            write!(f, "Remote RPC Error {}: {:#}", err.code, err.message)
         }
         else {
-            write!(f, "{}", self.result.clone().unwrap_or_default())
+            write!(f, "{:#}", self.result.clone().unwrap_or_default())
         }
     }
 }
