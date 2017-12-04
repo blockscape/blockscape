@@ -110,7 +110,7 @@ pub fn make_genesis() -> (Block, Vec<Txn>) {
             prev: U256_ZERO,
             merkle_root: U256_ZERO
         },
-        transactions: BTreeSet::new()
+        txns: BTreeSet::new()
     };
 
     let mut m = Mutation::new();
@@ -130,7 +130,7 @@ pub fn make_genesis() -> (Block, Vec<Txn>) {
         signature: Vec::new(),
     };
 
-    b.transactions.insert(0.into());
+    b.txns.insert(0.into());
 
     // TODO: Merkle root hash happens here:
     //b.calculate_merkle_root();
