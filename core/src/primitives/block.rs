@@ -1,8 +1,9 @@
 use bincode;
 use hash::hash_obj;
-use primitives::U256;
+use primitives::{U256, U256_ZERO};
 use std::collections::BTreeSet;
 use std::ops::{Deref, DerefMut};
+use std::cmp::Ordering;
 use time::Time;
 
 /// The main infromation about a block. This noteably excludes the list of transactions.
@@ -20,17 +21,17 @@ pub struct BlockHeader {
     pub merkle_root: U256,
 }
 
-impl BlockHeader {
-    pub fn calculate_hash(&self) -> U256 {
-        hash_obj(self)
-    }
-}
-
 impl PartialEq for BlockHeader {
     fn eq(&self, other: &BlockHeader) -> bool {
         self.calculate_hash() == other.calculate_hash()
     }
 } impl Eq for BlockHeader {}
+
+impl BlockHeader {
+    pub fn calculate_hash(&self) -> U256 {
+        hash_obj(self)
+    }
+}
 
 /// The core unit of the blockchain.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -76,6 +77,20 @@ impl PartialEq for Block {
         self.header == other.header
     }
 } impl Eq for Block {}
+
+impl PartialOrd for Block {
+    fn partial_cmp(&self, other: &Block) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Block {
+    fn cmp(&self, other: &Block) -> Ordering {
+        let a = self.calculate_hash();
+        let b = other.calculate_hash();
+        a.cmp(&b)
+    }
+}
 
 impl Block {
     /// Custom deserialization implementation
