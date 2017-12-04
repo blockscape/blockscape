@@ -1,10 +1,9 @@
 use clap::{Arg, ArgGroup, ArgMatches, App};
 use openssl::pkey::PKey;
 use std::collections::BTreeSet;
-use std::fs::File;
-use std::io::{Read,Write};
 use std::str::FromStr;
 use std::net::SocketAddr;
+use std::fmt::Debug;
 
 use blockscape_core::env::*;
 use blockscape_core::network::client::ClientConfig;
@@ -12,6 +11,10 @@ use blockscape_core::network::node::NodeEndpoint;
 use blockscape_core::primitives::*;
 use blockscape_core::signer::generate_private_key;
 use blockscape_core::time::Time;
+
+use rpc::RPC;
+
+use context::Context;
 
 const ADMIN_KEY_PREFIX: &[u8] = b"ADMIN";
 const ADMIN_KEY: &[u8] = b""; //TODO: Insert Admin Key
@@ -23,14 +26,6 @@ pub fn parse_cmdline<'a>() -> ArgMatches<'a> {
         .long("workdir")
         .value_name("DIR")
         .help("Sets the directory where Blockscape will store its data");
-    
-    /*let mut strpath: Option<&'a str> = None;
-
-    let mut strpath = env::get_storage_dir().map(|p| String::from(p.to_str().unwrap()));
-
-    if let Some(p) = strpath {
-        workdir_arg = workdir_arg.default_value(&p);
-    }*/
 
     App::new("Blockscape Official Client")
         .version(crate_version!())
@@ -83,6 +78,25 @@ pub fn parse_cmdline<'a>() -> ArgMatches<'a> {
                 .long("seed-node")
                 .help("Specifies the nodes to try connecting to first when none are available in the repo")
                 .value_name("HOST:PORT"))
+        .group(ArgGroup::with_name("rpc"))
+            .arg(Arg::with_name("rpcport")
+                .long("rpcport")
+                .help("Set the port which the JSONRPC interface should listen on")
+                .default_value("8356")
+                .value_name("PORT"))
+            .arg(Arg::with_name("rpcbind")
+                .long("rpcbind")
+                .help("Sets the interfaces which the JSONRPC interface should listen")
+                .default_value("127.0.0.1")
+                .value_name("HOST"))
+        
+        // positional argument provided means to call rpc
+        .arg(Arg::with_name("rpccmd")
+            .help("The JSON-RPC command to call (note: switches to rpc client mode)"))
+        .arg(Arg::with_name("rpcargs")
+            .help("The arguments for the RPC command")
+            .multiple(true))
+
         .get_matches()
 }
 
@@ -134,7 +148,7 @@ pub fn make_network_config(cmdline: &ArgMatches) -> ClientConfig {
 
     let key: PKey;
 
-    if let Some(mut k) = load_key("node") {
+    if let Some(k) = load_key("node") {
         key = k;
         info!("Loaded node keyfile from file.");
     }
@@ -166,4 +180,35 @@ pub fn make_network_config(cmdline: &ArgMatches) -> ClientConfig {
     config.bind_addr = SocketAddr::new(cmdline.value_of("bind").unwrap().parse().expect("Invalid bind IP"), config.port);
 
     config
+}
+
+/// Starts the JSONRPC server
+pub fn make_rpc(cmdline: &ArgMatches, ctx: Context) -> RPC {
+
+    let bind_addr = SocketAddr::new(cmdline.value_of("rpcbind").unwrap().parse().expect("Invalid RPC bind IP"), 
+            cmdline.value_of("rpcport").unwrap().parse::<u16>().expect("Invalid RPC port: must be a number!"));
+
+    RPC::run(bind_addr, ctx)
+}
+
+pub fn call_rpc(cmdline: &ArgMatches) {
+
+    use rpc::client::JsonRpcRequest;
+
+    let method = cmdline.value_of_lossy("rpccmd").expect("Unknown encoding for RPC command!").into_owned();
+    let args = cmdline.values_of_lossy("rpcargs").unwrap_or(Vec::new());
+
+    debug!("Calling RPC: {}", method);
+
+    let bind_addr = SocketAddr::new(cmdline.value_of("rpcbind").unwrap().parse().expect("Invalid RPC bind IP"), 
+            cmdline.value_of("rpcport").unwrap().parse::<u16>().expect("Invalid RPC port: must be a number!"));
+
+    let res = JsonRpcRequest::new(method, args).exec_sync(bind_addr);
+
+    if res.is_err() {
+        println!("RPC Error: {}", res.err().unwrap());
+    }
+    else {
+        println!("{}", res.unwrap());
+    }
 }

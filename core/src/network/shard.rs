@@ -10,7 +10,7 @@ use std::ops::Deref;
 use network::client::{ShardMode, NetworkContext};
 use network::client;
 use network::node::{Node, NodeRepository};
-use network::session::{Session, ByeReason, Packet, RawPacket};
+use network::session::{Session, SessionInfo, ByeReason, Packet, RawPacket};
 use primitives::{U256, U160};
 
 pub struct ShardInfo {
@@ -262,6 +262,20 @@ impl ShardInfo {
         }
 
         count
+    }
+
+    /// Returns information on all active sessions
+    pub fn get_session_info(&self) -> Vec<SessionInfo> {
+
+        let mut vec = Vec::new();
+
+        for sess in self.sessions.read().unwrap().values() {
+            if sess.is_introduced() {
+                vec.push(sess.get_info());
+            }
+        }
+
+        vec
     }
 
     fn send_session_packets(sess: &mut Session, s: &UdpSocket) -> u64 {
