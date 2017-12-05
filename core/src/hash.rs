@@ -42,6 +42,7 @@ pub fn hash_obj<S: Serialize>(obj: &S) -> U256 {
     hash_bytes(&encoded)
 }
 
+/// Calculate the hash of two hashes. Note: merge_hashes(a, b) != merge_hashes(b, a)
 pub fn merge_hashes(a: &U256, b: &U256) -> U256 {
     let mut m: Vec<u8> = bincode::serialize(a, bincode::Bounded(32)).unwrap();
     m.extend_from_slice( &bincode::serialize(b, bincode::Bounded(32)).unwrap() );

@@ -147,14 +147,17 @@ impl RecordKeeper {
 
     /// Find a validator's public key given the hash. If they are not found, then they are not a
     /// validator.
+    /// TODO: Handle shard-based reputations
     pub fn get_validator_key(&self, id: &U160) -> Result<Vec<u8>, Error> {
-        unimplemented!()
+        self.db.read().unwrap()
+            .get_validator_key(id)
     }
 
-    /// Get the reputation of a validator. Will default to 0 if they are not found.
+    /// Get the reputation of a validator given their ID.
     /// TODO: Handle shard-based reputations
     pub fn get_validator_rep(&self, id: &U160) -> Result<i64, Error> {
-        unimplemented!()
+        self.db.read().unwrap()
+            .get_validator_rep(id)
     }
 
     /// Retrieve the current block hash which the network state represents.

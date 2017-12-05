@@ -200,8 +200,8 @@ impl U160 {
         }
     }
 
-    pub fn to_vec(v: U160) -> Vec<u8> {
-        bincode::serialize(&v, bincode::Bounded(20)).unwrap()
+    pub fn to_vec(&self) -> Vec<u8> {
+        bincode::serialize(&self, bincode::Bounded(20)).unwrap()
      }
 }
 

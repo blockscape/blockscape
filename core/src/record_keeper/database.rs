@@ -1,7 +1,7 @@
 use bincode;
 use bytes::{BigEndian, ByteOrder};
 use env;
-use primitives::{U256, Mutation, Change, Block, BlockHeader, Txn};
+use primitives::{U256, U160, Mutation, Change, Block, BlockHeader, Txn};
 use rocksdb::{DB, Options};
 use rocksdb::Error as RocksDBError;
 use std::collections::{HashSet, HashMap, BTreeMap};
@@ -16,6 +16,8 @@ pub const NETWORK_POSTFIX: &[u8] = b"n";
 pub const PLOT_PREFIX: &[u8] = b"PLT";
 pub const HEIGHT_PREFIX: &[u8] = b"HGT";
 pub const CONTRA_PREFIX: &[u8] = b"CMT";
+pub const VALIDATOR_PREFIX: &[u8] = b"VAL";
+pub const REPUTATION_PREFIX: &[u8] = b"REP";
 
 pub const CURRENT_BLOCK: &[u8] = b"CURblock";
 
@@ -107,10 +109,7 @@ impl Database {
     }
 
     fn get_raw_data_static(db: &DB, key: &[u8], postfix: &'static [u8]) -> Result<Vec<u8>, Error> {
-        let key = {
-            let mut k = Vec::from(key);
-            k.extend_from_slice(postfix); k
-        };
+        let key = Self::with_postfix(key, postfix);
 
         db.get(&key)?
             .map(|d| d.to_vec())
@@ -124,11 +123,7 @@ impl Database {
     }
 
     fn put_raw_data_static(db: &DB, key: &[u8], data: &[u8], postfix: &'static [u8]) -> Result<(), Error> {
-        let key = {
-            let mut k = Vec::from(key);
-            k.extend_from_slice(postfix); k
-        };
-
+        let key = Self::with_postfix(key, postfix);
         Ok(db.put(&key, &data)?)
     }
 
@@ -137,10 +132,7 @@ impl Database {
     /// database. Note that `instance_id` should be the object's ID/key which would normally be
     /// returned from calling `storable.instance_id()`.
     pub fn get<S: Storable>(&self, instance_id: &[u8], postfix: &'static [u8]) -> Result<S, Error> {
-        let key = {
-            let mut k = Vec::from(S::global_id());
-            k.extend_from_slice(instance_id); k
-        };
+        let key = Self::with_postfix(instance_id, postfix);
 
         let raw = self.get_raw_data(&key, postfix)?;
         Ok(bincode::deserialize::<S>(&raw)?)
@@ -228,9 +220,26 @@ impl Database {
         Ok(Block::deserialize(header, &raw_txns)?)
     }
 
+    /// Get a transaction that has been recorded in the database. It will only be recorded in the DB
+    /// if it was accepted in a block. Said block may be an uncle.
     pub fn get_txn(&self, hash: &U256) -> Result<Txn, Error> {
         let id = hash.to_vec();
         self.get::<Txn>(&id, BLOCKCHAIN_POSTFIX)
+    }
+
+    /// Get the public key of a validator given their ID.
+    /// TODO: Handle shard-based reputations
+    pub fn get_validator_key(&self, id: &U160) -> Result<Vec<u8>, Error> {
+        let key = Self::with_prefix(VALIDATOR_PREFIX, &id.to_vec());
+        self.get_raw_data(&key, NETWORK_POSTFIX)
+    }
+
+    /// Get the reputation of a validator given their ID.
+    /// TODO: Handle shard-based reputations
+    pub fn get_validator_rep(&self, id: &U160) -> Result<i64, Error> {
+        let key = Self::with_prefix(REPUTATION_PREFIX, &id.to_vec());
+        let raw = self.get_raw_data(&key, NETWORK_POSTFIX)?;
+        Ok(bincode::deserialize::<i64>(&raw)?)
     }
 
     /// Return a list of **known** blocks which have a given height. If the block has not been added
@@ -403,7 +412,7 @@ impl Database {
 
     /// Add a new event to a plot
     pub fn add_plot_event(&mut self, plot_id: PlotID, tick: u64, event: &PlotEvent) -> Result<(), Error> {
-        let db_key = Self::plot_key(&plot_id);
+        let db_key = Self::with_pre_post_fix(PLOT_PREFIX, &plot_id.bytes(), NETWORK_POSTFIX);
 
         let mut events: PlotEvents = self.db.get(&db_key)?.map_or(
             PlotEvents::new(), //if not found, we need to create the data structure
@@ -422,7 +431,8 @@ impl Database {
     /// you set `after_tick` to 0, you would not get all events unless the oldest events have not
     /// yet been removed from the cache.
     pub fn get_plot_events(&self, plot_id: PlotID, after_tick: u64) -> Result<PlotEvents, Error> {
-        let db_key = Self::plot_key(&plot_id);
+        let db_key = Self::with_pre_post_fix(PLOT_PREFIX, &plot_id.bytes(), NETWORK_POSTFIX);
+
         Ok(self.db.get(&db_key)?.map_or(
             PlotEvents::new(),
             |v| bincode::deserialize(&v).unwrap()
@@ -494,7 +504,7 @@ impl Database {
                 }
             },
             Change::AddEvent{id, tick, event, ..} => {
-                let db_key = Self::plot_key(&id);
+                let db_key = Self::with_prefix(PLOT_PREFIX, &id.bytes());
 
                 if let Some(raw_events) = self.db.get(&db_key)? {
                     let mut events: PlotEvents = bincode::deserialize(&raw_events).unwrap();
@@ -597,28 +607,39 @@ impl Database {
 
     /// Retrieve the contra from the db to undo the given block
     fn get_contra(&self, hash: &U256) -> Result<Mutation, Error> {
-        let key = Self::contra_kay(hash);
+        let key = Self::with_prefix(CONTRA_PREFIX, &hash.to_vec());
         let raw = self.get_raw_data(&key, CACHE_POSTFIX)?;
         Ok(bincode::deserialize(&raw)?)
     }
 
     /// Add a contra for a given block
     fn add_contra(&mut self, hash: &U256, contra: &Mutation) -> Result<(), Error> {
-        let key = Self::contra_kay(hash);
+        let key = Self::with_prefix(CONTRA_PREFIX, &hash.to_vec());
         let raw = bincode::serialize(contra, bincode::Infinite).unwrap();
         self.put_raw_data(&key, &raw, CACHE_POSTFIX)
     }
 
 
-    fn plot_key(id: &PlotID) -> Vec<u8> {
-        let mut k = Vec::from(PLOT_PREFIX);
-        k.append(&mut id.bytes());
-        k.extend_from_slice(NETWORK_POSTFIX); k
+    /// Add a prefix to raw data.
+    #[inline]
+    pub fn with_prefix(prefix: &'static [u8], data: &[u8]) -> Vec<u8> {
+        let mut t = Vec::from(prefix);
+        t.extend_from_slice(data); t
     }
 
-    fn contra_kay(hash: &U256) -> Vec<u8> {
-        let mut k = Vec::from(CONTRA_PREFIX);
-        k.append(&mut hash.to_vec()); k        
+    /// Add a postfix to raw data
+    #[inline]
+    pub fn with_postfix(data: &[u8], postfix: &'static [u8]) -> Vec<u8> {
+        let mut t = Vec::from(data);
+        t.extend_from_slice(postfix); t
+    }
+
+    /// Add a prefix and postfix to raw data.
+    #[inline]
+    pub fn with_pre_post_fix(prefix: &'static [u8], data: &[u8], postfix: &'static [u8]) -> Vec<u8> {
+        let mut t = Vec::from(prefix);
+        t.extend_from_slice(data);
+        t.extend_from_slice(postfix); t
     }
 
     /// Get the distance of the inrsection for the LCA on both paths. Returns
