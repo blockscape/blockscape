@@ -198,7 +198,7 @@ impl RecordKeeper {
     /// blocks. The result will be sorted with the lowest height first, and will not include the
     /// start or target hashes, therefore, it will also return an empty vector if `target.prev ==
     /// start`.
-    pub fn get_blocks_between(&self, start: U256, target: U256, limit: u32) -> Result<Vec<U256>, Error> {
+    pub fn get_blocks_between(&self, start: &U256, target: &U256, limit: u32) -> Result<Vec<U256>, Error> {
         self.db.read().unwrap()
             .get_blocks_between(start, target, limit)
     }
@@ -207,17 +207,9 @@ impl RecordKeeper {
     /// returns a chain from start until the latest known block which is it's descendent. It will be
     /// sorted from lowest height the greatest height, so from start until wherever it ends. It will
     /// be empty only if start has known blocks for which it is a ancestor.
-    pub fn get_blocks_after_hash(&self, start: U256, limit: u32) -> Result<Vec<U256>, Error> {
+    pub fn get_blocks_after_hash(&self, start: &U256, limit: u32) -> Result<Vec<U256>, Error> {
         self.db.read().unwrap()
             .get_blocks_after_hash(start, limit)
-    }
-
-    /// Retrieves all the blocks which come after the starting height. It will include uncles. At
-    /// index 0 of the returned vector, it will store the blocks at height `start + 1`. It will stop
-    /// at either height `start + limit + 1` or the current head height; whichever is lower.
-    pub fn get_blocks_after_height(&self, start: u64, limit: u32) -> Result<Vec<HashSet<U256>>, Error> {
-        self.db.read().unwrap()
-            .get_blocks_after_height(start, limit)
     }
 
     /// Returns a map of events for each tick that happened after a given tick. Note: it will not

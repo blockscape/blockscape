@@ -296,7 +296,7 @@ impl Database {
     /// blocks. The result will be sorted with the lowest height first, and will not include the
     /// start or target hashes, therefore, it will also return an empty vector if `target.prev ==
     /// start`.
-    pub fn get_blocks_between(&self, start: U256, target: U256, limit: u32) -> Result<Vec<U256>, Error> {
+    pub fn get_blocks_between(&self, start: &U256, target: &U256, limit: u32) -> Result<Vec<U256>, Error> {
         unimplemented!();
     }
 
@@ -304,23 +304,8 @@ impl Database {
     /// returns a chain from start until the latest known block which is it's descendent. It will be
     /// sorted from lowest height the greatest height, so from start until wherever it ends. It will
     /// be empty only if start has known blocks for which it is a ancestor.
-    pub fn get_blocks_after_hash(&self, start: U256, limit: u32) -> Result<Vec<U256>, Error> {
+    pub fn get_blocks_after_hash(&self, start: &U256, limit: u32) -> Result<Vec<U256>, Error> {
         unimplemented!();
-    }
-
-    /// Retrieves all the blocks which come after the starting height. It will include uncles. At
-    /// index 0 of the returned vector, it will store the blocks at height `start + 1`. It will stop
-    /// at either height `start + limit + 1` or the current head height; whichever is lower.
-    pub fn get_blocks_after_height(&self, start: u64, limit: u32) -> Result<Vec<HashSet<U256>>, Error> {
-        let min_height = start + 1;
-        let max_height = cmp::min(self.head.height, min_height + limit as u64) + 1;
-
-        // note, if there are no blocks of that height known to us, then it will simply
-        // return an empty set.
-        let mut results: Vec<HashSet<U256>> = Vec::new();
-        for i in min_height..max_height {
-            results.push( self.get_blocks_of_height(i)? );
-        } Ok(results)
     }
 
     /// Will find the current head of the blockchain. This uses the last known head to find the
@@ -345,7 +330,7 @@ impl Database {
             }
             height += 1;
         }
-    }
+    }then
 
     /// Walk the network state to a given block in the block chain
     pub fn walk(&mut self, b_block: &U256) -> Result<(), Error> {
@@ -577,7 +562,7 @@ impl Database {
         b.insert(*hash_b, 0);
         
         // the last hash added for both chains
-        let mut last_a: U256 = *hash_a;
+        let mut last_a: U256 = *hash_a;then
         let mut last_b: U256 = *hash_b;
 
         // Current running distance from the block in question
