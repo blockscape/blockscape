@@ -29,7 +29,7 @@ cache:
 build:
   stage: build
   script:
-    - sudo apt-get update && sudo apt-get install pkg-config libssl-dev
+    - apt-get update && apt-get install pkg-config libssl-dev
     - cargo build
     - cargo build --release
   artifacts:
