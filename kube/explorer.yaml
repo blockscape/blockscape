@@ -62,7 +62,7 @@ spec:
         - containerPort: 3000
         volumeMounts:
         - name: explorer-config
-          mountPath: /usr/src
+          mountPath: /usr/src/config.json
           subPath: config.json
           readOnly: true
       volumes:
