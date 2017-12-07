@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: explorer-${CI_COMMIT_REF_SLUG}
+  namespace: blockscape
+  annotations:
+    sha: ${CI_COMMIT_SHA}
+spec:
+  ports:
+  - port: 3000
+    name: http
+  selector:
+    app: blockscape-${CI_COMMIT_REF_SLUG}-explorer
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: explorer-${CI_COMMIT_REF_SLUG}
+  namespace: blockscape
+spec:
+  config.json: >
+    {
+      "rpc": {
+        "host": "client-${CI_COMMIT_REF_SLUG}-0.blockscape",
+        "port": 8356
+      }
+    }
+---
+apiVersion: apps/v1beta2
+kind: Deployment
+metadata:
+  name: explorer-${CI_COMMIT_REF_SLUG}
+  namespace: blockscape
+  annotations:
+    sha: ${CI_COMMIT_SHA}
+  labels:
+    app: blockscape-${CI_COMMIT_REF_SLUG}-explorer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: blockscape-${CI_COMMIT_REF_SLUG}-explorer
+  template:
+    metadata:
+      name: explorer-${CI_COMMIT_REF_SLUG}
+      namespace: blockscape
+      annotations:
+        sha: ${CI_COMMIT_SHA}
+      labels:
+        app: blockscape-${CI_COMMIT_REF_SLUG}-explorer
+    spec:
+      imagePullSecrets:
+      - name: buyme-registry
+      containers:
+      - image: dcr.buyme360.com/plu-capstone/blockscape-explorer:master
+        imagePullPolicy: Always
+        name: blockscape
+        env:
+        - name: RUST_LOG
+          value: debug
+        ports:
+        - containerPort: 3000
+        volumeMounts:
+        - name: explorer-config
+          mountPath: /usr/src
+          subPath: config.json
+          readOnly: true
+      volumes:
+      - name: explorer-config
+        configMap:
+          name: explorer-${CI_COMMIT_REF_SLUG}
