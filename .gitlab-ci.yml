@@ -97,6 +97,8 @@ stop_deploy:
     - kubectl version
     - delete_template blockscape-client-0.yaml
     - delete_template blockscape-client-1.yaml
+    - delete_template explorer.yaml
+    - delete_template ingress.yaml
   when: manual
   environment:
     name: staging/$CI_COMMIT_REF_NAME
