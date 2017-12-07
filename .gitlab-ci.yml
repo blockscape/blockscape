@@ -1,10 +1,11 @@
 # use the official rust image, based on debian
 # see https://hub.docker.com/_/rust
-image: rust:1.21-stretch
+image: scorpil/rust:1.20
 
 variables:
   IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
   DOCKER_HOST: tcp://localhost:2375
+  CARGO_HOME: $CI_PROJECT_DIR/cargo
 
 stages:
 - build
@@ -12,8 +13,8 @@ stages:
 - package
 - deploy
 
-before_script:
-  - export CARGO_HOME=$CI_PROJECT_DIR/cargo
+  #before_script:
+        #  - export CARGO_HOME=$CI_PROJECT_DIR/cargo
 
 services:
   - dcr.buyme360.com/devops/docker:dind
