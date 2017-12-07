@@ -10,7 +10,7 @@ metadata:
       ingress.kubernetes.io/proxy-body-size: 3M
 spec:
   rules:
-  - host: ${CI_ENVIRONMENT_URL}
+  - host: explorer-${CI_COMMIT_REF_SLUG}.blockscape.xram.co
     http:
       paths:
       - path: /
