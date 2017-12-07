@@ -17,7 +17,7 @@ kind: ConfigMap
 metadata:
   name: explorer-${CI_COMMIT_REF_SLUG}
   namespace: blockscape
-spec:
+data:
   config.json: >
     {
       "rpc": {
