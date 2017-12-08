@@ -5,7 +5,7 @@ image: dcr.buyme360.com/plu-capstone/rust:latest
 variables:
   IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
   DOCKER_HOST: tcp://localhost:2375
-  CARGO_HOME: $CI_PROJECT_DIR/cargo
+  #CARGO_HOME: $CI_PROJECT_DIR/cargo
 
 stages:
 - build
@@ -13,8 +13,9 @@ stages:
 - package
 - deploy
 
-  #before_script:
-        #  - export CARGO_HOME=$CI_PROJECT_DIR/cargo
+before_script:
+  - mkdir cargo2
+  - ln -s $CI_PROJECT_DIR/cargo2 /root/.cargo
 
 services:
   - dcr.buyme360.com/devops/docker:dind
@@ -22,7 +23,7 @@ services:
 cache:
   #untracked: true
   paths:
-    - cargo/
+    - cargo2/
     - target/
     
 
