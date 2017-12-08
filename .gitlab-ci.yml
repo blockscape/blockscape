@@ -56,7 +56,7 @@ test:
   stage: check
   script:
     - cargo test --release
-    - cargo test -p blockscape_core
+    - cargo test -p blockscape_core --release
   
 package:
   image: dcr.buyme360.com/devops/docker:latest
