@@ -14,7 +14,7 @@ stages:
 - deploy
 
 before_script:
-  - false
+  - 'false'
   - mkdir cargo2 | true
   - ln -s $CI_PROJECT_DIR/cargo2 /root/.cargo
 
