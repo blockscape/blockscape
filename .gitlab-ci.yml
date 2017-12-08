@@ -14,8 +14,8 @@ stages:
 - deploy
 
 before_script:
-  - 'false'
-  - mkdir cargo2 | true
+ #- 'false'
+  - mkdir cargo2 #| true
   - ln -s $CI_PROJECT_DIR/cargo2 /root/.cargo
 
 services:
@@ -25,7 +25,7 @@ cache:
   #untracked: true
   paths:
     - cargo2/
-    - target/
+    #- target/
     
 
 build:
