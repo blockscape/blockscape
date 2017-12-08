@@ -30,7 +30,6 @@ build:
   stage: build
   script:
     - apt-get update && apt-get install -y pkg-config libssl-dev build-essential
-    - cargo build
     - cargo build --release
   artifacts:
     paths:
@@ -43,7 +42,7 @@ build:
 pages:
   stage: deploy
   script:
-    - cargo doc
+    - cargo doc --release
     - mkdir public
     - cp -R target/doc/* public
   artifacts:
@@ -56,7 +55,7 @@ pages:
 test:
   stage: check
   script:
-    - cargo test
+    - cargo test --release
     - cargo test -p blockscape_core
   
 package:
