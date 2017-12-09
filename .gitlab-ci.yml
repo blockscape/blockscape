@@ -5,15 +5,13 @@ image: rust:1.21-stretch
 variables:
   IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
   DOCKER_HOST: tcp://localhost:2375
+  CARGO_HOME: $CI_PROJECT_DIR/cargo
 
 stages:
 - build
 - check
 - package
 - deploy
-
-before_script:
-  - export CARGO_HOME=$CI_PROJECT_DIR/cargo
 
 services:
   - dcr.buyme360.com/devops/docker:dind
@@ -28,7 +26,6 @@ cache:
 build:
   stage: build
   script:
-    - cargo build
     - cargo build --release
   artifacts:
     paths:
@@ -41,7 +38,7 @@ build:
 pages:
   stage: deploy
   script:
-    - cargo doc
+    - cargo doc --release
     - mkdir public
     - cp -R target/doc/* public
   artifacts:
@@ -54,8 +51,8 @@ pages:
 test:
   stage: check
   script:
-    - cargo test
-    - cargo test -p blockscape_core
+    - cargo test --release
+    - cargo test -p blockscape_core --release
   
 package:
   image: dcr.buyme360.com/devops/docker:latest
