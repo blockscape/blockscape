@@ -15,6 +15,7 @@ stages:
 
 before_script:
  #- 'false'
+  - sleep 1000
   - mkdir cargo2 #| true
   - ln -s $CI_PROJECT_DIR/cargo2 /root/.cargo
 
