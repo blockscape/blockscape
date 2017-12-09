@@ -1,21 +1,17 @@
 # use the official rust image, based on debian
 # see https://hub.docker.com/_/rust
-image: dcr.buyme360.com/plu-capstone/rust:latest
+image: rust:1.21
 
 variables:
   IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
   DOCKER_HOST: tcp://localhost:2375
-  #CARGO_HOME: $CI_PROJECT_DIR/cargo
+  CARGO_HOME: $CI_PROJECT_DIR/cargo
 
 stages:
 - build
 - check
 - package
 - deploy
-
-before_script:
-  - mkdir cargo || true
-  - ln -s $CI_PROJECT_DIR/cargo /root/.cargo
 
 services:
   - dcr.buyme360.com/devops/docker:dind
