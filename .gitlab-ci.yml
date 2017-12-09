@@ -14,10 +14,8 @@ stages:
 - deploy
 
 before_script:
- #- 'false'
- #- sleep 1000
-  - mkdir cargo2 #| true
-  - ln -s $CI_PROJECT_DIR/cargo2 /root/.cargo
+  - mkdir cargo | true
+  - ln -s $CI_PROJECT_DIR/cargo /root/.cargo
 
 services:
   - dcr.buyme360.com/devops/docker:dind
@@ -25,8 +23,8 @@ services:
 cache:
   #untracked: true
   paths:
-    - cargo2/
-    #- target/
+    - cargo/
+    - target/
     
 
 build:
