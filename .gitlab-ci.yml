@@ -14,7 +14,7 @@ stages:
 - deploy
 
 before_script:
-  - mkdir cargo | true
+  - mkdir cargo || true
   - ln -s $CI_PROJECT_DIR/cargo /root/.cargo
 
 services:
