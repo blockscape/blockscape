@@ -19,6 +19,7 @@ services:
 build:
   stage: build
   cache:
+    key: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME"
     paths:
       - cargo/
       - target/
@@ -35,6 +36,7 @@ build:
 pages:
   stage: deploy
   cache:
+    key: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME"
     paths:
       - cargo/
       - target/
@@ -52,6 +54,7 @@ pages:
 test:
   stage: check
   cache:
+    key: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME"
     paths:
       - cargo/
       - target/
