@@ -5,6 +5,7 @@ image: rust:1.21-stretch
 variables:
   IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
   DOCKER_HOST: tcp://localhost:2375
+  CARGO_HOME: $CI_PROJECT_DIR/cargo
 
 stages:
 - build
@@ -12,23 +13,17 @@ stages:
 - package
 - deploy
 
-before_script:
-  - export CARGO_HOME=$CI_PROJECT_DIR/cargo
-
 services:
   - dcr.buyme360.com/devops/docker:dind
 
-cache:
-  #untracked: true
-  paths:
-    - cargo/
-    - target/
-    
-
 build:
   stage: build
+  cache:
+    key: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME"
+    paths:
+      - cargo/
+      - target/
   script:
-    - cargo build
     - cargo build --release
   artifacts:
     paths:
@@ -40,6 +35,11 @@ build:
 
 pages:
   stage: deploy
+  cache:
+    key: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME"
+    paths:
+      - cargo/
+      - target/
   script:
     - cargo doc
     - mkdir public
@@ -53,6 +53,11 @@ pages:
 # run tests using the binary built before
 test:
   stage: check
+  cache:
+    key: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME"
+    paths:
+      - cargo/
+      - target/
   script:
     - cargo test
     - cargo test -p blockscape_core
@@ -79,6 +84,8 @@ deploy:
     - kubectl get po -n blockscape
     - apply_template blockscape-client-0.yaml
     - apply_template blockscape-client-1.yaml
+    - apply_template explorer.yaml
+    - apply_template ingress.yaml
   environment:
     name: staging/$CI_COMMIT_REF_NAME
     url: https://explore-$CI_COMMIT_REF_SLUG.blockscape.xram.co
@@ -95,6 +102,8 @@ stop_deploy:
     - kubectl version
     - delete_template blockscape-client-0.yaml
     - delete_template blockscape-client-1.yaml
+    - delete_template explorer.yaml
+    - delete_template ingress.yaml
   when: manual
   environment:
     name: staging/$CI_COMMIT_REF_NAME

@@ -1,0 +1,19 @@
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: ${CI_COMMIT_REF_SLUG}
+  namespace: blockscape
+  labels:
+    deployment: ${CI_ENVIRONMENT_SLUG}
+  annotations:
+      kubernetes.io/ingress.class: nginx
+      ingress.kubernetes.io/proxy-body-size: 3M
+spec:
+  rules:
+  - host: explorer-${CI_COMMIT_REF_SLUG}.blockscape.xram.co
+    http:
+      paths:
+      - path: /
+        backend:
+          serviceName: explorer-${CI_COMMIT_REF_SLUG}
+          servicePort: 3000
