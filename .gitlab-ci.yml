@@ -16,15 +16,12 @@ stages:
 services:
   - dcr.buyme360.com/devops/docker:dind
 
-cache:
-  #untracked: true
-  paths:
-    - cargo/
-    - target/
-    
-
 build:
   stage: build
+  cache:
+    paths:
+      - cargo/
+      - target/
   script:
     - cargo build --release
   artifacts:
@@ -37,8 +34,12 @@ build:
 
 pages:
   stage: deploy
+  cache:
+    paths:
+      - cargo/
+      - target/
   script:
-    - cargo doc --release
+    - cargo doc
     - mkdir public
     - cp -R target/doc/* public
   artifacts:
@@ -50,9 +51,13 @@ pages:
 # run tests using the binary built before
 test:
   stage: check
+  cache:
+    paths:
+      - cargo/
+      - target/
   script:
-    - cargo test --release
-    - cargo test -p blockscape_core --release
+    - cargo test
+    - cargo test -p blockscape_core
   
 package:
   image: dcr.buyme360.com/devops/docker:latest
