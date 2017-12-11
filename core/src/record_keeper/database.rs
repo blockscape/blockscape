@@ -14,18 +14,26 @@ pub const BLOCKCHAIN_POSTFIX: &[u8] = b"b";
 pub const CACHE_POSTFIX: &[u8] = b"c";
 pub const NETWORK_POSTFIX: &[u8] = b"n";
 
+
+//--- CACHE STATE ---//
+/// A plot and all its associated events
 pub const PLOT_PREFIX: &[u8] = b"PLT";
-pub const HEIGHT_PREFIX: &[u8] = b"HGT";
-pub const CONTRA_PREFIX: &[u8] = b"CMT";
+/// A validator's full public key
 pub const VALIDATOR_PREFIX: &[u8] = b"VAL";
+/// Reputation of a validator (how trustworthy they have proven to be)
 pub const REPUTATION_PREFIX: &[u8] = b"REP";
 
-pub const CURRENT_BLOCK: &[u8] = b"CURblock";
+//--- NETWORK STATE ---//
+/// All blocks of a given height
+pub const BLOCKS_BY_HEIGHT_PREFIX: &[u8] = b"HGT";
+/// The height of a given block
+pub const HEIGHT_BY_BLOCK_PREFIX: &[u8] = b"BHT";
+/// A contra transaction for a block
+pub const CONTRA_PREFIX: &[u8] = b"CMT";
 
-#[inline]
-fn extend_vec(mut k: Vec<u8>, post: &[u8]) -> Vec<u8> {
-    k.extend_from_slice(post); k
-}
+
+/// Key for the current head block used when initializing.
+pub const CURRENT_BLOCK: &[u8] = b"CURblock";
 
 
 /// Represents the current head of the blockchain
@@ -171,8 +179,8 @@ impl Database {
         
         // add the block to the height cache
         let hash = block.calculate_hash();
-        let height = self.get_block_height(&hash)?;
-        self.add_block_to_height(height, hash)?;
+        let height = self.get_new_block_height(&block.header)?;
+        self.cache_block(height, &hash)?;
         Ok(true)
     }
 
@@ -246,7 +254,7 @@ impl Database {
     /// Return a list of **known** blocks which have a given height. If the block has not been added
     /// to the database, then it will not be included.
     pub fn get_blocks_of_height(&self, height: u64) -> Result<HashSet<U256>, Error> {
-        let key = Database::get_block_height_key(height);
+        let key = Database::get_blocks_by_height_key(height);
         let res = self.get_raw_data(&key, CACHE_POSTFIX);
         match res {
             Ok(raw) => { // found something, deserialize
@@ -260,43 +268,50 @@ impl Database {
         }
     }
 
-    /// Determine the height of a given block. It will follow the path until it finds the genesis
-    /// block which is denoted by having a previous block reference of 0.
+    /// Get the cached height of an existing block.
     pub fn get_block_height(&self, hash: &U256) -> Result<u64, Error> {
-        // Height of the null block before genesis is zero.
-        if hash.is_zero() { return Ok(0); }
-
-        let (a, b, last_a, last_b) = self.latest_common_ancestor(&self.head.block, &hash)?;
-
-        if last_b.is_zero() {
-            // b reached the genesis block before intersecting, so we know the height is equal to
-            // its distance.
-            return Ok(*b.get(&last_b).unwrap())
-        }
-
-        // We have had a collision! Now we can calculate the height.
-        let (a_dist, b_dist) = Self::intersect_dist(&a, &b, &last_a, &last_b);
-        assert!(self.head.height >= a_dist);
-        let intersect_height = self.head.height - a_dist; // the height of the last common ancestor
+        if *hash == self.head.block { return Ok(self.head.height); }
         
-        // total distance is height from LCA to the distance up another chain it must go
-        Ok(intersect_height + b_dist)
+        let key = Self::with_prefix(HEIGHT_BY_BLOCK_PREFIX, &hash.to_vec());
+        let raw = self.get_raw_data(&key, CACHE_POSTFIX)?;
+
+        Ok(bincode::deserialize::<u64>(&raw)?)
+    }
+
+    /// Find the height of a new block based on the height of its previous block.
+    #[inline]
+    pub fn get_new_block_height(&self, header: &BlockHeader) -> Result<u64, Error> {
+        Ok(self.get_block_height(&header.prev)? + 1)
     }
 
     /// Get the key value for the height cache in the database. (Without the cache postfix).
-    pub fn get_block_height_key(height: u64) -> Vec<u8> {
-        let mut buf = [0u8; 8];
-        BigEndian::write_u64(&mut buf, height);
-        let mut k = Vec::from(HEIGHT_PREFIX);
-        k.extend_from_slice(&buf); k
+    pub fn get_blocks_by_height_key(height: u64) -> Vec<u8> {
+        let mut key: Vec<u8> = bincode::serialize(&height, bincode::Bounded(8)).unwrap();
+        Self::with_prefix(BLOCKS_BY_HEIGHT_PREFIX, &key)
     }
 
-    /// Retrieves the blocks between two blocks. Will return an empty vector if target is not a
-    /// direct descendent of target or visa versa. That is, it returns the chain between the two
-    /// blocks. The result will be sorted with the lowest height first, and will not include the
-    /// start or target hashes, therefore, it will also return an empty vector if `target.prev ==
-    /// start`.
-    pub fn get_blocks_between(&self, start: &U256, target: &U256, limit: u32) -> Result<Vec<U256>, Error> {
+    /// Function to find the unknown blocks from the last known block until the desired block. It
+    /// will never include the `last_known` or `target` blocks in the result and the result will be
+    /// in order from lowest height the greatest height.
+    ///
+    /// In summary, it will always find the latest common ancestor of the two blocks and then
+    /// traverse upwards until it reaches the target and only return those found when traversing
+    /// upwards.
+    ///
+    /// Main -> Main will retrieve all blocks which are descendants of start and ancestors of target
+    /// and will not include start or target.
+    ///
+    /// Main -> Uncle will yield all blocks after the start block until the uncle going directly up
+    /// the chain and then over. I.e. it will go up the chain and fork off to the branch the uncle
+    /// is on and go up that.
+    ///
+    /// Uncle -> Main will yield all descendants of the latest common ancestor of start with the
+    /// main chain until the target block. I.e. it will back up to the main chain and then go until
+    /// it reaches the new block.
+    ///
+    /// Uncle -> Uncle will retrieve all blocks along the path between the uncles. This may traverse
+    /// down to the main chain and then back up to the uncle if they are on different offshoots.
+    pub fn get_unknown_blocks(&self, start: &U256, target: &U256, limit: u32) -> Result<Vec<U256>, Error> {
         unimplemented!();
     }
 
@@ -330,7 +345,7 @@ impl Database {
             }
             height += 1;
         }
-    }then
+    }
 
     /// Walk the network state to a given block in the block chain
     pub fn walk(&mut self, b_block: &U256) -> Result<(), Error> {
@@ -414,6 +429,7 @@ impl Database {
             let mutation = self.get_mutation(&block)?;
             let contra = self.mutate(&mutation)?;
             self.add_contra(&b, &contra)?;
+            self.update_current_chain(h, &b)?;
             self.head = HeadRef{block: b, height: h};
         }
 
@@ -477,7 +493,7 @@ impl Database {
 
         for change in &mutation.changes { match change {
             &Change::SetValue{ref key, ref value, ..} => {
-                let db_key = extend_vec(key.clone(), NETWORK_POSTFIX);
+                let db_key = Self::with_postfix(&key, NETWORK_POSTFIX);
                 
                 contra.changes.push(Change::SetValue {
                     key: key.clone(),
@@ -510,7 +526,7 @@ impl Database {
 
         for change in mutation.changes { match change {
             Change::SetValue{key, value, ..} => {
-                let db_key = extend_vec(key, NETWORK_POSTFIX);
+                let db_key = Self::with_postfix(&key, NETWORK_POSTFIX);
 
                 if let Some(v) = value {
                     self.db.put(&db_key, &v)?;
@@ -562,7 +578,7 @@ impl Database {
         b.insert(*hash_b, 0);
         
         // the last hash added for both chains
-        let mut last_a: U256 = *hash_a;then
+        let mut last_a: U256 = *hash_a;
         let mut last_b: U256 = *hash_b;
 
         // Current running distance from the block in question
@@ -592,23 +608,61 @@ impl Database {
         Ok((a, b, last_a, last_b))
     }
 
-    /// Add a block the set of known blocks at a given height.
-    fn add_block_to_height(&mut self, height: u64, block: U256) -> Result<(), Error> {
-        let key = Self::get_block_height_key(height);
+    /// Add a block the set of known blocks at a given height and the height of the block. That is,
+    /// save the block by its height and its height by its hash.
+    #[inline]
+    fn cache_block(&mut self, height: u64, block: &U256) -> Result<(), Error> {
+        self.add_block_to_height(height, &block)?;
+        self.add_height_for_block(height, &block)
+    }
+
+    /// Add a block to the blocks by height cache. That way when trying to find all blocks of a
+    /// given height, it will be listed.
+    fn add_block_to_height(&mut self, height: u64, hash: &U256) -> Result<(), Error> {
+        let key = Self::get_blocks_by_height_key(height);
         let res = self.get_raw_data(&key, CACHE_POSTFIX);
         
-        let mut height_vals: HashSet<U256> = {
+        let mut height_vals: Vec<U256> = {
             match res {
                 Ok(raw) => bincode::deserialize(&raw)?,
-                Err(e) => match e {
-                    Error::NotFound(..) => HashSet::new(),
-                    _ => return Err(e)
-                }
+                Err(Error::NotFound(..)) => Vec::new(),
+                Err(e) => return Err(e)
             }
         };
 
-        height_vals.insert(block);
+        height_vals.push(*hash);
         let raw = bincode::serialize(&height_vals, bincode::Infinite)?;
+        self.put_raw_data(&key, &raw, CACHE_POSTFIX)
+    }
+
+    /// Used when walking, this moves a given block the front of the list of blocks for the height
+    /// which indicates that it is part of the current chain.
+    fn update_current_chain(&mut self, height: u64, hash: &U256) -> Result<(), Error> {
+        let key = Self::get_blocks_by_height_key(height);
+        let mut height_values: Vec<U256> = {
+            let raw = self.get_raw_data(&key, CACHE_POSTFIX)?;
+            bincode::deserialize(&raw).unwrap()
+        };
+
+        if let Some((index, _)) =
+            height_values.iter()
+            .enumerate()
+            .filter(|&(i, h)| *h == *hash)
+            .next()
+        { // we found the one we want, now swap it with the one in the front and re-save it
+            height_values.swap(0, index);
+            let raw = bincode::serialize(&height_values, bincode::Infinite).unwrap();
+            self.put_raw_data(&key, &raw, CACHE_POSTFIX)
+        }
+        else { // It was not in the list
+            Err(Error::NotFound(CACHE_POSTFIX, key))
+        }
+    }
+
+    /// Cache the height of a block so it can be easily looked up later on.
+    fn add_height_for_block(&mut self, height: u64, block: &U256) -> Result<(), Error> {
+        let key = Self::with_prefix(HEIGHT_BY_BLOCK_PREFIX, &block.to_vec());
+        let raw = bincode::serialize(&height, bincode::Bounded(8)).unwrap();
         self.put_raw_data(&key, &raw, CACHE_POSTFIX)
     }
 
