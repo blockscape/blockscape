@@ -246,27 +246,37 @@ impl Database {
     /// Get the reputation of a validator given their ID.
     /// TODO: Handle shard-based reputations
     pub fn get_validator_rep(&self, id: &U160) -> Result<i64, Error> {
-        let key = Self::with_prefix(REPUTATION_PREFIX, &id.to_vec());
+        let key = Self::with_prefix(REPUTATION_PREFIX, &id.to_vec());serlization
         let raw = self.get_raw_data(&key, NETWORK_POSTFIX)?;
         Ok(bincode::deserialize::<i64>(&raw)?)
     }
 
     /// Return a list of **known** blocks which have a given height. If the block has not been added
     /// to the database, then it will not be included.
-    pub fn get_blocks_of_height(&self, height: u64) -> Result<HashSet<U256>, Error> {
+    pub fn get_blocks_of_height(&self, height: u64) -> Result<Vec<U256>, Error> {
         let key = Database::get_blocks_by_height_key(height);
         let res = self.get_raw_data(&key, CACHE_POSTFIX);
         match res {
             Ok(raw) => { // found something, deserialize
-                Ok(bincode::deserialize::<HashSet<U256>>(&raw)?)
+                Ok(bincode::deserialize::<Vec<U256>>(&raw)?)
             },
             Err(e) => match e {
                 Error::NotFound(..) => // nothing known to us, so emptyset
-                    Ok(HashSet::new()),
+                    Ok(Vec::new()),
                 _ => Err(e) // some sort of database error
             }
         }
     }
+
+    /// Retrieve the block which is part of the current chain at a given height.
+    pub fn get_current_block_of_height(&self, height: u64) -> Result<U256, Error> {
+        let key = Database::get_blocks_by_height_key(height);
+        let raw = self.get_raw_data(&key, CACHE_POSTFIX)?;
+        let list: Vec<U256> = bincode::deserialize(&raw).unwrap();
+        Ok(list[0])
+    }
+
+
 
     /// Get the cached height of an existing block.
     pub fn get_block_height(&self, hash: &U256) -> Result<u64, Error> {
@@ -297,30 +307,16 @@ impl Database {
     /// In summary, it will always find the latest common ancestor of the two blocks and then
     /// traverse upwards until it reaches the target and only return those found when traversing
     /// upwards.
-    ///
-    /// Main -> Main will retrieve all blocks which are descendants of start and ancestors of target
-    /// and will not include start or target.
-    ///
-    /// Main -> Uncle will yield all blocks after the start block until the uncle going directly up
-    /// the chain and then over. I.e. it will go up the chain and fork off to the branch the uncle
-    /// is on and go up that.
-    ///
-    /// Uncle -> Main will yield all descendants of the latest common ancestor of start with the
-    /// main chain until the target block. I.e. it will back up to the main chain and then go until
-    /// it reaches the new block.
-    ///
-    /// Uncle -> Uncle will retrieve all blocks along the path between the uncles. This may traverse
-    /// down to the main chain and then back up to the uncle if they are on different offshoots.
-    pub fn get_unknown_blocks(&self, start: &U256, target: &U256, limit: u32) -> Result<Vec<U256>, Error> {
-        unimplemented!();
+    pub fn get_unknown_blocks(&self, start: &U256, target: &U256) -> Result<Vec<U256>, Error> {
+        let (a_hashes, b_hashes, last_a, last_b) = self.latest_common_ancestor(start, target)?;
+
     }
 
-    /// Retrieves all the blocks for which the starting point is a direct ancestor of. That is, it
-    /// returns a chain from start until the latest known block which is it's descendent. It will be
-    /// sorted from lowest height the greatest height, so from start until wherever it ends. It will
-    /// be empty only if start has known blocks for which it is a ancestor.
-    pub fn get_blocks_after_hash(&self, start: &U256, limit: u32) -> Result<Vec<U256>, Error> {
-        unimplemented!();
+    /// Retrieves all the blocks of the current chain which are a descendent of the latest common
+    /// ancestor between the chain of the start block and the current chain. This result will be
+    /// sorted in ascending height order. It will not include the start hash.
+    pub fn get_blocks_after_hash(&self, start: &U256) -> Result<Vec<U256>, Error> {
+        // For efficiency, use a quick check to find if a given block is part of the current chain or not.
     }
 
     /// Will find the current head of the blockchain. This uses the last known head to find the
@@ -682,6 +678,7 @@ impl Database {
         let key = Self::with_prefix(CONTRA_PREFIX, &hash.to_vec());
         let raw = self.get_raw_data(&key, CACHE_POSTFIX)?;
         Ok(bincode::deserialize(&raw)?)
+        get_unknown_blocks
     }
 
     /// Add a contra for a given block

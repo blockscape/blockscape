@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use super::{MutationRule, MutationRules, Error, LogicError, Storable, RecordEvent, PlotID};
 use super::{PlotEvent, PlotEvents, events};
+use super::BlockPackage;
 use super::database::*;
 use time::Time;
 
@@ -193,38 +194,25 @@ impl RecordKeeper {
         db.get_blocks_of_height(height)
     }
 
-    /// Function to find the unknown blocks from the last known block until the desired block. It
-    /// will never include the `last_known` or `target` blocks in the result and the result will be
-    /// in order from lowest height the greatest height.
+    /// Create a `BlockPackage` of the unknown blocks from the last known block until the desired
+    /// block. It will never include the `last_known` or `target` blocks in the package. The `limit`
+    /// is the maximum number of bytes the final package may contain.
     ///
     /// In summary, it will always find the latest common ancestor of the two blocks and then
-    /// traverse upwards until it reaches the target and only return those found when traversing
+    /// traverse upwards until it reaches the target and only include those found when traversing
     /// upwards.
-    ///
-    /// Main -> Main will retrieve all blocks which are descendants of start and ancestors of target
-    /// and will not include start or target.
-    ///
-    /// Main -> Uncle will yield all blocks after the start block until the uncle going directly up
-    /// the chain and then over. I.e. it will go up the chain and fork off to the branch the uncle
-    /// is on and go up that.
-    ///
-    /// Uncle -> Main will yield all descendants of the latest common ancestor of start with the
-    /// main chain until the target block. I.e. it will back up to the main chain and then go until
-    /// it reaches the new block.
-    ///
-    /// Uncle -> Uncle will retrieve all blocks along the path between the uncles. This may traverse
-    /// down to the main chain and then back up to the uncle if they are on different offshoots.
-    pub fn get_unknown_blocks(&self, last_known: &U256, target: &U256, limit: u32) -> Result<Vec<U256>, Error> {
-        self.db.read().unwrap()
-            .get_unknown_blocks(last_known, target, limit)
+    pub fn get_unknown_blocks(&self, last_known: &U256, target: &U256, limit: usize) -> Result<BlockPackage, Error> {
+        let db = self.db.read().unwrap();
+        BlockPackage::unknown_blocks(db, last_known, target, limit)
     }
 
-    /// Retrieves all the blocks of the current chain which are a descendent of the latest common
-    /// ancestor between the chain of the start block and the current chain. This result will be
-    /// sorted in ascending height order. It will not include the start hash.
-    pub fn get_blocks_after_hash(&self, start: &U256, limit: u32) -> Result<Vec<U256>, Error> {
-        self.db.read().unwrap()
-            .get_blocks_after_hash(start, limit)
+    /// Create a `BlockPackage` of all the blocks of the current chain which are a descendent of the
+    /// latest common ancestor between the chain of the start block and the current chain. It will
+    /// not include the start block. The `limit` is the maximum number of bytes the final package
+    /// may contain.
+    pub fn get_blocks_after_hash(&self, start: &U256, limit: usize) -> Result<BlockPackage, Error> {
+        let db = self.db.read().unwrap();
+        BlockPackage::blocks_after_hash(db, start, limit)
     }
 
     /// Returns a map of events for each tick that happened after a given tick. Note: it will not
