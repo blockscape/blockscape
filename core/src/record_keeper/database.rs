@@ -727,3 +727,56 @@ impl Database {
         })
     }
 }
+
+
+
+/// Iterate up the current chain, it will only follow the current chain and will end when either it
+/// reaches the head, a database error occurs, or a block header is not found for a block we know is
+/// part of the current chain.
+pub struct UpIter<'a> {
+    db: &'a Database,
+    height: u64
+}
+
+impl<'a> UpIter<'a> {
+    fn new(db: &'a Database, start: u64) -> UpIter<'a> {
+        UpIter{ db, height: start }
+    }
+}
+
+impl<'a> Iterator for UpIter<'a> {
+    type Item = BlockHeader;
+    fn next(&mut self) -> Option<BlockHeader> {
+        let next = self.db.get_current_block_of_height(height);
+        if next.is_err() { return None; }
+        let header = self.db.get_block_header(&next.unwrap());
+        if header.is_ok() { self.height += 1; }
+        header.ok()
+    }
+}
+
+
+/// Iterate down a given chain, it will follow the `prev` references provided by `BlockHeader`s.
+/// This will end either when it reaches genesis, a database error occurs, or a block header is not
+/// found for a block we know comes before it.
+pub struct DownIter<'a> {
+    db: &'a Database,
+    block: U256
+}
+
+impl<'a> DownIter<'a> {
+    fn new(db: &'a Database, start: U256) -> DownIter<'a> {
+        DownIter { db, block: start }
+    }
+}
+
+impl<'a> Iterator for DownIter<'a> {
+    type Item = BlockHeader;
+    fn next(&mut self) -> Option<BlockHeader> {
+        if block.is_zero() { return None; }
+        if let Ok(header) = self.db.get_block_header(&self.block) {
+            self.block = header.prev;
+            Ok(header)
+        } else { None }
+    }
+}
