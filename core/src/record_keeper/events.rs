@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 /// otherwise stated. This means that if there is a `NewBlock` message, a call to retrieve the block
 /// will succeed.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type")]
 pub enum RecordEvent {
     /// A new block has been added, walk forward (or back, if back, then a state invalidated event
     /// will also be pushed out if relevant)

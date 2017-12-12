@@ -7,6 +7,7 @@ use record_keeper::{PlotID, PlotEvent};
 /// types of changes, it is designed to be information used to verify a transaction, but which does
 /// not alter the network state.
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(tag = "type")]
 pub enum Change {
     SetValue { key: Vec<u8>, value: Option<Vec<u8>>, supp: Option<Vec<u8>> },
     AddEvent { id: PlotID, tick: u64, event: PlotEvent, supp: Option<Vec<u8>> }
