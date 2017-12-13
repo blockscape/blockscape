@@ -7,7 +7,7 @@ ADD target/release/blockscape /
 
 EXPOSE 35653
 
-ENV RUST_LOG=debug \
+ENV RUST_LOG=info,blockscape=debug,blockscape_core=debug \
     RUST_BACKTRACE=1
 
 STOPSIGNAL SIGTERM
