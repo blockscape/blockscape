@@ -10,7 +10,7 @@ use std::ops::Deref;
 use network::client::{ShardMode, NetworkContext};
 use network::client;
 use network::node::{Node, NodeRepository};
-use network::session::{Session, SessionInfo, ByeReason, Packet, RawPacket};
+use network::session::{Session, Message, SessionInfo, ByeReason, Packet, RawPacket};
 use primitives::{U256, U160};
 
 pub struct ShardInfo {
@@ -209,15 +209,20 @@ impl ShardInfo {
 
     /// Evaluate a single packet and route it to a session as necessary
     pub fn process_packet(&self, p: &Packet, addr: &SocketAddr, mut context: &mut NetworkContext) {
-        {
-            match self.sessions.write().unwrap().get_mut(&addr) {
-                Some(sess) => {
-                    sess.recv(&p, &mut context);
-                },
-                None => {
-                    // should never happen because all sessions init through port 255
-                    warn!("Unroutable packet: {:?}", p);
-                }
+        
+        match p.msg {
+            Message::Ping { time } => {},
+            Message::Pong { time } => {},
+            _ => debug!("{} ==> {:?}", addr, &p)
+        };
+        
+        match self.sessions.write().unwrap().get_mut(&addr) {
+            Some(sess) => {
+                sess.recv(&p, &mut context);
+            },
+            None => {
+                // should never happen because all sessions init through port 255
+                warn!("Unroutable packet: {:?}", p);
             }
         }
     }
@@ -282,6 +287,12 @@ impl ShardInfo {
         let mut count: u64 = 0;
 
         while let Some(p) = sess.pop_send_queue() {
+
+            match p.msg {
+                Message::Ping { time } => {},
+                Message::Pong { time } => {},
+                _ => debug!("{} <== {:?}", sess.get_remote_addr(), &p)
+            };
 
             let mut rawp = RawPacket {
                 port: sess.get_remote().1,
