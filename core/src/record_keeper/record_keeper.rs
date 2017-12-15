@@ -201,18 +201,26 @@ impl RecordKeeper {
     /// In summary, it will always find the latest common ancestor of the two blocks and then
     /// traverse upwards until it reaches the target and only include those found when traversing
     /// upwards.
-    pub fn get_unknown_blocks(&self, last_known: &U256, target: &U256, limit: usize) -> Result<BlockPackage, Error> {
+    
+    /// Get blocks before the `target` hash until it collides with the main chain. If the `start`
+    /// hash lies between the target and the main chain, it will return the blocks between them,
+    /// otherwise it will return the blocks from the main chain until target in that order and it
+    /// will not include the start or target blocks.
+    ///
+    /// If the limit is reached, it will prioritize blocks of a lower height, but may have a gap
+    /// between the main chain (or start) and what it includes.
+    pub fn get_blocks_before(&self, last_known: &U256, target: &U256, limit: usize) -> Result<BlockPackage, Error> {
         let db = self.db.read().unwrap();
-        BlockPackage::unknown_blocks(db, last_known, target, limit)
+        BlockPackage::blocks_before(db, last_known, target, limit)
     }
 
     /// Create a `BlockPackage` of all the blocks of the current chain which are a descendent of the
     /// latest common ancestor between the chain of the start block and the current chain. It will
     /// not include the start block. The `limit` is the maximum number of bytes the final package
     /// may contain.
-    pub fn get_blocks_after_hash(&self, start: &U256, limit: usize) -> Result<BlockPackage, Error> {
+    pub fn get_blocks_after(&self, start: &U256, limit: usize) -> Result<BlockPackage, Error> {
         let db = self.db.read().unwrap();
-        BlockPackage::blocks_after_hash(db, start, limit)
+        BlockPackage::blocks_after(db, start, limit)
     }
 
     /// Returns a map of events for each tick that happened after a given tick. Note: it will not
