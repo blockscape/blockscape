@@ -23,6 +23,11 @@ impl From<&[u8]> for BlockPackage {
 }
 
 impl BlockPackage {
+    /// Create a new, empty blockpackage.
+    fn new() -> BlockPackage {
+        BlockPackage { blocks: Vec::new(), txns: Vec::new() }
+    }
+
     /// Create a `BlockPackage` of the unknown blocks from the last known block until the desired
     /// block. It will never include the `last_known` or `target` blocks in the package. The `limit`
     /// is the maximum number of bytes the final package may contain.
@@ -53,16 +58,56 @@ impl BlockPackage {
     fn package(db: &Database, headers: Vec<BlockHeader>, limit: usize) -> Result<BlockPackage, Error> {
         // Start by getting all of the blocks for the headers and 
         let mut count: u16 = 0;
-        let mut txns: HashMap<U256, u16> = HashMap::new();
-        let blocks: Vec<Block> = headers.into_iter()
-            .map(|header| db.complete_block(header))
-            .collect();
+        let mut txns_by_hash: HashMap<U256, u16> = HashMap::new();
+        let mut blocks: Vec<Block> = Vec::new();
         
+        for header in headers.into_iter() {
+            let block = db.complete_block(header)?;
+            blocks.push(block);
+        }
+        
+        // create an integer index for all of the transaction hashes 
         for block in blocks {
             for txn in block.txns {
-                
+                if !txns_by_hash.contains_key(&txn) {
+                    txns_by_hash.insert(txn, count);
+                    assert!(count < 0xffff);
+                    count += 1;
+                }
             }
         }
+
+        // add one block at a time to the package and needed transactions
+        count = 0; 
+        let mut size: usize = 0;  // running byte count
+        let mut package = Self::new();
+        for block in blocks {
+            let mut txn_indicies: Vec<u16> = Vec::new();
+            let mut new_txns: Vec<Txn> = Vec::new();
+
+            // size of block header and the txns, add one to list of txns to account for
+            // a possible termination deliminer
+            size += size_of(BlockHeader) + (block.txns.len() + 1) * 2;
+
+            for txn in block.txns {
+                let index = txns_by_hash.get(txn).unwrap();
+                txn_indicies.append(index);
+                
+                if index == count { //we need to add the txn itself
+                    let full_txn = db.get_txn(txn)?;
+                    size += full_txn.calculate_size();
+                    new_txns.push(full_txn);
+                    count += 1;
+                }
+            }
+
+            if size <= limit {
+                package.blocks.push((block.header, txn_indicies));
+                package.txns.append(new_txns);
+            } else { break; }
+        }
+
+        Ok(package)
     }
 
     /// Convert the `BlockPackage` into a compressed binary representation which can be easily

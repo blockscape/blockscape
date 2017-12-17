@@ -37,6 +37,27 @@ impl Hash for Change {
     }
 }
 
+impl Change {
+    /// Calculate the encoded size of this change in bytes.
+    pub fn calculate_size(&self) -> usize {
+        8 + match &self {
+            &SetValue{&key, &value, &supp} {
+                key.len() + 1 +
+                if let &Some(&a) = value { a.len() }
+                else { 0 } + 2 +
+                if let &Some(&a) = supp { a.len() }
+                else { 0 } + 2
+            },
+            &AddEvent{&event, &supp, ...} {
+                size_of(PlotID) + 8 + 
+                event.calculate_size() +
+                if let &Some(&a) = supp { a.len() }
+                else { 0 } + 2
+            }
+        }
+    }
+}
+
 
 
 /// A composition of changes which are to be atomically applied to the database. In a few places,
@@ -95,4 +116,10 @@ impl Mutation {
         tmp.append(&mut self.changes);
         self.changes = tmp;
     }
+
+    /// Calculate the encoded size of this mutation in bytes.
+    pub fn calculate_size(&self) -> usize {
+        1 +  // contra
+        self.changes.iter().fold(|total, c| total + c.calculate_size())
+    } 
 }

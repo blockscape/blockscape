@@ -31,6 +31,14 @@ pub struct PlotEvent {
 }
 impl Event for PlotEvent {}
 
+impl Event {
+    /// Calculate the encoded size of this event in bytes.
+    pub fn calculate_size(&self) -> usize {
+        size_of(PlotID) * 2 +
+        self.event.len() + 1
+    }
+}
+
 /// Lists of events stored by their tick
 pub type PlotEvents = BTreeMap<u64, Vec<PlotEvent>>;
 

@@ -164,4 +164,13 @@ impl Txn {
     pub fn calculate_hash(&self) -> U256 {
         hash_obj(self)
     }
+
+    /// Calculate the encoded size of this transaction in bytes.
+    pub fn calculate_size(&self) -> usize {
+        size_of(Time) +  // timestamp
+        1 +  // txn_type
+        (self.pubkey.len() + 1) +
+        self.mutation.caclulate_size() +
+        (self.signature.len() + 1)
+    }
 }
