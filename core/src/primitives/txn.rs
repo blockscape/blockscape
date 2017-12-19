@@ -140,7 +140,7 @@ impl Txn {
     /// Create a new transaction which has mostly unchecked power. The primary requirement is that
     /// the admin key must sign off on it. This will make debugging easier and allow us to correct
     /// issues as they come up.
-    pub fn new_admin_txn(pkey: &PKey) -> Txn {
+    pub fn new_admin_txn(_pkey: &PKey) -> Txn {
         // Seems like this might get broken into more than one creation function depending on the
         // change that is to be made.
         unimplemented!("Admin transactions have not been implemented");

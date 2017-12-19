@@ -27,7 +27,7 @@ impl PartialOrd for Cord {
 impl Ord for Cord {
     /// Define the 
     fn cmp(&self, other: &Self) -> Ordering {
-        /// Calculate the distance from the origin of both points and compare
+        // Calculate the distance from the origin of both points and compare
         let d1 = sq(self.x) + sq(self.y); // should not overflow because we up-size to u64
         let d2 = sq(other.x) + sq(other.y);
         

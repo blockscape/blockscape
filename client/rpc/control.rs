@@ -28,7 +28,7 @@ impl ControlRPC {
     }
 
 
-    fn stop(&self, params: Params, meta: SocketMetadata) -> RpcResult {
+    fn stop(&self, _params: Params, _meta: SocketMetadata) -> RpcResult {
         // initiate the stop process
 
         unsafe {

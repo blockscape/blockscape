@@ -40,8 +40,8 @@ impl Default for HeadRef {
 }
 
 impl HeadRef {
-    #[inline]
-    pub fn is_null(&self) -> bool { self.block.is_zero() }
+    //#[inline]
+    //pub fn is_null(&self) -> bool { self.block.is_zero() }
 }
 
 
@@ -415,7 +415,7 @@ impl Database {
     /// seek to reconstruct old history so `after_tick` simply allows additional filtering, e.g. if
     /// you set `after_tick` to 0, you would not get all events unless the oldest events have not
     /// yet been removed from the cache.
-    pub fn get_plot_events(&self, plot_id: PlotID, after_tick: u64) -> Result<PlotEvents, Error> {
+    pub fn get_plot_events(&self, plot_id: PlotID, _after_tick: u64) -> Result<PlotEvents, Error> {
         let db_key = Self::plot_key(&plot_id);
         Ok(self.db.get(&db_key)?.map_or(
             PlotEvents::new(),

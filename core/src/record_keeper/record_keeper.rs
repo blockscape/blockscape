@@ -47,7 +47,7 @@ impl RecordKeeper {
     }
 
     /// Use pending transactions to create a new block which can then be added to the network.
-    pub fn create_block(&self, txns: HashSet<U256>) -> Block {
+    pub fn create_block(&self, _txns: HashSet<U256>) -> Block {
         unimplemented!("Need to create blocks from transactions")
     }
 
@@ -56,7 +56,6 @@ impl RecordKeeper {
     /// invalidated. Also move the network state to be at the new end of the chain.
     /// Returns true if the block was added, false if it was already in the system.
     pub fn add_block(&self, block: &Block) -> Result<bool, Error> {
-        let block_hash = block.header.calculate_hash();
         let mut db = self.db.write().unwrap();
 
         //TODO: Handle if we need to go back and switch branches
@@ -92,13 +91,13 @@ impl RecordKeeper {
 
     /// Find a validator's public key given the hash. If they are not found, then they are not a
     /// validator.
-    pub fn get_validator_key(&self, id: &U160) -> Result<Vec<u8>, Error> {
+    pub fn get_validator_key(&self, _id: &U160) -> Result<Vec<u8>, Error> {
         unimplemented!()
     }
 
     /// Get the reputation of a validator. Will default to 0 if they are not found.
     /// TODO: Handle shard-based reputations
-    pub fn get_validator_rep(&self, id: &U160) -> Result<i64, Error> {
+    pub fn get_validator_rep(&self, _id: &U160) -> Result<i64, Error> {
         unimplemented!()
     }
 
@@ -135,15 +134,15 @@ impl RecordKeeper {
         db.get_blocks_of_height(height)
     }
 
-    pub fn get_blocks_between(start: U256, target: U256, limit: u32) -> Vec<U256> {
+    pub fn get_blocks_between(_start: U256, _target: U256, _limit: u32) -> Vec<U256> {
         unimplemented!()
     }
 
-    pub fn get_blocks_after_hash(start: U256, limit: u32) -> Vec<U256> {
+    pub fn get_blocks_after_hash(_start: U256, _limit: u32) -> Vec<U256> {
         unimplemented!()
     }
 
-    pub fn get_blocks_after_height(start: u64, limit: u32) -> Vec<U256> {
+    pub fn get_blocks_after_height(_start: u64, _limit: u32) -> Vec<U256> {
         unimplemented!()
     }
 

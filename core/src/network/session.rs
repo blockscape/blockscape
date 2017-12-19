@@ -17,9 +17,6 @@ use network::client::NetworkContext;
 
 pub const PROTOCOL_VERSION: u16 = 1;
 
-/// How often to test ping in seconds
-pub const PING_FREQUENCY: u16 = 30;
-
 /// How much of the ping value to retain. The current value keeps a weighted average over 10 minutes
 pub const PING_RETENTION: f32 = 40.0;
 
@@ -149,7 +146,8 @@ pub struct SessionInfo {
     network_id: U256,
     peer: Node,
     latency: Time,
-    pending_send: usize
+    pending_send: usize,
+    established_since: Time
 }
 
 /// Represents a single connection between another peer on the network.
@@ -249,7 +247,7 @@ impl Session {
     }
 
     fn handle_introduce(&mut self, msg: &Message) {
-        if let &Message::Introduce { ref node, ref network_id, ref port } = msg {
+        if let &Message::Introduce { ref node, ref port, .. } = msg {
             self.remote_peer = Arc::new(node.clone());
             self.remote_port = *port;
 
@@ -284,7 +282,7 @@ impl Session {
         if !self.introduced {
             // we cannot take this packet
             match packet.msg {
-                Message::Introduce { ref node, ref network_id, ref port } => {
+                Message::Introduce { .. } => {
                     self.handle_introduce(&packet.msg);
                 },
 
@@ -298,7 +296,7 @@ impl Session {
         else {
             // handle all of the different packet types
             match packet.msg {
-                Message::Introduce { ref node, ref network_id, ref port } => {
+                Message::Introduce { .. } => {
                     // cannot be reintroduced
                     // TODO: might not actually be abuse
                     self.done = Some(ByeReason::Abuse);
@@ -356,7 +354,7 @@ impl Session {
                     });
                 },
 
-                Message::NodeList { ref nodes, ref network_id, ref skip } => {
+                Message::NodeList { ref nodes, ref network_id, .. } => {
                     // we got back a list of nodes. For right now, we take only the first n of them in order to prevent overflow/whelm
                     if context.connect_peers.contains_key(network_id) {
                         let peers = context.connect_peers.get_mut(network_id).unwrap();
@@ -375,7 +373,7 @@ impl Session {
                     context.work_controller.import_block(&block.clone());
                 },
 
-                Message::SyncBlocks { ref last_block_hash, ref target_block_hash } => {
+                Message::SyncBlocks { /*ref last_block_hash, ref target_block_hash*/ .. } => {
                     // get stuff from the db
                 },
 
@@ -426,7 +424,7 @@ impl Session {
                     );
                 },
 
-                Message::DataError { ref err } => {
+                Message::DataError { .. } => {
 
                 },
 
@@ -507,7 +505,8 @@ impl Session {
             peer: self.remote_peer.as_ref().clone(),
             network_id: self.network_id,
             latency: self.latency,
-            pending_send: self.send_queue.lock().unwrap().len()
+            pending_send: self.send_queue.lock().unwrap().len(),
+            established_since: self.established_since
         }
     }
 

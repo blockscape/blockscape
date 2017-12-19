@@ -15,8 +15,6 @@ use rpc::network::NetworkRPC;
 use jsonrpc_core::*;
 use jsonrpc_http_server::{ServerBuilder, Server};
 
-use jsonrpc_core::futures::Future;
-
 use context::Context;
 
 pub struct RPC {

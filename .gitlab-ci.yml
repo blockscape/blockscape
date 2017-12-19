@@ -24,7 +24,8 @@ build:
       - cargo/
       - target/
   script:
-    - cargo build --release
+    - cargo build --release 2>&1 | tee log.txt
+    - ! grep 'warning' log.txt
   artifacts:
     paths:
       - target/debug/blockscape
