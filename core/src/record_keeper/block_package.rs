@@ -1,5 +1,6 @@
-use primitives::{Block, BlockHeader, Txn, U256};
 use bincode;
+use compress::{compress, decompress};
+use primitives::{Block, BlockHeader, Txn, U256};
 
 /// Estimated block size in bytes, this should be slightly under the true value, and will be used 
 const ESTIMATED_BLOCK_SIZE: usize = 128;
@@ -17,8 +18,9 @@ struct BlockPackage {
 }
 
 impl From<&[u8]> for BlockPackage {
+    #[inline]
     fn from(data: &[u8]) -> BlockPackage {
-
+        BlockPackage::unpack(data)
     }
 }
 
@@ -112,7 +114,14 @@ impl BlockPackage {
 
     /// Convert the `BlockPackage` into a compressed binary representation which can be easily
     /// transferred or archived.
-    pub fn pack(self) -> Vec<u8> {
+    pub fn pack(&self) -> Vec<u8> {
+        let raw = bincode::serilize(self, bincode::Infinite).unwrap();
+        compress(&raw).unwrap()
+    }
 
+    /// Unpack a compressed block binary representation of the `BlockPackage`.
+    pub fn unpack(package: &[u8]) -> BlockPackage {
+        let raw = decompress(package).unwrap();
+        bincode::deserialize(&raw)
     }
 }
