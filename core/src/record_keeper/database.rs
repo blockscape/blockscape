@@ -172,7 +172,7 @@ impl Database {
 
         // put the transactions into the system
         let merkle_root = block.header.merkle_root.to_vec();
-        let raw_txns = bincode::serialize(&block.transactions, bincode::Infinite)
+        let raw_txns = bincode::serialize(&block.txns, bincode::Infinite)
                 .expect("Error serilizing transactions!");
         self.put_raw_data(&merkle_root, &raw_txns, BLOCKCHAIN_POSTFIX)?;
         
@@ -213,6 +213,12 @@ impl Database {
     #[inline]
     pub fn get_current_block_hash(&self) -> U256 {
         self.head.block
+    }
+
+    /// Get the header of the current block of the blockchain as it lines up with the network state.
+    #[inline]
+    pub fn get_current_block_header(&self) -> Result<BlockHeader, Error> {
+        self.get_block_header(&self.head.block)
     }
 
     /// Retrieve the transactions for a block to complete a `BlockHeader` as a `Block` object.
@@ -426,7 +432,7 @@ impl Database {
     /// Put together a mutation object from all of the individual transactions
     pub fn get_block_mutation(&self, block: &Block) -> Result<Mutation, Error> {
         let mut mutation = Mutation::new();
-        for txn_hash in &block.transactions {
+        for txn_hash in &block.txns {
             let txn = self.get_txn(&txn_hash)?;
             mutation.merge_clone(&txn.mutation);
         }
@@ -582,7 +588,7 @@ impl Database {
     /// then merging their mutations.
     fn get_mutation(&self, block: &Block) -> Result<Mutation, Error> {
         let mut mutation = Mutation::new();
-        for txn_h in &block.transactions {
+        for txn_h in &block.txns {
             let txn = self.get_txn(txn_h)?;
             mutation.merge(txn.mutation);
         }

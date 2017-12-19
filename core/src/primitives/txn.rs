@@ -2,6 +2,7 @@ use hash::hash_obj;
 use openssl::pkey::PKey;
 use primitives::{Mutation, U256};
 use signer::sign_obj;
+use std::cmp::Ordering;
 use std::vec::Vec;
 use time::Time;
 
@@ -38,6 +39,20 @@ impl PartialEq for Txn {
         self.calculate_hash() == other.calculate_hash()
     }
 } impl Eq for Txn {}
+
+impl PartialOrd for Txn {
+    fn partial_cmp(&self, other: &Txn) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Txn {
+    fn cmp(&self, other: &Txn) -> Ordering {
+        let a = self.calculate_hash();
+        let b = other.calculate_hash();
+        a.cmp(&b)
+    }
+}
 
 impl Txn {
     /// Assume default values for a number of features and manually set the data, mutations, and
