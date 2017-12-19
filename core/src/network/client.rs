@@ -1,6 +1,6 @@
 use bincode::deserialize;
 use openssl::pkey::PKey;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::io::Error;
 use std::net::{SocketAddr,UdpSocket};
 use std::sync::{Arc, RwLock, Mutex};
@@ -17,10 +17,10 @@ use network::session;
 use network::session::{SessionInfo, RawPacket, Message};
 use network::shard::{ShardInfo};
 use network::work_controller::NetworkWorkController;
-use primitives::{Block, Txn, U256, EventListener};
-use record_keeper::{RecordKeeper};
+use primitives::U256;
+use record_keeper::RecordKeeper;
 use signer::generate_private_key;
-use work_queue::{WorkItem, WorkQueue, WorkResult, Task, WorkResultType, MetaData};
+use work_queue::WorkQueue;
 
 
 /// Defines the kind of interaction this node will take with a particular shard
@@ -196,8 +196,6 @@ pub struct Client {
     /// A mutex for sending on the socket--this only applies for sending, since we must always be reading
     socket_mux: Mutex<()>,
 
-    last_peer_seek: Time,
-
     /// Whether or not we are entered the exit state for the network interface
     done: AtomicBool,
 
@@ -227,7 +225,6 @@ impl Client {
             config: config,
             socket: None,
             socket_mux: Mutex::new(()),
-            last_peer_seek: Time::from(0),
             done: AtomicBool::new(false),
             curr_port: AtomicUsize::new(0),
             rx: AtomicUsize::new(0),
@@ -337,6 +334,22 @@ impl Client {
         }
     }
 
+    #[inline]
+    fn do_send_flush(&self, shard: &ShardInfo, addr: Option<&SocketAddr>) {
+        let _lock = self.socket_mux.lock();
+        let r = match addr {
+            Some(a) => shard.send_packets(a, &self.socket.as_ref().unwrap()),
+            None => shard.send_all_packets(&self.socket.as_ref().unwrap())
+        };
+
+        if let Ok(size) = r {
+            self.tx.fetch_add(size, Relaxed);
+        }
+        else {
+            warn!("Failed to send some data: {:?}", r);
+        }
+    }
+
     /// Intended to be run in a single thread. Will receive packets, and react to them if necessary.
     fn recv_loop(&self) {
         // Let the sessions work on received packets
@@ -411,7 +424,7 @@ impl Client {
                         b.clear();
                     }
                 },
-                Err(err) => {}
+                Err(_) => {}
             }
 
             if let Some((p, addr)) = received_packet {
@@ -423,8 +436,8 @@ impl Client {
                         if let Some(ref shard) = *self.shards[idx as usize].read().unwrap() {
                             if let Ok(addr) = shard.open_session(Arc::new(node.clone()), self.my_node.clone(), Some(&p.payload)) {
                                 info!("New contact opened from {}", addr);
-                                let lock = self.socket_mux.lock();
-                                self.tx.fetch_add(shard.send_packets(&addr, &self.socket.as_ref().unwrap()) as usize, Relaxed);
+                                
+                                self.do_send_flush(shard, Some(&addr));
                             }
                         }
                         else {
@@ -440,8 +453,8 @@ impl Client {
 
                     {
                         shard.process_packet(&p.payload, &addr, &mut context);
-                        let lock = self.socket_mux.lock();
-                        self.tx.fetch_add(shard.send_packets(&addr, &self.socket.as_ref().unwrap()) as usize, Relaxed);
+
+                        self.do_send_flush(shard, Some(&addr));
                     }
 
                     // finally, any new nodes to connect to?
@@ -532,8 +545,10 @@ impl Client {
                             s.check_sessions();
 
                             // send packets that may have accumulated
-                            let lock = this2.socket_mux.lock();
-                            this2.tx.fetch_add(s.send_all_packets(&this2.socket.as_ref().unwrap()), Relaxed);
+                            //let _ = this2.socket_mux.lock();
+                            //this2.tx.fetch_add(s.send_all_packets(&this2.socket.as_ref().unwrap()), Relaxed);
+
+                            this2.do_send_flush(s, None);
                         }
                     }
 

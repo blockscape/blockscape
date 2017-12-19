@@ -3,7 +3,6 @@ use openssl::pkey::PKey;
 use std::collections::BTreeSet;
 use std::str::FromStr;
 use std::net::SocketAddr;
-use std::fmt::Debug;
 
 use blockscape_core::env::*;
 use blockscape_core::network::client::ClientConfig;

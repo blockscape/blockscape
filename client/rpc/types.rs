@@ -21,11 +21,11 @@ impl Default for SocketMetadata {
 	}
 }
 
-impl SocketMetadata {
+/*impl SocketMetadata {
 	pub fn addr(&self) -> &SocketAddr {
 		&self.addr
 	}
-}
+}*/
 
 impl jsonrpc_core::Metadata for SocketMetadata { }
 

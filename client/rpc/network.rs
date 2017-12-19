@@ -34,15 +34,15 @@ impl NetworkRPC {
         rpc
     }
 
-    fn get_net_stats(&self, params: Params, meta: SocketMetadata) -> RpcResult {
+    fn get_net_stats(&self, _params: Params, _meta: SocketMetadata) -> RpcResult {
         Ok(serde_json::to_value(self.net_client.get_stats()).unwrap())
     }
 
-    fn get_peer_info(&self, params: Params, meta: SocketMetadata) -> RpcResult {
+    fn get_peer_info(&self, _params: Params, _meta: SocketMetadata) -> RpcResult {
         Ok(serde_json::to_value(self.net_client.get_peer_info()).unwrap())
     }
 
-    fn attach_network(&self, params: Params, meta: SocketMetadata) -> RpcResult {
+    fn attach_network(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
         let args = parse_args_simple(params)?;
 
         if args.len() >= 2 {
@@ -81,7 +81,7 @@ impl NetworkRPC {
         }
     }
 
-    fn add_node(&self, params: Params, meta: SocketMetadata) -> RpcResult {
+    fn add_node(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
         let args = parse_args_simple(params)?;
 
         if args.len() == 3 {

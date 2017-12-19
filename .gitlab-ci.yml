@@ -24,7 +24,8 @@ build:
       - cargo/
       - target/
   script:
-    - cargo build --release
+    - cargo build --release 2>&1 | tee log.txt
+    - "! grep 'warning' log.txt"
   artifacts:
     paths:
       - target/debug/blockscape
@@ -33,22 +34,22 @@ build:
 
   # depending on your build setup it's most likely a good idea to cache outputs to reduce the build time
 
-pages:
-  stage: deploy
-  cache:
-    key: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME"
-    paths:
-      - cargo/
-      - target/
-  script:
-    - cargo doc
-    - mkdir public
-    - cp -R target/doc/* public
-  artifacts:
-    paths:
-      - public
-  only:
-    - master
+#pages:
+#  stage: deploy
+#  cache:
+#    key: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME"
+#    paths:
+#      - cargo/
+#      - target/
+#  script:
+#    - cargo doc
+#    - mkdir public
+#    - cp -R target/doc/* public
+#  artifacts:
+#    paths:
+#      - public
+#  only:
+#    - master
 
 # run tests using the binary built before
 test:
