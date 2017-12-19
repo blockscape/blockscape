@@ -1,6 +1,6 @@
 use bincode;
 use hash::hash_obj;
-use primitives::{U256, U256_ZERO};
+use primitives::U256;
 use std::collections::BTreeSet;
 use std::ops::{Deref, DerefMut};
 use std::cmp::Ordering;
@@ -99,7 +99,7 @@ impl Block {
         Ok(Block{header, txns})
     }
 
-    pub fn calculate_merkle_root(txns: &BTreeSet<U256>) -> U256 {
+    pub fn calculate_merkle_root(_txns: &BTreeSet<U256>) -> U256 {
         unimplemented!("Calculate merkle root has not yet been completed!");
     }
 }
