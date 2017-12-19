@@ -2,12 +2,14 @@ pub mod client;
 
 mod types;
 
+mod control;
 mod network;
 
 use std::net::SocketAddr;
 
 use rpc::types::LogMiddleware;
 
+use rpc::control::ControlRPC;
 use rpc::network::NetworkRPC;
 
 use jsonrpc_core::*;
@@ -25,7 +27,8 @@ impl RPC {
 
     pub fn run(bind_addr: SocketAddr, ctx: Context) -> RPC {
         let mut io = MetaIoHandler::with_middleware(LogMiddleware);
-        //let mut io = MetaIoHandler::with_compatibility(Compatibility::Both);
+
+        ControlRPC::add(&mut io);
 
         if let Some(net_client) = ctx.network {
             NetworkRPC::add(net_client.clone(), &mut io);
