@@ -67,7 +67,7 @@ impl JsonRpcRequest {
 
         let work = r.select2(to).then(|res| match res {
             Ok(Either::A(a)) => Ok(a.0),
-            Ok(Either::B(b)) => Err(hyper::Error::Timeout),
+            Ok(Either::B(_)) => Err(hyper::Error::Timeout),
             Err(Either::A(a)) => Err(a.0),
             Err(Either::B(b)) => Err(hyper::Error::from(b.0))
         });

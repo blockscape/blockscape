@@ -75,6 +75,8 @@ spec:
         - client-${CI_COMMIT_REF_SLUG}-%%.blockscape
         - --seed-node
         - client-${CI_COMMIT_REF_SLUG}-0.blockscape:35653
+        - --rpcbind
+        - 0.0.0.0
       volumes:
       - name: blockscape-client-data
         hostPath:

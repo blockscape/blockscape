@@ -15,9 +15,9 @@ pub fn as_bytes(val: u64) -> String {
     }
 }
 
-pub fn as_bytes_per_sec(val: u64) -> String {
+/*pub fn as_bytes_per_sec(val: u64) -> String {
     as_bytes(val) + "/s"
-}
+}*/
 
 /*pub fn as_secs(val: u64) -> String {
     if val < 1000 {

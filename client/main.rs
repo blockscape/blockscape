@@ -1,5 +1,6 @@
 extern crate blockscape_core;
 extern crate chan_signal;
+extern crate libc;
 extern crate openssl;
 extern crate serde;
 extern crate serde_json;

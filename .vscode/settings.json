@@ -3,5 +3,8 @@
         "deserialization",
         "deserialize",
         "deserialized"
-    ]
+    ],
+    "files.associations": {
+        "*.bats": "shellscript"
+    }
 }

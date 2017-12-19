@@ -51,8 +51,8 @@ impl Default for HeadRef {
 }
 
 impl HeadRef {
-    #[inline]
-    pub fn is_null(&self) -> bool { self.block.is_zero() }
+    //#[inline]
+    //pub fn is_null(&self) -> bool { self.block.is_zero() }
 }
 
 

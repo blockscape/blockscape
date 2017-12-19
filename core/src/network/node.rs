@@ -29,7 +29,7 @@ pub struct NodeEndpoint {
 impl NodeEndpoint {
     pub fn as_socketaddr(self) -> Option<SocketAddr> {
         // DNS resolve if necessary
-        let mut ip = match self.host.parse::<IpAddr>() {
+        let ip = match self.host.parse::<IpAddr>() {
             Ok(ip) => Some(ip),
             Err(_) => lookup_host(self.host.as_str())
                 .ok()
@@ -143,7 +143,6 @@ pub struct NodeRepository {
 /// Contains and manages a sorted list of connectable nodes and full information about them
 impl NodeRepository {
 
-    const MAX_MAP_SCORE: u16 = 100;
     const SAVED_NODES_COUNT: usize = 100;
 
     pub fn new() -> NodeRepository {

@@ -27,8 +27,8 @@ struct NetworkWorkRequest {
     batch: u32,
     /// The specific index of the item processed in the batch, numbered from max-0
     item: u32,
-    /// The node responsible for sending this data/job
-    provider: U160,
+    // The node responsible for sending this data/job
+    //provider: U160,
 }
 
 struct WorkTarget {
@@ -90,7 +90,7 @@ pub struct NetworkWorkController(Mutex<NetworkWorkControllerData>);
 
 impl NetworkWorkController {
     pub fn new(rk: Arc<RecordKeeper>, wq: Arc<WorkQueue>) -> Arc<NetworkWorkController> {
-        let mut cont = NetworkWorkController(Mutex::new(NetworkWorkControllerData {
+        let cont = NetworkWorkController(Mutex::new(NetworkWorkControllerData {
             rk: rk,
             work_queue: wq.clone(),
             targets: HashSet::new(),
@@ -103,7 +103,7 @@ impl NetworkWorkController {
 
         let a = Arc::new(cont);
 
-        /// register itself to the work queue
+        // register itself to the work queue
         wq.register_listener(Arc::clone(&a) as Arc<EventListener<WorkResult>>);
 
         a
@@ -123,7 +123,7 @@ impl NetworkWorkController {
         let prev_target = WorkTarget::new(block.prev);
         if s.targets.contains(&prev_target) {
             // augment our current target
-            let mut wt = WorkTarget::new(h);
+            let wt = WorkTarget::new(h);
 
             s.targets.remove(&prev_target);
             s.targets.insert(wt);
@@ -144,7 +144,7 @@ impl NetworkWorkController {
         }
         else {
             let err = res.unwrap_err();
-            if let Error::NotFound(prefix, hash) = err {
+            if let Error::NotFound(prefix, _hash) = err {
                 if prefix != BLOCKCHAIN_POSTFIX {
                     // TODO: Possibly panic
                     return false;
@@ -166,7 +166,7 @@ impl NetworkWorkController {
                     }
                 });
             }
-            else if let Error::Logic(err) = err {
+            else if let Error::Logic(_err) = err {
                 // TODO: Figure out if action needs to be taken to the submitting node
             }
 
@@ -185,7 +185,7 @@ impl NetworkWorkController {
         }
         else {
             let err = res.unwrap_err();
-            if let Error::NotFound(prefix, hash) = err {
+            if let Error::NotFound(prefix, _hash) = err {
                 if prefix != BLOCKCHAIN_POSTFIX {
                     // TODO: Possibly panic
                     return false;
@@ -204,7 +204,7 @@ impl NetworkWorkController {
                     }
                 });*/
             }
-            else if let Error::Logic(err) = err {
+            else if let Error::Logic(_err) = err {
                 // TODO: Figure out if action needs to be taken to the submitting node
             }
 
@@ -212,9 +212,9 @@ impl NetworkWorkController {
         }
     }
 
-    pub fn import_bulk(&self, seq: u32, provider: &U160, mut blocks: Vec<Block>, mut txns: Vec<Txn>) {
+    pub fn import_bulk(&self, seq: u32, _provider: &U160, mut blocks: Vec<Block>, mut txns: Vec<Txn>) {
 
-        let mut s = self.0.lock().unwrap();
+        let s = self.0.lock().unwrap();
 
         while let Some(txn) = txns.pop() {
             s.work_queue.submit(WorkItem(
@@ -222,7 +222,7 @@ impl NetworkWorkController {
                 Some(Box::new(NetworkWorkRequest {
                     batch: seq,
                     item: txns.len() as u32 + blocks.len() as u32,
-                    provider: provider.clone()
+                    //provider: //provider.clone()
                 }))
             ));
         }
@@ -232,8 +232,8 @@ impl NetworkWorkController {
                 Task::NewBlock(block),
                 Some(Box::new(NetworkWorkRequest {
                     batch: seq,
-                    item: blocks.len() as u32,
-                    provider: provider.clone()
+                    item: blocks.len() as u32
+                    //provider: //provider.clone()
                 }))
             ));
         }
@@ -243,7 +243,7 @@ impl NetworkWorkController {
 impl EventListener<WorkResult> for NetworkWorkController {
     /// Add an event to the queue of finished things such that it can be handled by the main loop at
     /// a later point.
-    fn notify(&self, time: u64, r: &WorkResult) {
+    fn notify(&self, _time: u64, r: &WorkResult) {
         use self::WorkResultType::*;
 
         let mut s = self.0.lock().unwrap();
@@ -296,7 +296,7 @@ impl EventListener<WorkResult> for NetworkWorkController {
                             }
                         }
                     },
-                    &ErrorAddingBlock(ref hash, ref e) => {
+                    &ErrorAddingBlock(ref _hash, ref e) => {
                         // add new targets?
                         if let &Error::NotFound(ref prefix, ref hash) = e {
                             if prefix != &BLOCKCHAIN_POSTFIX {
@@ -306,17 +306,17 @@ impl EventListener<WorkResult> for NetworkWorkController {
 
                             s.targets.insert(WorkTarget::new(deserialize(&hash).unwrap()));
                         }
-                        else if let &Error::Logic(ref err) = e {
+                        else if let &Error::Logic(ref _err) = e {
                             // TODO: Figure out if action needs to be taken to the submitting node
                         }
                     },
-                    &AddedNewTxn(ref hash) => {
+                    &AddedNewTxn(ref _hash) => {
                         // right now do not care except error
                     },
-                    &DuplicateTxn(ref hash) => {
+                    &DuplicateTxn(ref _hash) => {
                         // right now do not care except error
                     },
-                    &ErrorAddingTxn(ref hash, ref e) => {
+                    &ErrorAddingTxn(ref _hash, ref e) => {
                         // add new targets?
                         if let &Error::NotFound(ref prefix, ref hash) = e {
                             if prefix != &BLOCKCHAIN_POSTFIX {
@@ -326,7 +326,7 @@ impl EventListener<WorkResult> for NetworkWorkController {
 
                             s.targets.insert(WorkTarget::new(deserialize(&hash).unwrap()));
                         }
-                        else if let &Error::Logic(ref err) = e {
+                        else if let &Error::Logic(ref _err) = e {
                             // TODO: Figure out if action needs to be taken to the submitting node
                         }
                     }

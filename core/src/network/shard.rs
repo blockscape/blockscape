@@ -3,6 +3,7 @@ use rand;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::net::{SocketAddr,UdpSocket};
+use std::io;
 use std::sync::{Mutex,RwLock};
 use std::sync::Arc;
 use std::ops::Deref;
@@ -10,7 +11,7 @@ use std::ops::Deref;
 use network::client::{ShardMode, NetworkContext};
 use network::client;
 use network::node::{Node, NodeRepository};
-use network::session::{Session, SessionInfo, ByeReason, Packet, RawPacket};
+use network::session::{Session, Message, SessionInfo, ByeReason, Packet, RawPacket};
 use primitives::{U256, U160};
 
 pub struct ShardInfo {
@@ -98,7 +99,7 @@ impl ShardInfo {
         // pull from the connection queue
 
         while let Some(peer) = self.connect_queue.lock().unwrap().pop_front() {
-            let sess: Option<SocketAddr> = match self.open_session(peer.clone(), my_node.clone(), None) {
+            match self.open_session(peer.clone(), my_node.clone(), None) {
                 Ok(sopt) => {
                     info!("New contact opened to {}", sopt);
                     Some(sopt)
@@ -125,7 +126,7 @@ impl ShardInfo {
 
         let mut s = self.sessions.write().unwrap();
 
-        for (addr, mut sess) in s.iter_mut() {
+        for (addr, sess) in s.iter_mut() {
             sess.check_conn();
 
             if let Some(d) = sess.is_done() {
@@ -168,7 +169,6 @@ impl ShardInfo {
     }
 
     pub fn open_session(&self, peer: Arc<Node>, my_node: Arc<Node>, introduce: Option<&Packet>) -> Result<SocketAddr, ()> {
-        let pkh = peer.get_hash_id();
         let saddr = peer.endpoint.clone().as_socketaddr();
 
         // now we can look into creating a new session
@@ -201,56 +201,63 @@ impl ShardInfo {
     /// Call to set this shard to a state where all nodes are disconnected and data should stop being validated/tracked
     pub fn close(&self, s: &UdpSocket) {
         debug!("Close shard: {}", self.network_id);
-        for mut sess in self.sessions.write().unwrap().values_mut() {
+        for sess in self.sessions.write().unwrap().values_mut() {
             sess.close();
-            Self::send_session_packets(&mut sess, s);
+            if let Err(e) = Self::send_session_packets(sess, s) {
+                warn!("Failed to send connection close packet: {:?}", e);
+            }
         }
     }
 
     /// Evaluate a single packet and route it to a session as necessary
     pub fn process_packet(&self, p: &Packet, addr: &SocketAddr, mut context: &mut NetworkContext) {
-        {
-            match self.sessions.write().unwrap().get_mut(&addr) {
-                Some(sess) => {
-                    sess.recv(&p, &mut context);
-                },
-                None => {
-                    // should never happen because all sessions init through port 255
-                    warn!("Unroutable packet: {:?}", p);
-                }
+        
+        match p.msg {
+            Message::Ping { .. } => {},
+            Message::Pong { .. } => {},
+            _ => debug!("{} ==> {:?}", addr, &p)
+        };
+        
+        match self.sessions.write().unwrap().get_mut(&addr) {
+            Some(sess) => {
+                sess.recv(&p, &mut context);
+            },
+            None => {
+                // should never happen because all sessions init through port 255
+                warn!("Unroutable packet: {:?}", p);
             }
         }
     }
 
     /// Send all the packets queued for the given session. Returns number of bytes sent.
-    pub fn send_packets(&self, addr: &SocketAddr, s: &UdpSocket) -> u64 {
+    pub fn send_packets(&self, addr: &SocketAddr, s: &UdpSocket) -> Result<usize, io::Error> {
         let mut sr = self.sessions.write().unwrap();
         
         if let Some(mut sess) = sr.get_mut(addr) {
             Self::send_session_packets(&mut sess, s)
         }
         else {
-            0
+            Ok(0)
         }
     }
 
     /// Send all the packets queued for any session in this network. Returns number of bytes sent.
-    pub fn send_all_packets(&self, s: &UdpSocket) -> usize {
+    pub fn send_all_packets(&self, s: &UdpSocket) -> Result<usize, io::Error> {
         let mut sent: usize = 0;
         for mut sess in self.sessions.write().unwrap().values_mut() {
-            sent += Self::send_session_packets(&mut sess, s) as usize;
+            sent += Self::send_session_packets(&mut sess, s)? as usize;
         }
 
-        sent
+        Ok(sent)
     }
 
     pub fn get_network_id(&self) -> &U256 {
         return &self.network_id;
     }
 
-    pub fn get_node_repo(&self) -> &NodeRepository {
+    /*pub fn get_node_repo(&self) -> &NodeRepository {
         return &self.node_repo;
-    }
+    }*/
 
     pub fn session_count(&self) -> usize {
         // filter only sessions which are past introductions
@@ -278,12 +285,18 @@ impl ShardInfo {
         vec
     }
 
-    fn send_session_packets(sess: &mut Session, s: &UdpSocket) -> u64 {
-        let mut count: u64 = 0;
+    fn send_session_packets(sess: &mut Session, s: &UdpSocket) -> Result<usize, io::Error> {
+        let mut count: usize = 0;
 
         while let Some(p) = sess.pop_send_queue() {
 
-            let mut rawp = RawPacket {
+            match p.msg {
+                Message::Ping { .. } => {},
+                Message::Pong { .. } => {},
+                _ => debug!("{} <== {:?}", sess.get_remote_addr(), &p)
+            };
+
+            let rawp = RawPacket {
                 port: sess.get_remote().1,
                 payload: p
             };
@@ -291,12 +304,12 @@ impl ShardInfo {
             // TODO: Is it bad that I call this in 2 separate calls, or are they just buffered together?
             let raw = serialize(&rawp, Bounded(client::MAX_PACKET_SIZE as u64)).unwrap();
             let size_enc = serialize(&(raw.len() as u32), Bounded(4)).unwrap();
-            s.send_to(&size_enc[..], sess.get_remote_addr());
-            s.send_to(&raw[..], sess.get_remote_addr());
+            s.send_to(&size_enc[..], sess.get_remote_addr())?;
+            s.send_to(&raw[..], sess.get_remote_addr())?;
 
-            count += 4 + raw.len() as u64;
+            count += 4 + raw.len() as usize;
         }
 
-        count
+        Ok(count)
     }
 }

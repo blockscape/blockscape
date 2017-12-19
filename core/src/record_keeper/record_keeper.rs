@@ -51,7 +51,6 @@ impl RecordKeeper {
     /// Use pending transactions to create a new block which can then be added to the network.
     pub fn create_block(&self) -> Result<Block, Error> {
         let pending_txns = self.pending_txns.read().unwrap();
-        let rules = self.rules.read().unwrap();
         let db = self.db.read().unwrap();
 
         let cbh = db.get_current_block_header()?;
@@ -79,7 +78,7 @@ impl RecordKeeper {
         let mut accepted_txns: BTreeSet<U256> = BTreeSet::new();
         let mut last_block = None;
 
-        for (time, txn) in txns_by_time {
+        for (_time, txn) in txns_by_time {
             last_block = Some(Block{
                 header: BlockHeader{
                     version: 1,
@@ -114,7 +113,6 @@ impl RecordKeeper {
     /// invalidated. Also move the network state to be at the new end of the chain.
     /// Returns true if the block was added, false if it was already in the system.
     pub fn add_block(&self, block: &Block) -> Result<bool, Error> {
-        let block_hash = block.header.calculate_hash();
         let mut db = self.db.write().unwrap();
 
         self.is_valid_block_given_lock(&*db, block)?;
@@ -316,7 +314,7 @@ impl RecordKeeper {
 
     /// Get a transaction from the database.
     pub fn get_txn(&self, hash: &U256) -> Result<Txn, Error> {
-        let pending = self.pending_txns.read().unwrap();
+        //let pending = self.pending_txns.read().unwrap();
         let db = self.db.read().unwrap();
         self.get_txn_given_lock(&*db, hash)
     }

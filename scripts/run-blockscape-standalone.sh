@@ -1,7 +1,7 @@
 #!/bin/bash
 
 if [ $# -gt 0 ]; then
-	docker run --name blockscape -it --rm dcr.buyme360.com/plu-capstone/blockscape:latest /blockscape "$@"
+	docker run -it --rm --net host dcr.buyme360.com/plu-capstone/blockscape:latest /blockscape "$@"
 else
-	docker run --name blockscape -it --rm dcr.buyme360.com/plu-capstone/blockscape:latest
+	docker run -it --rm --net host dcr.buyme360.com/plu-capstone/blockscape:latest
 fi
