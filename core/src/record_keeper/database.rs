@@ -1,11 +1,9 @@
 use bincode;
-use bytes::{BigEndian, ByteOrder};
 use env;
 use primitives::{U256, U160, Mutation, Change, Block, BlockHeader, Txn};
 use rocksdb::{DB, Options};
 use rocksdb::Error as RocksDBError;
-use std::cmp;
-use std::collections::{HashSet, HashMap, BTreeMap};
+use std::collections::{HashMap, BTreeMap};
 use std::path::PathBuf;
 use super::{Storable, PlotEvent, PlotEvents, events, PlotID};
 use super::error::*;
@@ -246,7 +244,7 @@ impl Database {
     /// Get the reputation of a validator given their ID.
     /// TODO: Handle shard-based reputations
     pub fn get_validator_rep(&self, id: &U160) -> Result<i64, Error> {
-        let key = Self::with_prefix(REPUTATION_PREFIX, &id.to_vec());serlization
+        let key = Self::with_prefix(REPUTATION_PREFIX, &id.to_vec());
         let raw = self.get_raw_data(&key, NETWORK_POSTFIX)?;
         Ok(bincode::deserialize::<i64>(&raw)?)
     }
@@ -304,54 +302,9 @@ impl Database {
 
     /// Get the key value for the height cache in the database. (Without the cache postfix).
     pub fn get_blocks_by_height_key(height: u64) -> Vec<u8> {
-        let mut key: Vec<u8> = bincode::serialize(&height, bincode::Bounded(8)).unwrap();
+        let key: Vec<u8> = bincode::serialize(&height, bincode::Bounded(8)).unwrap();
         Self::with_prefix(BLOCKS_BY_HEIGHT_PREFIX, &key)
     }
-
-    /// Function to find the unknown blocks from the last known block until the desired block. It
-    /// will never include the `last_known` or `target` blocks in the result and the result will be
-    /// in order from lowest height the greatest height. Also, `limit` is the maximum number of
-    /// blocks it should scan through when ascending the blockchain.
-    ///
-    /// In summary, it will always find the latest common ancestor of the two blocks and then
-    /// traverse upwards until it reaches the target and only return those found when traversing
-    /// upwards.
-    ///
-    /// Note: `start` and `target` will be flipped internally if needed.
-    // pub fn get_unknown_blocks(&self, start: &U256, target: &U256, limit: usize) -> Result<Vec<(U256, BlockHeader)>, Error> {
-    //     // TODO: add limit to LCA? Check height differences? What should happen if it does go beyond the limit?
-    //     let (a_hashes, b_hashes, last_a, last_b) = self.latest_common_ancestor(start, target)?;
-
-        
-
-    //     let s_lca = self.latest_common_ancestor_with_current_chain(start)?;
-    //     let t_lca = self.latest_common_ancestor_with_current_chain(target)?;
-
-    //     // We want the lower intersection to be `a`,
-    //     // the higher intersection to he `b`, and
-    //     // final target to be `c`.
-    //     let a, b, c;
-    //     if self.get_block_height(&s_lca)? <= self.get_block_height(&t_lca)? {
-    //         a = s_lca;
-    //         b = t_lca;
-    //         c = target;
-    //     } else {
-    //         a = t_lca;
-    //         b = s_lca;
-    //         c = start;
-    //     }
-
-    //     // Go from `a` to `b` which is along the current chain then branch off and go up to `c`.
-    //     let mut vals: Vec<(U256, BlockHeader)> = if (a != b) {
-    //         UpIter(&self, a)
-    //             .skip(1)  // we know they have this one
-    //             .take(limit)  // hard-coded maximum
-    //             .take_while(|res| res.is_ok()) // stop at first error
-    //             .map(|res| res.unwrap())
-    //             .take_while(|(hash, header)| hash != b)  // stop when we hit the junction
-    //             .collect()
-    //     } else { Vec::new() }
-    // }
 
     /// Get blocks before the `target` hash until it collides with the main chain. If the `start`
     /// hash lies between the target and the main chain, it will return the blocks between them,
@@ -360,8 +313,8 @@ impl Database {
     ///
     /// If the limit is reached, it will prioritize blocks of a lower height, but may have a gap
     /// between the main chain (or start) and what it includes.
-    pub fn get_blocks_before(&self, target: &U256, start: &U256, limit: usize)  -> Result<BlockHeader>, Error> {
-        let mut iter = DownIter(&self, target)
+    pub fn get_blocks_before(&self, target: &U256, start: &U256, limit: usize)  -> Result<Vec<BlockHeader>, Error> {
+        let mut iter = DownIter(&self, *target)
             .skip(1)
             .take(limit)
             .take_while(|res| res.is_ok())
@@ -386,11 +339,12 @@ impl Database {
     pub fn get_blocks_after(&self, start: &U256, limit: usize) -> Result<Vec<BlockHeader>, Error> {
         // For efficiency, use a quick check to find if a given block is part of the current chain or not.
         let ancestor = self.latest_common_ancestor_with_current_chain(start)?;
-        Ok(UpIter(&self, ancestor)
+        let ancestor_height = self.get_block_height(&ancestor)?;
+        Ok(UpIter(&self, ancestor_height)
             .skip(1) // we know they have must have the LCA
             .take(limit) // hard-coded maximum
             .take_while(|res| res.is_ok()) // stop at first error, or when we reach the destination
-            .map(|res| res.unwrap())
+            .map(|res| res.unwrap().1)  // exract block header
             .collect::<Vec<BlockHeader>>()
         )
     }
@@ -536,7 +490,7 @@ impl Database {
     /// seek to reconstruct old history so `after_tick` simply allows additional filtering, e.g. if
     /// you set `after_tick` to 0, you would not get all events unless the oldest events have not
     /// yet been removed from the cache.
-    pub fn get_plot_events(&self, plot_id: PlotID, after_tick: u64) -> Result<PlotEvents, Error> {
+    pub fn get_plot_events(&self, plot_id: PlotID, _after_tick: u64) -> Result<PlotEvents, Error> {
         let db_key = Self::with_pre_post_fix(PLOT_PREFIX, &plot_id.bytes(), NETWORK_POSTFIX);
 
         Ok(self.db.get(&db_key)?.map_or(
@@ -684,10 +638,10 @@ impl Database {
     /// the chain of the given block until it finds a block it knows is part of the current chain.
     /// Much more efficient than `latest_common_ancestor` in this specific use case.
     fn latest_common_ancestor_with_current_chain(&self, hash: &U256) -> Result<U256, Error> {
-        let mut iter = DownIter(&self, hash);
+        let mut iter = DownIter(&self, *hash);
         while let Some(r) = iter.next() {
             // check if r is part of the main chain, if it is, we are done
-            let h: U256 = r?;
+            let h: U256 = r?.0;
             if self.is_part_of_current_chain(&h)? {
                 return Ok(h);
             }
@@ -712,7 +666,7 @@ impl Database {
         let mut height_vals: Vec<U256> = {
             match res {
                 Ok(raw) => bincode::deserialize(&raw)?,
-                Err(Error::NotFound(..)) => Vec::new(),(hash, header)
+                Err(Error::NotFound(..)) => Vec::new(),
                 Err(e) => return Err(e)
             }
         };
@@ -731,9 +685,9 @@ impl Database {
             bincode::deserialize(&raw).unwrap()
         };
 
-        if let Some((index, _)) =
+        if let Some(index) =
             height_values.iter()
-            .position(|&h| *h == *hash)
+            .position(|h| *h == *hash)
         { // we found the one we want, now swap it with the one in the front and re-save it
             height_values.swap(0, index);
             let raw = bincode::serialize(&height_values, bincode::Infinite).unwrap();
@@ -818,22 +772,23 @@ impl Database {
 /// Iterate up the current chain, it will only follow the current chain and will end when either it
 /// reaches the head, a database error occurs, or a block header is not found for a block we know is
 /// part of the current chain.
-pub struct UpIter<'a> (&'a Database, height: u64);
+pub struct UpIter<'a> (&'a Database, u64);
 
 impl<'a> Iterator for UpIter<'a> {
     type Item = Result<(U256, BlockHeader), Error>;
     
     fn next(&mut self) -> Option<Self::Item> {
         if self.1 <= self.0.head.height {
-            let next = self.0.get_current_block_of_height(height);
+            let next = self.0.get_current_block_of_height(self.1);
             if next.is_err() { return Some(Err( next.unwrap_err() )); }
 
-            let header = self.0.get_block_header(&next.unwrap());
+            let header = self.0.get_block_header(next.as_ref().unwrap());
             if header.is_ok() {
                 self.1 += 1;
+                Some( Ok((next.unwrap(), header.unwrap())) )
+            } else {
+                Some(Err(header.unwrap_err()))
             }
-            
-            header.map(|header| Some((next.unwrap(), header)))
         } else { None }
     }
 }
@@ -848,10 +803,14 @@ impl<'a> Iterator for DownIter<'a> {
     type Item = Result<(U256, BlockHeader), Error>;
     
     fn next(&mut self) -> Option<Self::Item> {
-        if block.is_zero() { return None; }
+        if self.1.is_zero() { return None; }
         let res = self.0.get_block_header(&self.1);
         let t = self.1;
-        if res.is_ok() { self.1 = res.unwrap().header.prev; }
-        Some((t, res))
+        if let Ok(header) = res {
+            self.1 = header.prev;
+            Some(Ok( (t, header) ))
+        } else {
+            Some(Err( res.unwrap_err() ))
+        }
     }
 }

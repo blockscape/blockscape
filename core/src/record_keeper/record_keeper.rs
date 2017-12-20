@@ -1,5 +1,5 @@
 use primitives::{U256, U160, Txn, Block, BlockHeader, Mutation, Change, EventListener, ListenerPool};
-use std::collections::{HashMap, HashSet, BTreeSet, BTreeMap};
+use std::collections::{HashMap, BTreeSet, BTreeMap};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use super::{MutationRule, MutationRules, Error, LogicError, Storable, RecordEvent, PlotID};
@@ -187,7 +187,7 @@ impl RecordKeeper {
 
     /// Return a list of **known** blocks which have a given height. If the block has not been added
     /// to the database, then it will not be included.
-    pub fn get_blocks_of_height(&self, height: u64) -> Result<HashSet<U256>, Error> {
+    pub fn get_blocks_of_height(&self, height: u64) -> Result<Vec<U256>, Error> {
         let db = self.db.read().unwrap();
         db.get_blocks_of_height(height)
     }
@@ -209,7 +209,7 @@ impl RecordKeeper {
     /// between the main chain (or start) and what it includes.
     pub fn get_blocks_before(&self, last_known: &U256, target: &U256, limit: usize) -> Result<BlockPackage, Error> {
         let db = self.db.read().unwrap();
-        BlockPackage::blocks_before(db, last_known, target, limit)
+        BlockPackage::blocks_before(&*db, last_known, target, limit)
     }
 
     /// Create a `BlockPackage` of all the blocks of the current chain which are a descendent of the
@@ -218,7 +218,7 @@ impl RecordKeeper {
     /// may contain.
     pub fn get_blocks_after(&self, start: &U256, limit: usize) -> Result<BlockPackage, Error> {
         let db = self.db.read().unwrap();
-        BlockPackage::blocks_after(db, start, limit)
+        BlockPackage::blocks_after(&*db, start, limit)
     }
 
     /// Returns a map of events for each tick that happened after a given tick. Note: it will not

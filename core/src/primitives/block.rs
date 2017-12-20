@@ -102,7 +102,7 @@ impl Block {
 
     /// Calculate the merkle root of a set of transactions.
     pub fn calculate_merkle_root(txn_set: &BTreeSet<U256>) -> U256 {
-        /// What we want to do, is calculate the hash of each two hashes in series, and then form a
+        // What we want to do, is calculate the hash of each two hashes in series, and then form a
         // list of those, repeat until we end up with a single hash.
         
         let mut hashes: Vec<U256> = txn_set.iter().cloned().collect();

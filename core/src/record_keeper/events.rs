@@ -1,6 +1,7 @@
 use primitives::{U256, Event, RawEvent};
-use super::PlotID;
 use std::collections::BTreeMap;
+use std::mem::size_of;
+use super::PlotID;
 
 /// An event regarding the keeping of records, such as the introduction of a new block or shifting
 /// state.
@@ -31,10 +32,10 @@ pub struct PlotEvent {
 }
 impl Event for PlotEvent {}
 
-impl Event {
+impl PlotEvent {
     /// Calculate the encoded size of this event in bytes.
     pub fn calculate_size(&self) -> usize {
-        size_of(PlotID) * 2 +
+        size_of::<PlotID>() * 2 +
         self.event.len() + 1
     }
 }

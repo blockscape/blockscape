@@ -1,6 +1,10 @@
 use bincode;
 use compress::{compress, decompress};
 use primitives::{Block, BlockHeader, Txn, U256};
+use std::collections::HashMap;
+use std::mem::size_of;
+use super::database::Database;
+use super::Error;
 
 /// Estimated block size in bytes, this should be slightly under the true value, and will be used 
 const ESTIMATED_BLOCK_SIZE: usize = 128;
@@ -10,16 +14,16 @@ const ESTIMATED_BLOCK_SIZE: usize = 128;
 /// form being responsible for an invalid ordering of blocks or the txn references internally
 /// stored.
 #[derive(Debug, Serialize, Deserialize)]
-struct BlockPackage {
+pub struct BlockPackage {
     /// Blocks and their associated transactions sorted from the lowest height to the greatest height.
     blocks: Vec<(BlockHeader, Vec<u16>)>,
     /// The txns which are referenced by at least one of the included blocks.
     txns: Vec<Txn>
 }
 
-impl From<&[u8]> for BlockPackage {
+impl<'a> From<&'a [u8]> for BlockPackage {
     #[inline]
-    fn from(data: &[u8]) -> BlockPackage {
+    fn from(data: &'a [u8]) -> BlockPackage {
         BlockPackage::unpack(data)
     }
 }
@@ -30,24 +34,25 @@ impl BlockPackage {
         BlockPackage { blocks: Vec::new(), txns: Vec::new() }
     }
 
-    /// Create a `BlockPackage` of the unknown blocks from the last known block until the desired
-    /// block. It will never include the `last_known` or `target` blocks in the package. The `limit`
-    /// is the maximum number of bytes the final package may contain.
+    /// Create a `BlockPackage` of blocks before the `target` hash until it collides with the main
+    /// chain. If the `start` hash lies between the target and the main chain, it will return the
+    /// blocks between them, otherwise it will return the blocks from the main chain until target
+    /// in that order and it will not include the start or target blocks.
     ///
-    /// In summary, it will always find the latest common ancestor of the two blocks and then
-    /// traverse upwards until it reaches the target and only include those found when traversing
-    /// upwards.
-    pub fn unknown_blocks(db: &Database, last_known: &U256, target: &U256, limit: usize) -> Result<BlockPackage, Error> {
-        let blocks = db.get_unknown_blocks(last_known, target, limit / ESTIMATED_BLOCK_SIZE)?;
+    /// If the limit is reached, it will prioritize blocks of a lower height, but may have a gap
+    /// between the main chain (or start) and what it includes.
+    pub fn blocks_before(db: &Database, last_known: &U256, target: &U256, limit: usize) -> Result<BlockPackage, Error> {
+        let blocks = db.get_blocks_before(last_known, target, limit / ESTIMATED_BLOCK_SIZE)?;
         Self::package(db, blocks, limit)
     }
 
-    /// Create a `BlockPackage` of all the blocks of the current chain which are a descendent of the
-    /// latest common ancestor between the chain of the start block and the current chain. It will
-    /// not include the start block. The `limit` is the maximum number of bytes the final package
-    /// may contain.
-    pub fn blocks_after_hash(db: &Database, start: &U256, limit: usize) -> Result<BlockPackage, Error> {
-        let blocks = db.get_blocks_after_hash(start, limit / ESTIMATED_BLOCK_SIZE)?;
+    /// Create a `BlockPackage` of all the blocks of the current chain which are a descendent of
+    /// the latest common ancestor between the chain of the start block and the current chain. This
+    /// result will be sorted in ascending height order. It will not include the start hash. Also,
+    /// `limit` is the maximum number of blocks it should scan through when ascending the
+    /// blockchain.
+    pub fn blocks_after(db: &Database, start: &U256, limit: usize) -> Result<BlockPackage, Error> {
+        let blocks = db.get_blocks_after(start, limit / ESTIMATED_BLOCK_SIZE)?;
         Self::package(db, blocks, limit)
     }
 
@@ -69,10 +74,10 @@ impl BlockPackage {
         }
         
         // create an integer index for all of the transaction hashes 
-        for block in blocks {
-            for txn in block.txns {
+        for block in blocks.iter() {
+            for txn in block.txns.iter() {
                 if !txns_by_hash.contains_key(&txn) {
-                    txns_by_hash.insert(txn, count);
+                    txns_by_hash.insert(*txn, count);
                     assert!(count < 0xffff);
                     count += 1;
                 }
@@ -89,14 +94,14 @@ impl BlockPackage {
 
             // size of block header and the txns, add one to list of txns to account for
             // a possible termination deliminer
-            size += size_of(BlockHeader) + (block.txns.len() + 1) * 2;
+            size += size_of::<BlockHeader>() + (block.txns.len() + 1) * 2;
 
             for txn in block.txns {
-                let index = txns_by_hash.get(txn).unwrap();
-                txn_indicies.append(index);
+                let index = *txns_by_hash.get(&txn).unwrap();
+                txn_indicies.push(index);
                 
                 if index == count { //we need to add the txn itself
-                    let full_txn = db.get_txn(txn)?;
+                    let full_txn = db.get_txn(&txn)?;
                     size += full_txn.calculate_size();
                     new_txns.push(full_txn);
                     count += 1;
@@ -105,7 +110,7 @@ impl BlockPackage {
 
             if size <= limit {
                 package.blocks.push((block.header, txn_indicies));
-                package.txns.append(new_txns);
+                package.txns.append(&mut new_txns);
             } else { break; }
         }
 
@@ -115,13 +120,13 @@ impl BlockPackage {
     /// Convert the `BlockPackage` into a compressed binary representation which can be easily
     /// transferred or archived.
     pub fn pack(&self) -> Vec<u8> {
-        let raw = bincode::serilize(self, bincode::Infinite).unwrap();
+        let raw = bincode::serialize(self, bincode::Infinite).unwrap();
         compress(&raw).unwrap()
     }
 
     /// Unpack a compressed block binary representation of the `BlockPackage`.
     pub fn unpack(package: &[u8]) -> BlockPackage {
         let raw = decompress(package).unwrap();
-        bincode::deserialize(&raw)
+        bincode::deserialize(&raw).unwrap()
     }
 }

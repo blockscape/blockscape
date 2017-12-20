@@ -1,5 +1,6 @@
 use std::hash::{Hash, Hasher};
 use record_keeper::{PlotID, PlotEvent};
+use std::mem::size_of;
 
 /// A single change to the database, a mutation may be the composite of multiple changes. This is
 /// designed as a simple structure which the outer world can use to store the changes which should
@@ -40,18 +41,18 @@ impl Hash for Change {
 impl Change {
     /// Calculate the encoded size of this change in bytes.
     pub fn calculate_size(&self) -> usize {
-        8 + match &self {
-            &SetValue{&key, &value, &supp} {
+        8 + match self {
+            &Change::SetValue{ref key, ref value, ref supp} => {
                 key.len() + 1 +
-                if let &Some(&a) = value { a.len() }
+                if let Some(a) = value.as_ref() { a.len() }
                 else { 0 } + 2 +
-                if let &Some(&a) = supp { a.len() }
+                if let Some(a) = supp.as_ref() { a.len() }
                 else { 0 } + 2
             },
-            &AddEvent{&event, &supp, ...} {
-                size_of(PlotID) + 8 + 
+            &Change::AddEvent{ref event, ref supp, ..} => {
+                size_of::<PlotID>() + 8 + 
                 event.calculate_size() +
-                if let &Some(&a) = supp { a.len() }
+                if let Some(a) = supp.as_ref() { a.len() }
                 else { 0 } + 2
             }
         }
@@ -120,6 +121,6 @@ impl Mutation {
     /// Calculate the encoded size of this mutation in bytes.
     pub fn calculate_size(&self) -> usize {
         1 +  // contra
-        self.changes.iter().fold(|total, c| total + c.calculate_size())
+        self.changes.iter().fold(0, |total, c| total + c.calculate_size())
     } 
 }

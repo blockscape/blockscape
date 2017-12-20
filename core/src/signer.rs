@@ -11,14 +11,14 @@ pub const RSA_KEY_SIZE: usize = 2048;
 pub fn sign_bytes(bytes: &[u8], private_key: &PKey) -> Vec<u8> {
     let mut signer = sign::Signer::new(hash::MessageDigest::sha256(), &private_key).unwrap();
     signer.update(bytes).unwrap();
-    signer.finish().unwrap()
+    signer.sign_to_vec().unwrap()
 }
 
 /// Verify the bytes have not been tampered with given a signature and public key.
 pub fn verify_bytes(bytes: &[u8], signature: &[u8], public_key: &PKey) -> bool {
     let mut verifier = sign::Verifier::new(hash::MessageDigest::sha256(), public_key).unwrap();
     verifier.update(bytes).unwrap();
-    verifier.finish(&signature).unwrap()
+    verifier.verify(&signature).unwrap()
 }
 
 /// Sign an object with a private key.
