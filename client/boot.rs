@@ -190,7 +190,7 @@ pub fn make_rpc(cmdline: &ArgMatches, ctx: Context) -> RPC {
     RPC::run(bind_addr, ctx)
 }
 
-pub fn call_rpc(cmdline: &ArgMatches) {
+pub fn call_rpc(cmdline: &ArgMatches) -> bool {
 
     use rpc::client::JsonRpcRequest;
 
@@ -206,8 +206,12 @@ pub fn call_rpc(cmdline: &ArgMatches) {
 
     if res.is_err() {
         println!("RPC Error: {}", res.err().unwrap());
+
+        false
     }
     else {
         println!("{}", res.unwrap());
+
+        true
     }
 }
