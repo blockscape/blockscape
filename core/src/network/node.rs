@@ -17,7 +17,7 @@ use hash::hash_pub_key;
 use primitives::U160;
 
 /// All the information needed to make contact with a remote node
-#[derive(Clone, Serialize, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Serialize, PartialEq, Eq, Deserialize, Hash)]
 pub struct NodeEndpoint {
     /// Network IP of the client
     pub host: String,
@@ -77,7 +77,7 @@ impl fmt::Debug for NodeEndpoint {
 }
 
 /// Detailed information about a node
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Hash)]
 pub struct Node {
     /// Information on the address and port which can be used to open a connection to this node
     pub endpoint: NodeEndpoint,
@@ -137,7 +137,8 @@ impl PartialOrd for LocalNode {
 #[derive(Debug)]
 pub struct NodeRepository {
     available_nodes: HashMap<U160, RwLock<LocalNode>>,
-    sorted_nodes: Vec<U160>
+    sorted_nodes: Vec<U160>,
+    changes: usize
 }
 
 /// Contains and manages a sorted list of connectable nodes and full information about them
@@ -148,7 +149,8 @@ impl NodeRepository {
     pub fn new() -> NodeRepository {
         let mut nr = NodeRepository {
             available_nodes: HashMap::new(),
-            sorted_nodes: Vec::new()
+            sorted_nodes: Vec::new(),
+            changes: 0
         };
 
         nr.build(&vec![]); // initialize empty, which will cause the seed nodes to be populated
@@ -168,7 +170,7 @@ impl NodeRepository {
     }
 
     /// Notify the repository of updated or new node information. Will automatically add or change an existing node as appropriate based on the key in the repository
-    pub fn apply(&self, node: Node) -> bool {
+    pub fn apply(&mut self, node: Node) -> bool {
         let hpk = node.get_hash_id();
         {
             if let Some(n) = self.available_nodes.get(&hpk) {
@@ -176,6 +178,7 @@ impl NodeRepository {
                 let mut myn = n.write().unwrap();
                 if myn.node != node {
                     myn.node = node;
+                    self.changes += 1;
                     return true;
                 }
             }
@@ -196,6 +199,8 @@ impl NodeRepository {
         
         self.sorted_nodes.push(hpk);
         self.available_nodes.insert(hpk, RwLock::new(n));
+
+        self.changes += 1;
     }
 
     /// Remove the given node from the repository. This should only be done if the node data is
@@ -203,6 +208,8 @@ impl NodeRepository {
     pub fn remove(&mut self, node: &U160) {
         self.available_nodes.remove(node);
         self.sorted_nodes.retain(|n| n != node);
+
+        self.changes += 1;
     }
 
     /// Increment the connection score for the given node ID. Does nothing if the node does not exist in the repo, so call after apply() if the node is new.
@@ -217,6 +224,8 @@ impl NodeRepository {
         }
 
         self.resort();
+
+        self.changes += 1;
         true
     }
 
@@ -237,6 +246,8 @@ impl NodeRepository {
         }
 
         self.resort();
+
+        self.changes += 1;
         true
     }
 
@@ -289,6 +300,7 @@ impl NodeRepository {
         }
 
         self.resort();
+        self.changes += 1;
     }
 
     pub fn trim(&mut self) {
@@ -296,7 +308,12 @@ impl NodeRepository {
         self.build(&nodes);
     }
 
-    pub fn save(&self, name: &str) -> Result<u32, Error> {
+    pub fn save(&mut self, name: &str) -> Result<u32, Error> {
+
+        if self.changes == 0 {
+            // suppress saving, since it is not necessary to do it
+            return Ok(self.sorted_nodes.len() as u32);
+        }
 
         let saved: Vec<LocalNode> = self.available_nodes.values().map(|n| n.read().unwrap().clone()).collect();
         
@@ -306,6 +323,8 @@ impl NodeRepository {
         match File::create(&self.node_store_path(name)) {
             Ok(mut f) => {
                 write!(f, "{}", serialized).expect("Could not save to open file");
+                self.changes = 0;
+
                 Ok(saved.len() as u32)
             },
             Err(e) => Err(e)
