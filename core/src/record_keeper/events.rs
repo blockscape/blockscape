@@ -1,6 +1,7 @@
 use primitives::{U256, Event, RawEvent};
-use super::PlotID;
 use std::collections::BTreeMap;
+use std::mem::size_of;
+use super::PlotID;
 
 /// An event regarding the keeping of records, such as the introduction of a new block or shifting
 /// state.
@@ -9,6 +10,7 @@ use std::collections::BTreeMap;
 /// otherwise stated. This means that if there is a `NewBlock` message, a call to retrieve the block
 /// will succeed.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type")]
 pub enum RecordEvent {
     /// A new block has been added, walk forward (or back, if back, then a state invalidated event
     /// will also be pushed out if relevant)
@@ -29,6 +31,14 @@ pub struct PlotEvent {
     event: RawEvent
 }
 impl Event for PlotEvent {}
+
+impl PlotEvent {
+    /// Calculate the encoded size of this event in bytes.
+    pub fn calculate_size(&self) -> usize {
+        size_of::<PlotID>() * 2 +
+        self.event.len() + 1
+    }
+}
 
 /// Lists of events stored by their tick
 pub type PlotEvents = BTreeMap<u64, Vec<PlotEvent>>;

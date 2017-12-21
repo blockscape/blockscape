@@ -1,10 +1,9 @@
-use std::cmp::min;
+
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::sync::{Arc,Mutex};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::Relaxed;
-use std::ops::Deref;
 
 use primitives::{Block, Txn, U256};
 use super::node::Node;
@@ -329,20 +328,31 @@ impl Session {
 
                 Message::FindNodes { ref network_id, ref skip } => {
 
-                    // send back a list of nodes that I know about for the specified network
-                    let repo = context.load_node_repo(network_id.clone());
-
-                    let mut nodes: Vec<Node> = Vec::with_capacity(min(NODE_RESPONSE_SIZE, repo.len()));
-
-                    for i in *skip..min(repo.len() as u16, (*skip as usize + NODE_RESPONSE_SIZE) as u16) {
-                        // dont send the node if it is self
-                        let d = repo.get_nodes((skip + i) as usize);
-                        let n = d.deref();
-
-                        if n.endpoint != self.remote_peer.endpoint {
-                            nodes.push(n.clone());
-                        }
+                    /*let nodes = if *network_id == self.network_id {
+                        context.shard.get_session_info()
                     }
+                    else {
+                        context.nc.get_shard_peer_info(network_id)
+                    }.into_iter()
+                        .skip(*skip as usize)
+                        .take(NODE_RESPONSE_SIZE as usize)
+                        .filter_map(|p| {
+                            if &p.peer == self.remote_peer.as_ref() {
+                                None
+                            }
+                            else {
+                                Some(p.peer)
+                            }
+                        })
+                        .collect();*/
+
+                    let nodes = if *network_id == self.network_id {
+                        context.shard.get_nodes_from_repo(*skip as usize, NODE_RESPONSE_SIZE as usize)
+                    }
+                    else {
+                        context.nc.get_nodes_from_repo(network_id, *skip as usize, NODE_RESPONSE_SIZE as usize)
+                    };
+
 
                     self.send_queue.lock().unwrap().push_back(Packet {
                         seq: packet.seq,

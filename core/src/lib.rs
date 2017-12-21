@@ -25,6 +25,7 @@ pub mod compress;
 pub mod hash;
 pub mod network;
 pub mod primitives;
+pub mod range;
 pub mod record_keeper;
 pub mod signer;
 pub mod time;

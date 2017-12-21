@@ -1,10 +1,11 @@
 use bincode;
-use hash::hash_obj;
-use primitives::U256;
+use hash::{hash_obj, merge_hashes};
+use primitives::{U256, U256_ZERO};
 use std::collections::BTreeSet;
 use std::ops::{Deref, DerefMut};
 use std::cmp::Ordering;
 use time::Time;
+use range::Range;
 
 /// The main infromation about a block. This noteably excludes the list of transactions.
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
@@ -99,7 +100,31 @@ impl Block {
         Ok(Block{header, txns})
     }
 
-    pub fn calculate_merkle_root(_txns: &BTreeSet<U256>) -> U256 {
-        unimplemented!("Calculate merkle root has not yet been completed!");
+    /// Calculate the merkle root of a set of transactions.
+    pub fn calculate_merkle_root(txn_set: &BTreeSet<U256>) -> U256 {
+        // What we want to do, is calculate the hash of each two hashes in series, and then form a
+        // list of those, repeat until we end up with a single hash.
+        
+        let mut hashes: Vec<U256> = txn_set.iter().cloned().collect();
+        let mut len = hashes.len();
+
+        while len > 1 {
+            let mut h: Vec<U256> = Vec::new();
+            
+            for i in Range(0, len, 2) {
+                h.push( merge_hashes(&hashes[i], &hashes[i+1]) );
+            } if (len % 2) == 1 { //if an odd number, we will have a tailing hash we need to include
+                h.push(hashes[len - 1])
+            }
+
+            hashes = h;
+            len = hashes.len();
+        }
+
+        if len == 1 {
+            hashes[0]
+        } else {
+            hash_obj(&U256_ZERO)
+        }
     }
 }

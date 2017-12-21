@@ -1,9 +1,10 @@
 use primitives::{U256, U160, Txn, Block, BlockHeader, Mutation, Change, EventListener, ListenerPool};
-use std::collections::{HashMap, HashSet, BTreeSet, BTreeMap};
+use std::collections::{HashMap, BTreeSet, BTreeMap};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use super::{MutationRule, MutationRules, Error, LogicError, Storable, RecordEvent, PlotID};
 use super::{PlotEvent, PlotEvents, events};
+use super::BlockPackage;
 use super::database::*;
 use time::Time;
 
@@ -145,14 +146,17 @@ impl RecordKeeper {
 
     /// Find a validator's public key given the hash. If they are not found, then they are not a
     /// validator.
-    pub fn get_validator_key(&self, _id: &U160) -> Result<Vec<u8>, Error> {
-        unimplemented!()
+    /// TODO: Handle shard-based reputations
+    pub fn get_validator_key(&self, id: &U160) -> Result<Vec<u8>, Error> {
+        self.db.read().unwrap()
+            .get_validator_key(id)
     }
 
-    /// Get the reputation of a validator. Will default to 0 if they are not found.
+    /// Get the reputation of a validator given their ID.
     /// TODO: Handle shard-based reputations
-    pub fn get_validator_rep(&self, _id: &U160) -> Result<i64, Error> {
-        unimplemented!()
+    pub fn get_validator_rep(&self, id: &U160) -> Result<i64, Error> {
+        self.db.read().unwrap()
+            .get_validator_rep(id)
     }
 
     /// Retrieve the current block hash which the network state represents.
@@ -183,21 +187,38 @@ impl RecordKeeper {
 
     /// Return a list of **known** blocks which have a given height. If the block has not been added
     /// to the database, then it will not be included.
-    pub fn get_blocks_of_height(&self, height: u64) -> Result<HashSet<U256>, Error> {
+    pub fn get_blocks_of_height(&self, height: u64) -> Result<Vec<U256>, Error> {
         let db = self.db.read().unwrap();
         db.get_blocks_of_height(height)
     }
 
-    pub fn get_blocks_between(_start: U256, _target: U256, _limit: u32) -> Vec<U256> {
-        unimplemented!()
+    /// Create a `BlockPackage` of the unknown blocks from the last known block until the desired
+    /// block. It will never include the `last_known` or `target` blocks in the package. The `limit`
+    /// is the maximum number of bytes the final package may contain.
+    ///
+    /// In summary, it will always find the latest common ancestor of the two blocks and then
+    /// traverse upwards until it reaches the target and only include those found when traversing
+    /// upwards.
+    
+    /// Get blocks before the `target` hash until it collides with the main chain. If the `start`
+    /// hash lies between the target and the main chain, it will return the blocks between them,
+    /// otherwise it will return the blocks from the main chain until target in that order and it
+    /// will not include the start or target blocks.
+    ///
+    /// If the limit is reached, it will prioritize blocks of a lower height, but may have a gap
+    /// between the main chain (or start) and what it includes.
+    pub fn get_blocks_before(&self, last_known: &U256, target: &U256, limit: usize) -> Result<BlockPackage, Error> {
+        let db = self.db.read().unwrap();
+        BlockPackage::blocks_before(&*db, last_known, target, limit)
     }
 
-    pub fn get_blocks_after_hash(_start: U256, _limit: u32) -> Vec<U256> {
-        unimplemented!()
-    }
-
-    pub fn get_blocks_after_height(_start: u64, _limit: u32) -> Vec<U256> {
-        unimplemented!()
+    /// Create a `BlockPackage` of all the blocks of the current chain which are a descendent of the
+    /// latest common ancestor between the chain of the start block and the current chain. It will
+    /// not include the start block. The `limit` is the maximum number of bytes the final package
+    /// may contain.
+    pub fn get_blocks_after(&self, start: &U256, limit: usize) -> Result<BlockPackage, Error> {
+        let db = self.db.read().unwrap();
+        BlockPackage::blocks_after(&*db, start, limit)
     }
 
     /// Returns a map of events for each tick that happened after a given tick. Note: it will not

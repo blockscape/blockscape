@@ -1,5 +1,6 @@
 use std::hash::{Hash, Hasher};
 use record_keeper::{PlotID, PlotEvent};
+use std::mem::size_of;
 
 /// A single change to the database, a mutation may be the composite of multiple changes. This is
 /// designed as a simple structure which the outer world can use to store the changes which should
@@ -7,6 +8,7 @@ use record_keeper::{PlotID, PlotEvent};
 /// types of changes, it is designed to be information used to verify a transaction, but which does
 /// not alter the network state.
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(tag = "type")]
 pub enum Change {
     SetValue { key: Vec<u8>, value: Option<Vec<u8>>, supp: Option<Vec<u8>> },
     AddEvent { id: PlotID, tick: u64, event: PlotEvent, supp: Option<Vec<u8>> }
@@ -33,6 +35,27 @@ impl Hash for Change {
             &Change::SetValue{key: ref k, ..} => k.hash(state),
             &Change::AddEvent{id, tick, ..} => {id.hash(state); tick.hash(state)}
         };
+    }
+}
+
+impl Change {
+    /// Calculate the encoded size of this change in bytes.
+    pub fn calculate_size(&self) -> usize {
+        8 + match self {
+            &Change::SetValue{ref key, ref value, ref supp} => {
+                key.len() + 1 +
+                if let Some(a) = value.as_ref() { a.len() }
+                else { 0 } + 2 +
+                if let Some(a) = supp.as_ref() { a.len() }
+                else { 0 } + 2
+            },
+            &Change::AddEvent{ref event, ref supp, ..} => {
+                size_of::<PlotID>() + 8 + 
+                event.calculate_size() +
+                if let Some(a) = supp.as_ref() { a.len() }
+                else { 0 } + 2
+            }
+        }
     }
 }
 
@@ -94,4 +117,10 @@ impl Mutation {
         tmp.append(&mut self.changes);
         self.changes = tmp;
     }
+
+    /// Calculate the encoded size of this mutation in bytes.
+    pub fn calculate_size(&self) -> usize {
+        1 +  // contra
+        self.changes.iter().fold(0, |total, c| total + c.calculate_size())
+    } 
 }

@@ -38,8 +38,15 @@ pub fn hash_pub_key(bytes: &[u8]) -> U160 {
 /// Hash a serilizable object by serialzing it with bincode, and then hashing the bytes.
 /// This uses a doulbe sha3-256 hash.
 pub fn hash_obj<S: Serialize>(obj: &S) -> U256 {
-    let encoded : Vec<u8> = bincode::serialize(&obj, bincode::Infinite).unwrap();
+    let encoded: Vec<u8> = bincode::serialize(obj, bincode::Infinite).unwrap();
     hash_bytes(&encoded)
+}
+
+/// Calculate the hash of two hashes. Note: merge_hashes(a, b) != merge_hashes(b, a)
+pub fn merge_hashes(a: &U256, b: &U256) -> U256 {
+    let mut m: Vec<u8> = bincode::serialize(a, bincode::Bounded(32)).unwrap();
+    m.extend_from_slice( &bincode::serialize(b, bincode::Bounded(32)).unwrap() );
+    hash_bytes(&m)
 }
 
 #[test]

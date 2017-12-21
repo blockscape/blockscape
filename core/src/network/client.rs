@@ -133,6 +133,13 @@ impl Statistics {
 }
 
 pub struct NetworkContext<'a> {
+
+    /// The network client instance for certain generative calls
+    pub nc: &'a Client,
+
+    /// A reference to the current shard (required because of locks! Be careful of deadlocking)
+    pub shard: &'a ShardInfo,
+
     /// The database for RO access
     pub rk: &'a RecordKeeper,
 
@@ -146,28 +153,15 @@ pub struct NetworkContext<'a> {
 }
 
 impl<'a> NetworkContext<'a> {
-    pub fn new(rk: &'a RecordKeeper, config: &'a ClientConfig, work_controller: &'a Arc<NetworkWorkController>) -> NetworkContext<'a> {
+    pub fn new(nc: &'a Client, shard: &'a ShardInfo, rk: &'a RecordKeeper, config: &'a ClientConfig, work_controller: &'a Arc<NetworkWorkController>) -> NetworkContext<'a> {
         NetworkContext {
+            nc: nc,
+            shard: shard,
             rk,
             config,
             work_controller: work_controller,
             connect_peers: HashMap::new()
         }
-    }
-
-    /// Initialize a node repository from file given the ID
-    /// NOTE: This is pretty slow, consider using sparingly
-    pub fn load_node_repo(&self, network_id: U256) -> NodeRepository {
-        let mut repo = NodeRepository::new();
-
-        let res = repo.load(network_id.to_string().as_str());
-        
-        if res.is_ok() && res.unwrap() == 0 {
-            // add seed nodes
-            repo.build(&self.config.seed_nodes.iter().cloned().map(|ep| LocalNode::new(Node::new(ep))).collect());
-        }
-
-        repo
     }
 }
 
@@ -248,7 +242,7 @@ impl Client {
         }
 
         // first, setup the node repository
-        let repo = NetworkContext::new(&self.rk, &self.config, &self.work_controller).load_node_repo(network_id);
+        let repo = self.load_node_repo(network_id);
         let node_count = repo.len();
 
         debug!("Attached network repo size: {}", node_count);
@@ -449,7 +443,7 @@ impl Client {
                     }
                 }
                 else if let Some(ref shard) = *self.shards[p.port as usize].read().unwrap() {
-                    let mut context = NetworkContext::new(&self.rk, &self.config, &self.work_controller);
+                    let mut context = NetworkContext::new(self, shard, &self.rk, &self.config, &self.work_controller);
 
                     {
                         shard.process_packet(&p.payload, &addr, &mut context);
@@ -539,7 +533,10 @@ impl Client {
                     for i in 0..255 {
                         if let Some(ref mut s) = *this2.shards[i].write().unwrap() {
                             if last_node_scan.diff(&n).millis() > NODE_SCAN_INTERVAL {
+                                debug!("Node scan started");
                                 s.node_scan(&this2.my_node, this2.config.min_nodes as usize);
+
+                                last_node_scan = n;
                             }
 
                             s.check_sessions();
@@ -553,13 +550,6 @@ impl Client {
                     }
 
                     last_node_check = n;
-                }
-
-                if last_node_scan.diff(&n).millis() > NODE_SCAN_INTERVAL {
-                    // tell all networks to connect to more nodes
-                    debug!("Node scan started");
-
-                    last_node_scan = n;
                 }
 
                 thread::sleep(::std::time::Duration::from_millis(1000));
@@ -587,6 +577,35 @@ impl Client {
                 self.detach_network_port(i as u8);
             }
         }
+    }
+
+    pub fn get_nodes_from_repo(&self, network_id: &U256, skip: usize, count: usize) -> Vec<Node> {
+        let port = self.resolve_port(&network_id);
+        if port != 255 {
+
+            let shard = self.shards[port as usize].read().unwrap();
+
+            if let Some(ref s) = *shard {
+                return s.get_nodes_from_repo(skip, count);
+            }
+        }
+
+        Vec::new()
+    }
+
+    pub fn get_shard_peer_info(&self, network_id: &U256) -> Vec<SessionInfo> {
+
+        let port = self.resolve_port(network_id);
+        if port != 255 {
+
+            let shard = self.shards[port as usize].read().unwrap();
+
+            if let Some(ref s) = *shard {
+                return s.get_session_info();
+            }
+        }
+
+        Vec::new()
     }
 
     pub fn get_peer_info(&self) -> Vec<SessionInfo> {
@@ -621,5 +640,20 @@ impl Client {
 
     pub fn get_config(&self) -> &ClientConfig {
         &self.config
+    }
+
+    /// Initialize a node repository from file given the ID
+    /// NOTE: This is pretty slow, consider using sparingly
+    fn load_node_repo(&self, network_id: U256) -> NodeRepository {
+        let mut repo = NodeRepository::new();
+
+        let res = repo.load(network_id.to_string().as_str());
+        
+        if res.is_ok() && res.unwrap() == 0 {
+            // add seed nodes
+            repo.build(&self.config.seed_nodes.iter().cloned().map(|ep| LocalNode::new(Node::new(ep))).collect());
+        }
+
+        repo
     }
 }
