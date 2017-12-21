@@ -66,11 +66,16 @@ spec:
           value: debug
         ports:
         - containerPort: 35653
+          protocol: UDP
+        - containerPort: 8356
+          protocol: TCP
         volumeMounts:
         - name: blockscape-client-data
           mountPath: /data
         command:
         - /blockscape
+        - -b
+        - 0.0.0.0
         - -h
         - client-${CI_COMMIT_REF_SLUG}-0.blockscape
         - --seed-node

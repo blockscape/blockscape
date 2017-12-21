@@ -533,7 +533,10 @@ impl Client {
                     for i in 0..255 {
                         if let Some(ref mut s) = *this2.shards[i].write().unwrap() {
                             if last_node_scan.diff(&n).millis() > NODE_SCAN_INTERVAL {
+                                debug!("Node scan started");
                                 s.node_scan(&this2.my_node, this2.config.min_nodes as usize);
+
+                                last_node_scan = n;
                             }
 
                             s.check_sessions();
@@ -547,13 +550,6 @@ impl Client {
                     }
 
                     last_node_check = n;
-                }
-
-                if last_node_scan.diff(&n).millis() > NODE_SCAN_INTERVAL {
-                    // tell all networks to connect to more nodes
-                    debug!("Node scan started");
-
-                    last_node_scan = n;
                 }
 
                 thread::sleep(::std::time::Duration::from_millis(1000));

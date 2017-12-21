@@ -2,7 +2,7 @@ use std::cmp::min;
 use bincode::{serialize, Bounded};
 use rand;
 use std::collections::HashMap;
-use std::collections::VecDeque;
+use std::collections::HashSet;
 use std::net::{SocketAddr,UdpSocket};
 use std::io;
 use std::sync::{Mutex,RwLock};
@@ -34,7 +34,7 @@ pub struct ShardInfo {
     /// Collection of nodes which can be connected to this on this network
     node_repo: NodeRepository,
 
-    connect_queue: Mutex<VecDeque<Arc<Node>>>
+    connect_queue: Mutex<HashSet<Arc<Node>>>
 }
 
 impl ShardInfo {
@@ -46,7 +46,7 @@ impl ShardInfo {
             sessions: RwLock::new(HashMap::new()),
             last_peer_idx: 0,
             node_repo: repo,
-            connect_queue: Mutex::new(VecDeque::new())
+            connect_queue: Mutex::new(HashSet::new())
         }
     }
 
@@ -70,9 +70,10 @@ impl ShardInfo {
             }
         }
 
+        let mut queue = self.connect_queue.lock().unwrap();
+
         // do we need more nodes to connect to (from the queue)? If so, pull from the node repo
         {
-            let mut queue = self.connect_queue.lock().unwrap();
 
             info!("Starting new node queue size: {}, repo size: {}", queue.len(), self.node_repo.len());
 
@@ -82,7 +83,7 @@ impl ShardInfo {
                     let peer = self.node_repo.get_nodes(self.last_peer_idx);
                     self.last_peer_idx += 1;
 
-                    queue.push_back(peer);
+                    queue.insert(peer);
 
                     attempts += 1;
 
@@ -99,7 +100,7 @@ impl ShardInfo {
 
         // pull from the connection queue
 
-        while let Some(peer) = self.connect_queue.lock().unwrap().pop_front() {
+        for peer in queue.drain() {
             match self.open_session(peer.clone(), my_node.clone(), None) {
                 Ok(sopt) => {
                     info!("New contact opened to {}", sopt);
@@ -114,6 +115,15 @@ impl ShardInfo {
 
         for r in removed_nodes {
             self.node_repo.remove(&r);
+        }
+
+        let r = self.node_repo.save(format!("{}", self.network_id).as_str());
+
+        if r.is_err() {
+            warn!("Failed to save nodes to file: {:?}", r.unwrap_err());
+        }
+        else {
+            debug!("Saved {} nodes from repo", r.unwrap());
         }
 
         self.sessions.read().unwrap().len()
@@ -170,17 +180,25 @@ impl ShardInfo {
     }
 
     pub fn open_session(&self, peer: Arc<Node>, my_node: Arc<Node>, introduce: Option<&Packet>) -> Result<SocketAddr, ()> {
+        
+        // filter out obvious failure cases:
+        // connect to self?
+        if peer.endpoint == my_node.endpoint {
+            return Err(());
+        }
+        
         let saddr = peer.endpoint.clone().as_socketaddr();
 
         // now we can look into creating a new session
         if let Some(addr) = saddr {
+
             if self.sessions.read().unwrap().contains_key(&addr) {
                 return Err(()); // already connected
             }
 
             debug!("New session: {:?}", peer.endpoint);
 
-            // ready to connect
+            // readyf to connect
             let sess = Session::new(my_node.clone(), self.port, peer, addr, self.network_id.clone(), introduce);
 
             self.sessions.write().unwrap().insert(addr, sess);
@@ -196,7 +214,9 @@ impl ShardInfo {
 
     pub fn add_connect_queue(&self, node: Arc<Node>) {
         let mut queue = self.connect_queue.lock().unwrap();
-        queue.push_back(node);
+
+        // avoid duplicates
+        queue.insert(node);
     }
 
     /// Call to set this shard to a state where all nodes are disconnected and data should stop being validated/tracked
