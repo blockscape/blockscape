@@ -1,3 +1,4 @@
+use std::cmp::min;
 use bincode::{serialize, Bounded};
 use rand;
 use std::collections::HashMap;
@@ -255,10 +256,6 @@ impl ShardInfo {
         return &self.network_id;
     }
 
-    /*pub fn get_node_repo(&self) -> &NodeRepository {
-        return &self.node_repo;
-    }*/
-
     pub fn session_count(&self) -> usize {
         // filter only sessions which are past introductions
         let mut count = 0;
@@ -311,5 +308,20 @@ impl ShardInfo {
         }
 
         Ok(count)
+    }
+
+    pub fn get_nodes_from_repo(&self, skip: usize, count: usize) -> Vec<Node> {
+
+        let mut nodes: Vec<Node> = Vec::with_capacity(min(count, self.node_repo.len()));
+
+        for i in skip..min(self.node_repo.len(), skip + count) {
+            // dont send the node if it is self
+            let d = self.node_repo.get_nodes((skip + i) as usize);
+            let n = d.deref();
+
+            nodes.push(n.clone());
+        }
+
+        nodes
     }
 }
