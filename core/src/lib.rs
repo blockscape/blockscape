@@ -20,8 +20,9 @@ extern crate log;
 #[macro_use]
 mod util;
 
-pub mod env;
+pub mod base16;
 pub mod compress;
+pub mod env;
 pub mod hash;
 pub mod network;
 pub mod primitives;
