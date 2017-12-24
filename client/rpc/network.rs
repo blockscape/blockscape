@@ -43,46 +43,40 @@ impl NetworkRPC {
     }
 
     fn attach_network(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
-        let args = parse_args_simple(params)?;
+        let args = parse_args_simple::<String>(params, (2..1000))?;
 
-        if args.len() >= 2 {
+        let network_id: U256 = args[1].parse().unwrap_or(U256_ZERO);
 
-            let network_id: U256 = args[1].parse().unwrap_or(U256_ZERO);
+        let op = args[0].as_str();
 
-            let op = args[0].as_str();
-
-            if op == "add" {
-                let mode = match args[2].as_str() {
-                    "primary" => ShardMode::Primary,
-                    "aux" => ShardMode::Auxillery,
-                    "queryonly" => ShardMode::QueryOnly,
-                    _ => {
-                        return Err(Error::invalid_params(format!("Invalid network mode")))
-                    }
-                };
-                self.net_client.attach_network(network_id, mode)
-                    .map(|_| Value::Bool(true))
-                    .map_err(|_| Error::invalid_request())
-            }
-            else if op == "remove" {
-                if self.net_client.detach_network(&network_id) {
-                    Ok(Value::Bool(true))
+        if op == "add" {
+            let mode = match args[2].as_str() {
+                "primary" => ShardMode::Primary,
+                "aux" => ShardMode::Auxillery,
+                "queryonly" => ShardMode::QueryOnly,
+                _ => {
+                    return Err(Error::invalid_params(format!("Invalid network mode")))
                 }
-                else {
-                    Err(Error::invalid_request())
-                }
+            };
+            self.net_client.attach_network(network_id, mode)
+                .map(|_| Value::Bool(true))
+                .map_err(|_| Error::invalid_request())
+        }
+        else if op == "remove" {
+            if self.net_client.detach_network(&network_id) {
+                Ok(Value::Bool(true))
             }
             else {
-                Err(Error::invalid_params(format!("Invalid operation: {}", op)))
+                Err(Error::invalid_request())
             }
         }
         else {
-            Err(Error::invalid_params("Invalid argument count"))
+            Err(Error::invalid_params(format!("Invalid operation: {}", op)))
         }
     }
 
     fn add_node(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
-        let args = parse_args_simple(params)?;
+        let args = parse_args_simple::<String>(params, (1..4))?;
 
         if args.len() == 3 {
             Ok(Value::String("Not implemented".into()))

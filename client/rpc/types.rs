@@ -6,9 +6,8 @@ use jsonrpc_core;
 use jsonrpc_core::futures::Future;
 use jsonrpc_core::error::Error;
 use jsonrpc_core::Params;
-use serde_json::Map;
-
-use serde_json::Value;
+use serde_json::{Map, Value, from_value};
+use serde::de::DeserializeOwned;
 
 pub type RpcResult = Result<jsonrpc_core::Value, jsonrpc_core::Error>;
 
@@ -56,24 +55,6 @@ impl jsonrpc_core::Middleware<SocketMetadata> for LogMiddleware {
     }
 }
 
-pub fn parse_args_simple(p: Params) -> Result<Vec<String>, jsonrpc_core::Error> {
-	match p.parse() {
-		Ok(Value::Array(vec)) => {
-
-			let pv: Vec<Option<String>> = vec.into_iter().map(|v| v.as_str().map(|s| s.into())).collect();
-
-			for v in &pv {
-				if v.is_none() {
-					return Err(Error::invalid_params("All parameters should be simple strings"));
-				}
-			}
-
-			Ok(pv.into_iter().map(|v| v.unwrap()).collect())
-		}
-		_ => Err(Error::invalid_params("Could not parse or args missing"))
-	}
-}
-
 pub fn expect_array(p: Params, size: Range<usize>) -> Result<Vec<Value>, Error> {
 	match p {
 		Params::Array(a) => {
@@ -90,4 +71,21 @@ pub fn expect_map(p: Params) -> Result<Map<String, Value>, Error> {
 		Params::Map(m) => Ok(m),
 		_ => Err(Error::invalid_params("Expected map.")),
 	}
+}
+
+pub fn parse_args_simple<T: DeserializeOwned>(p: Params, size: Range<usize>) -> Result<Vec<T>, Error> {
+	let vals = self::expect_array(p, size)?;
+	let mut res = Vec::with_capacity(vals.len());
+
+	for val in vals.into_iter() {
+		res.push(
+			from_value::<T>(val)
+			.map_err(|e| Error::invalid_params(format!("{:?}", e)))?
+		);
+	} Ok(res)
+}
+
+pub fn expect_one_arg<T: DeserializeOwned>(p: Params) -> Result<T, Error> {
+	from_value(self::expect_array(p, (1..2))?.pop().unwrap())
+		.map_err( |e| Error::invalid_params(format!("{:?}", e)) )
 }
