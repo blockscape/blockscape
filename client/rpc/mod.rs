@@ -2,20 +2,19 @@ pub mod client;
 
 mod types;
 
+mod blockchain;
 mod control;
 mod network;
 
-use std::net::SocketAddr;
-
-use rpc::types::LogMiddleware;
-
-use rpc::control::ControlRPC;
-use rpc::network::NetworkRPC;
-
+use context::Context;
 use jsonrpc_core::*;
 use jsonrpc_http_server::{ServerBuilder, Server};
+use rpc::types::LogMiddleware;
+use std::net::SocketAddr;
 
-use context::Context;
+use rpc::blockchain::BlockchainRPC;
+use rpc::control::ControlRPC;
+use rpc::network::NetworkRPC;
 
 pub struct RPC {
     server: Server,

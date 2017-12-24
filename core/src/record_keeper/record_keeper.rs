@@ -191,14 +191,6 @@ impl RecordKeeper {
         let db = self.db.read().unwrap();
         db.get_blocks_of_height(height)
     }
-
-    /// Create a `BlockPackage` of the unknown blocks from the last known block until the desired
-    /// block. It will never include the `last_known` or `target` blocks in the package. The `limit`
-    /// is the maximum number of bytes the final package may contain.
-    ///
-    /// In summary, it will always find the latest common ancestor of the two blocks and then
-    /// traverse upwards until it reaches the target and only include those found when traversing
-    /// upwards.
     
     /// Get blocks before the `target` hash until it collides with the main chain. If the `start`
     /// hash lies between the target and the main chain, it will return the blocks between them,
