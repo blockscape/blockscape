@@ -114,6 +114,7 @@ impl ShardInfo {
         }
 
         for r in removed_nodes {
+            debug!("Remove broken node from repo: {:?}", r);
             self.node_repo.remove(&r);
         }
 
