@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 use std::time::Instant;
+use std::ops::Range;
 
 use jsonrpc_core;
 use jsonrpc_core::futures::Future;
@@ -73,9 +74,13 @@ pub fn parse_args_simple(p: Params) -> Result<Vec<String>, jsonrpc_core::Error> 
 	}
 }
 
-pub fn expect_array(p: Params) -> Result<Vec<Value>, Error> {
+pub fn expect_array(p: Params, size: Range<usize>) -> Result<Vec<Value>, Error> {
 	match p {
-		Params::Array(a) => Ok(a),
+		Params::Array(a) => {
+			let len = a.len();
+			if (len >= size.start) && (len < size.end) { Ok(a) }
+			else { Err(Error::invalid_params("Incorrect number of arguments.")) }
+		},
 		_ => Err(Error::invalid_params("Expected array."))
 	}
 }
