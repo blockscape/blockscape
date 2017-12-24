@@ -5,6 +5,7 @@ use jsonrpc_core;
 use jsonrpc_core::futures::Future;
 use jsonrpc_core::error::Error;
 use jsonrpc_core::Params;
+use serde_json::Map;
 
 use serde_json::Value;
 
@@ -69,5 +70,19 @@ pub fn parse_args_simple(p: Params) -> Result<Vec<String>, jsonrpc_core::Error> 
 			Ok(pv.into_iter().map(|v| v.unwrap()).collect())
 		}
 		_ => Err(Error::invalid_params("Could not parse or args missing"))
+	}
+}
+
+pub fn expect_array(p: Params) -> Result<Vec<Value>, Error> {
+	match p {
+		Params::Array(a) => Ok(a),
+		_ => Err(Error::invalid_params("Expected array."))
+	}
+}
+
+pub fn expect_map(p: Params) -> Result<Map<String, Value>, Error> {
+	match p {
+		Params::Map(m) => Ok(m),
+		_ => Err(Error::invalid_params("Expected map.")),
 	}
 }
