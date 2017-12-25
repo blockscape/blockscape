@@ -4,13 +4,20 @@ use std::cmp;
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
+use std::ops::Deref;
 use std::str::FromStr;
+
+use serde::ser::{Serialize, Serializer};
+use serde::de::*;
+use serde::de;
 
 /// A simple 160-bit storage unit that acts sort of like an integer.
 /// Note: internally, the lowest significance u32 is in the lowest index,
 /// this means that it appears revered when typing a literal array.
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
 pub struct U160([u32; 5]);
+
+pub struct JsonU160(U160);
 
 /// Defined Zero value for the U160 type.
 pub const U160_ZERO: U160 = U160([0u32; 5]);
@@ -143,6 +150,61 @@ impl FromStr for U160 {
         }
 
         Ok(result)
+    }
+}
+
+
+impl From<U160> for JsonU160 {
+    fn from(v: U160) -> Self {
+        JsonU160(v)
+    }
+}
+
+impl Into<U160> for JsonU160 {
+    fn into(self) -> U160 {
+        self.0
+    }
+}
+
+impl Deref for JsonU160 {
+    type Target = U160;
+
+    fn deref(&self) -> &U160 {
+        &self.0
+    }
+}
+
+impl Serialize for JsonU160 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where S: Serializer
+    {
+        serializer.serialize_str(self.to_string().as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for JsonU160 {
+    fn deserialize<D>(deserializer: D) -> Result<JsonU160, D::Error>
+        where D: Deserializer<'de>
+    {
+        struct StrVisitor;
+
+        impl<'de> Visitor<'de> for StrVisitor {
+            type Value = JsonU160;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a hex string")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<JsonU160, E>
+            where E: de::Error
+            {
+                value.parse::<U160>()
+                    .map(|v| JsonU160(v))
+                    .map_err(Error::custom)
+            }
+        }
+
+        deserializer.deserialize_string(StrVisitor)
     }
 }
 
