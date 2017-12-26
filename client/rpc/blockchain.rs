@@ -15,7 +15,7 @@ pub struct BlockchainRPC {
 }
 
 impl BlockchainRPC {
-    pub fn add(io: &mut MetaIoHandler<SocketMetadata, LogMiddleware>, rk: Arc<RecordKeeper>) -> Arc<BlockchainRPC> {
+    pub fn add(rk: Arc<RecordKeeper>, io: &mut MetaIoHandler<SocketMetadata, LogMiddleware>) -> Arc<BlockchainRPC> {
         let rpc = Arc::new(BlockchainRPC { rk });
 
         let mut d = IoDelegate::<BlockchainRPC, SocketMetadata>::new(rpc.clone());

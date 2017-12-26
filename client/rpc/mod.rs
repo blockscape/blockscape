@@ -31,6 +31,8 @@ impl RPC {
             NetworkRPC::add(net_client.clone(), &mut io);
         }
 
+        BlockchainRPC::add(ctx.rk, &mut io);
+
         RPC {
             server: ServerBuilder::new(io).start_http(&bind_addr).expect("Could not start RPC Interface")
         }
