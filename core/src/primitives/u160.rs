@@ -17,7 +17,7 @@ use serde::de;
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
 pub struct U160([u32; 5]);
 
-pub struct JsonU160(U160);
+pub struct JU160(U160);
 
 /// Defined Zero value for the U160 type.
 pub const U160_ZERO: U160 = U160([0u32; 5]);
@@ -154,19 +154,19 @@ impl FromStr for U160 {
 }
 
 
-impl From<U160> for JsonU160 {
+impl From<U160> for JU160 {
     fn from(v: U160) -> Self {
-        JsonU160(v)
+        JU160(v)
     }
 }
 
-impl Into<U160> for JsonU160 {
+impl Into<U160> for JU160 {
     fn into(self) -> U160 {
         self.0
     }
 }
 
-impl Deref for JsonU160 {
+impl Deref for JU160 {
     type Target = U160;
 
     fn deref(&self) -> &U160 {
@@ -174,7 +174,7 @@ impl Deref for JsonU160 {
     }
 }
 
-impl Serialize for JsonU160 {
+impl Serialize for JU160 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where S: Serializer
     {
@@ -182,24 +182,24 @@ impl Serialize for JsonU160 {
     }
 }
 
-impl<'de> Deserialize<'de> for JsonU160 {
-    fn deserialize<D>(deserializer: D) -> Result<JsonU160, D::Error>
+impl<'de> Deserialize<'de> for JU160 {
+    fn deserialize<D>(deserializer: D) -> Result<JU160, D::Error>
         where D: Deserializer<'de>
     {
         struct StrVisitor;
 
         impl<'de> Visitor<'de> for StrVisitor {
-            type Value = JsonU160;
+            type Value = JU160;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str("a hex string")
             }
 
-            fn visit_str<E>(self, value: &str) -> Result<JsonU160, E>
+            fn visit_str<E>(self, value: &str) -> Result<JU160, E>
             where E: de::Error
             {
                 value.parse::<U160>()
-                    .map(|v| JsonU160(v))
+                    .map(|v| JU160(v))
                     .map_err(Error::custom)
             }
         }

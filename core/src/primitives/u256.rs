@@ -17,7 +17,7 @@ use serde::de;
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
 pub struct U256([u64; 4]);
 
-pub struct JsonU256(U256);
+pub struct JU256(U256);
 
 /// Defined Zero value for the U256 type.
 pub const U256_ZERO: U256 = U256([0u64; 4]);
@@ -152,19 +152,19 @@ impl FromStr for U256 {
     }
 }
 
-impl From<U256> for JsonU256 {
+impl From<U256> for JU256 {
     fn from(v: U256) -> Self {
-        JsonU256(v)
+        JU256(v)
     }
 }
 
-impl Into<U256> for JsonU256 {
+impl Into<U256> for JU256 {
     fn into(self) -> U256 {
         self.0
     }
 }
 
-impl Deref for JsonU256 {
+impl Deref for JU256 {
     type Target = U256;
 
     fn deref(&self) -> &U256 {
@@ -172,7 +172,7 @@ impl Deref for JsonU256 {
     }
 }
 
-impl Serialize for JsonU256 {
+impl Serialize for JU256 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where S: Serializer
     {
@@ -180,24 +180,24 @@ impl Serialize for JsonU256 {
     }
 }
 
-impl<'de> Deserialize<'de> for JsonU256 {
-    fn deserialize<D>(deserializer: D) -> Result<JsonU256, D::Error>
+impl<'de> Deserialize<'de> for JU256 {
+    fn deserialize<D>(deserializer: D) -> Result<JU256, D::Error>
         where D: Deserializer<'de>
     {
         struct StrVisitor;
 
         impl<'de> Visitor<'de> for StrVisitor {
-            type Value = JsonU256;
+            type Value = JU256;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str("a hex string")
             }
 
-            fn visit_str<E>(self, value: &str) -> Result<JsonU256, E>
+            fn visit_str<E>(self, value: &str) -> Result<JU256, E>
             where E: de::Error
             {
                 value.parse::<U256>()
-                    .map(|v| JsonU256(v))
+                    .map(|v| JU256(v))
                     .map_err(Error::custom)
             }
         }
