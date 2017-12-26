@@ -10,6 +10,7 @@ use blockscape_core::network::node::NodeEndpoint;
 use blockscape_core::primitives::*;
 use blockscape_core::signer::generate_private_key;
 use blockscape_core::time::Time;
+use blockscape_core::hash::hash_pub_key;
 
 use rpc::RPC;
 
@@ -100,15 +101,18 @@ pub fn parse_cmdline<'a>() -> ArgMatches<'a> {
 }
 
 /// Returns the genesis block for blockscape
-pub fn make_genesis() -> (Block, Vec<Txn>) {
+pub fn make_genesis(key: &PKey) -> (Block, Vec<Txn>) {
     let mut b = Block {
         header: BlockHeader {
             version: 1,
             timestamp: Time::from_seconds(1508009036),
             shard: U256_ZERO,
             prev: U256_ZERO,
-            merkle_root: U256_ZERO
-        },
+            merkle_root: U256_ZERO,
+            blob: Vec::new(),
+            creator: hash_pub_key(&key.public_key_to_der().unwrap()),
+            signature: Vec::new()
+        }.sign(key),
         txns: BTreeSet::new()
     };
 

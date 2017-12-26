@@ -1,3 +1,4 @@
+use openssl::pkey::PKey;
 use primitives::{U256, U160, Txn, Block, BlockHeader, Mutation, Change, EventListener, ListenerPool};
 use std::collections::{HashMap, BTreeSet, BTreeMap};
 use std::path::PathBuf;
@@ -7,6 +8,7 @@ use super::{PlotEvent, PlotEvents, events};
 use super::BlockPackage;
 use super::database::*;
 use time::Time;
+use hash::hash_pub_key;
 
 /// An abstraction on the concept of states and state state data. Builds higher-lsuperevel functionality
 /// On top of the database. The implementation uses RwLocks to provide many read, single write
@@ -22,18 +24,25 @@ pub struct RecordKeeper {
 
     record_listeners: RwLock<ListenerPool<RecordEvent>>,
     game_listeners: RwLock<ListenerPool<PlotEvent>>,
+
+    /// The hash of this users public key
+    key_hash: U160,
+    /// This user's private key
+    key: PKey
 }
 
 impl RecordKeeper {
     /// Construct a new RecordKeeper from an already opened database and possibly an existing set of
     /// rules.
-    pub fn new(db: Database, rules: Option<MutationRules>) -> RecordKeeper {
+    pub fn new(db: Database, rules: Option<MutationRules>, key: PKey) -> RecordKeeper {
         RecordKeeper {
             db: RwLock::new(db),
             rules: RwLock::new(rules.unwrap_or(MutationRules::new())),
             pending_txns: RwLock::new(HashMap::new()),
             record_listeners: RwLock::new(ListenerPool::new()),
-            game_listeners: RwLock::new(ListenerPool::new())
+            game_listeners: RwLock::new(ListenerPool::new()),
+            key_hash: hash_pub_key(&key.public_key_to_der().unwrap()),
+            key
         }
     }
 
@@ -43,9 +52,9 @@ impl RecordKeeper {
     /// # Warning
     /// Any database which is opened, is assumed to contain data in a certain way, any outside
     /// modifications can cause undefined behavior.
-    pub fn open(path: Option<PathBuf>, rules: Option<MutationRules>) -> Result<RecordKeeper, Error> {
+    pub fn open(key: PKey, path: Option<PathBuf>, rules: Option<MutationRules>) -> Result<RecordKeeper, Error> {
         let db = Database::open(path)?;
-        Ok(Self::new(db, rules))
+        Ok(Self::new(db, rules, key))
     }
 
     /// Use pending transactions to create a new block which can then be added to the network.
@@ -63,8 +72,11 @@ impl RecordKeeper {
                     timestamp: Time::current(),
                     shard: if cbh.shard.is_zero() { cbh_h } else { cbh.shard },
                     prev: cbh_h,
-                    merkle_root: Block::calculate_merkle_root(&BTreeSet::new())
-                },
+                    merkle_root: Block::calculate_merkle_root(&BTreeSet::new()),
+                    blob: Vec::new(),
+                    creator: self.key_hash,
+                    signature: Vec::new()
+                }.sign(&self.key),
                 txns: BTreeSet::new()
             })
         }
@@ -85,8 +97,11 @@ impl RecordKeeper {
                     timestamp: Time::current(),
                     shard: if cbh.shard.is_zero() { cbh_h } else { cbh.shard },
                     prev: cbh_h,
-                    merkle_root: Block::calculate_merkle_root(&accepted_txns)
-                },
+                    merkle_root: Block::calculate_merkle_root(&accepted_txns),
+                    blob: Vec::new(),
+                    creator: self.key_hash,
+                    signature: Vec::new()
+                }.sign(&self.key),
                 txns: {
                     let mut t = accepted_txns.clone();
                     t.insert(*txn); t
@@ -314,8 +329,20 @@ impl RecordKeeper {
 
     /// Internal use function to check if a block and all its sub-components are valid.
     fn is_valid_block_given_lock(&self, db: &Database, block: &Block) -> Result<(), Error> {
-        if block.prev != db.get_current_block_hash() {
-            return Err(Error::from(LogicError::MissingPrevious));
+        if match db.get_validator_key(&block.creator) {
+            Ok(key) => {
+                let key = PKey::public_key_from_der(&key).unwrap();
+                block.verify_signature(&key)
+            }
+            Err(Error::NotFound(..)) => return Err(LogicError::UnrecognizedCreator.into()),
+            Err(e) => return Err(e)
+        } {/* signature is value */}
+        else { return Err(LogicError::InvalidSignature.into())}
+        
+        match db.get_block_header(&block.prev) {
+            Ok(_) => {},
+            Err(Error::NotFound(..)) => return Err(LogicError::MissingPrevious.into()),
+            Err(e) => return Err(e)
         }
 
         //TODO: more validity checks

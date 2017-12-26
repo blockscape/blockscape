@@ -53,21 +53,25 @@ impl Display for Error {
 
 #[derive(Clone, Debug)]
 pub enum LogicError {
-    UndoOrigin,
-    MissingPrevious,
-    InvalidTime,
+    Duplicate,
     InvalidMutation(String),
-    Duplicate
+    InvalidSignature,
+    InvalidTime,
+    MissingPrevious,
+    UndoOrigin,
+    UnrecognizedCreator,
 }
 
 impl StdErr for LogicError {
     fn description(&self) -> &str {
         match *self {
-            LogicError::UndoOrigin => "Cannot walk backwards past an origin block.",
-            LogicError::MissingPrevious => "The last block this references is not known to us.",
-            LogicError::InvalidTime => "The timestamp is after the current time or too long ago.",
+            LogicError::Duplicate => "This has already been accepted into the blockchain.",
             LogicError::InvalidMutation(_) => "The mutation breaks a rule.",
-            LogicError::Duplicate => "This has already been accepted into the blockchain."
+            LogicError::InvalidSignature => "The data does not match the signature.",
+            LogicError::InvalidTime => "The timestamp is after the current time or too long ago.",
+            LogicError::MissingPrevious => "The last block this references is not known to us.",
+            LogicError::UndoOrigin => "Cannot walk backwards past an origin block.",
+            LogicError::UnrecognizedCreator => "The person who created and signed the block is unknown.",
         }
     }
 
