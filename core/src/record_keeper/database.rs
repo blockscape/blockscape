@@ -1,3 +1,4 @@
+use bin::Bin;
 use bincode;
 use env;
 use primitives::{U256, U160, Mutation, Change, Block, BlockHeader, Txn};
@@ -111,15 +112,15 @@ impl Database {
 
     /// Retrieve raw data from the database. Use this for non-storable types (mostly network stuff).
     #[inline]
-    pub fn get_raw_data(&self, key: &[u8], postfix: &'static [u8]) -> Result<Vec<u8>, Error> {
+    pub fn get_raw_data(&self, key: &[u8], postfix: &'static [u8]) -> Result<Bin, Error> {
         Self::get_raw_data_static(&self.db, key, postfix)
     }
 
-    fn get_raw_data_static(db: &DB, key: &[u8], postfix: &'static [u8]) -> Result<Vec<u8>, Error> {
+    fn get_raw_data_static(db: &DB, key: &[u8], postfix: &'static [u8]) -> Result<Bin, Error> {
         let key = Self::with_postfix(key, postfix);
 
         db.get(&key)?
-            .map(|d| d.to_vec())
+            .map(|d| d.to_vec().into())
             .ok_or(Error::NotFound(postfix, Vec::from(key)))
     }
 
@@ -236,7 +237,7 @@ impl Database {
 
     /// Get the public key of a validator given their ID.
     /// TODO: Handle shard-based reputations
-    pub fn get_validator_key(&self, id: &U160) -> Result<Vec<u8>, Error> {
+    pub fn get_validator_key(&self, id: &U160) -> Result<Bin, Error> {
         let key = Self::with_prefix(VALIDATOR_PREFIX, &id.to_vec());
         self.get_raw_data(&key, NETWORK_POSTFIX)
     }
@@ -523,7 +524,7 @@ impl Database {
                 
                 contra.changes.push(Change::SetValue {
                     key: key.clone(),
-                    value: self.db.get(&db_key)?.map(|v| v.to_vec()), // Option<Vec<u8>>
+                    value: self.db.get(&db_key)?.map(|v| v.to_vec().into()), // Option<Bin>
                     supp: None
                 });
 

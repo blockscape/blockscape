@@ -127,10 +127,12 @@ pub fn make_genesis() -> (Block, Vec<Txn>) {
 
     let mut m = Mutation::new();
 
-    let admkey = PKey::public_key_from_pem(ADMIN_KEY).unwrap().public_key_to_der().unwrap();
+    let admkey = PKey::public_key_from_pem(ADMIN_KEY).unwrap()
+        .public_key_to_der().unwrap()
+        .into();
 
     m.changes.push(Change::SetValue {
-        key: Vec::from(ADMIN_KEY_PREFIX),
+        key: Vec::from(ADMIN_KEY_PREFIX).into(),
         value: Some(admkey),
         supp: None
     });

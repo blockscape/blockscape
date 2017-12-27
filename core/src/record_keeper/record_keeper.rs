@@ -163,7 +163,7 @@ impl RecordKeeper {
     /// Find a validator's public key given the hash. If they are not found, then they are not a
     /// validator.
     /// TODO: Handle shard-based reputations
-    pub fn get_validator_key(&self, id: &U160) -> Result<Vec<u8>, Error> {
+    pub fn get_validator_key(&self, id: &U160) -> Result<Bin, Error> {
         self.db.read().unwrap()
             .get_validator_key(id)
     }
