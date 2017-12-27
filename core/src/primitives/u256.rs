@@ -188,6 +188,7 @@ impl U256 {
 
 
 
+#[derive(PartialOrd, Ord, PartialEq, Eq)]
 pub struct JU256(U256);
 
 impl From<U256> for JU256 {

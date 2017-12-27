@@ -1,7 +1,8 @@
+use bin::{Bin, JBin};
 use bincode;
 use hash::{hash_obj, merge_hashes};
 use openssl::pkey::PKey;
-use primitives::{U256, U160, U256_ZERO};
+use primitives::{U256, U160, JU160, JU256, U256_ZERO};
 use range::Range;
 use signer::{sign_bytes, verify_bytes};
 use std::cmp::Ordering;
@@ -23,11 +24,11 @@ pub struct BlockHeader {
     /// Hash identifer of the txn list
     pub merkle_root: U256,
     /// Binary blob of data which can be used to save things such as difficulty
-    pub blob: Vec<u8>,
+    pub blob: Bin,
     /// The person who created the block and signed it
     pub creator: U160,
     /// Signature of the block creator to verify integrity of the contained data
-    pub signature: Vec<u8>
+    pub signature: Bin
 }
 
 impl PartialEq for BlockHeader {
@@ -53,7 +54,7 @@ impl BlockHeader {
             merkle_root: self.merkle_root,
             blob: self.blob,
             creator: self.creator,
-            signature: sign_bytes(&bytes, key)
+            signature: sign_bytes(&bytes, key).into()
         }
     }
 
@@ -168,6 +169,73 @@ impl Block {
             hashes[0]
         } else {
             hash_obj(&U256_ZERO)
+        }
+    }
+}
+
+
+#[derive(Serialize, Deserialize)]
+pub struct JBlockHeader {
+    version: u16,
+    timestamp: Time,
+    shard: JU256,
+    prev: JU256,
+    merkle_root: JU256,
+    blob: JBin,
+    creator: JU160,
+    signature: JBin
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct JBlock {
+    header: BlockHeader,
+    txns: BTreeSet<JU256>
+}
+
+impl From<BlockHeader> for JBlockHeader {
+    fn from(h: BlockHeader) -> JBlockHeader {
+        JBlockHeader {
+            version: h.version,
+            timestamp: h.timestamp,
+            shard: h.shard.into(),
+            prev: h.prev.into(),
+            merkle_root: h.merkle_root.into(),
+            blob: h.blob.into(),
+            creator: h.creator.into(),
+            signature: h.signature.into()
+        }
+    }
+}
+
+impl Into<BlockHeader> for JBlockHeader {
+    fn into(self) -> BlockHeader {
+        BlockHeader {
+            version: self.version,
+            timestamp: self.timestamp,
+            shard: self.shard.into(),
+            prev: self.prev.into(),
+            merkle_root: self.merkle_root.into(),
+            blob: self.blob.into(),
+            creator: self.creator.into(),
+            signature: self.signature.into()
+        }
+    }
+}
+
+impl From<Block> for JBlock {
+    fn from(h: Block) -> JBlock {
+        JBlock {
+            header: h.header,
+            txns: h.txns.into_iter().map(|h| h.into()).collect()
+        }
+    }
+}
+
+impl Into<Block> for JBlock {
+    fn into(self) -> Block {
+        Block {
+            header: self.header,
+            txns: self.txns.into_iter().map(|h| h.into()).collect()
         }
     }
 }

@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use std::str::FromStr;
 use std::net::SocketAddr;
 
+use blockscape_core::bin::Bin;
 use blockscape_core::env::*;
 use blockscape_core::network::client::ClientConfig;
 use blockscape_core::network::node::NodeEndpoint;
@@ -117,9 +118,9 @@ pub fn make_genesis() -> (Block, Vec<Txn>) {
             shard: U256_ZERO,
             prev: U256_ZERO,
             merkle_root: U256_ZERO,
-            blob: Vec::new(),
+            blob: Bin::new(),
             creator: U160_ZERO,
-            signature: Vec::new()
+            signature: Bin::new()
         },
         txns: BTreeSet::new()
     };

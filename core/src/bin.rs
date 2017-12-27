@@ -36,9 +36,33 @@ impl DerefMut for Bin {
     }
 }
 
+impl Bin {
+    #[inline]
+    pub fn new() -> Bin {
+        Vec::new().into()
+    }
+
+    #[inline]
+    pub fn with_capacity(s: usize) -> Bin {
+        Vec::with_capacity(s).into()
+    }
+}
+
 
 
 pub struct JBin(Vec<u8>);
+
+impl From<Bin> for JBin {
+    fn from(b: Bin) -> JBin {
+        JBin(b.0)
+    }
+}
+
+impl Into<Bin> for JBin {
+    fn into(self) -> Bin {
+        Bin(self.0)
+    }
+}
 
 impl Serialize for JBin {
     fn serialize<S>(&self, serilizer: S) -> Result<S::Ok, S::Error>

@@ -3,6 +3,7 @@ use openssl;
 use openssl::{sign, hash};
 use openssl::pkey::PKey;
 use serde::Serialize;
+use bin::Bin;
 
 /// The size of any new RSA Keys; other sizes should still be supported.
 pub const RSA_KEY_SIZE: usize = 2048;
@@ -14,11 +15,23 @@ pub fn sign_bytes(bytes: &[u8], private_key: &PKey) -> Vec<u8> {
     signer.sign_to_vec().unwrap()
 }
 
+/// Sign some binary data with a private key.
+#[inline]
+pub fn sign_bin(bin: &Bin, private_key: &PKey) -> Bin {
+    sign_bytes(&*bin, private_key).into()
+}
+
 /// Verify the bytes have not been tampered with given a signature and public key.
 pub fn verify_bytes(bytes: &[u8], signature: &[u8], public_key: &PKey) -> bool {
     let mut verifier = sign::Verifier::new(hash::MessageDigest::sha256(), public_key).unwrap();
     verifier.update(bytes).unwrap();
     verifier.verify(&signature).unwrap()
+}
+
+/// Verify the binary data has not been tampered with given it's signature and public key.
+#[inline]
+pub fn verify_bin(bin: &Bin, signature: &Bin, public_key: &PKey) -> bool {
+    verify_bytes(&*bin, &*signature, public_key)
 }
 
 /// Sign an object with a private key.

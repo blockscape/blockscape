@@ -1,3 +1,4 @@
+use bin::Bin;
 use openssl::pkey::PKey;
 use primitives::{U256, U160, Txn, Block, BlockHeader, Mutation, Change, EventListener, ListenerPool};
 use std::collections::{HashMap, BTreeSet, BTreeMap};
@@ -73,9 +74,9 @@ impl RecordKeeper {
                     shard: if cbh.shard.is_zero() { cbh_h } else { cbh.shard },
                     prev: cbh_h,
                     merkle_root: Block::calculate_merkle_root(&BTreeSet::new()),
-                    blob: Vec::new(),
+                    blob: Bin::new(),
                     creator: self.key_hash,
-                    signature: Vec::new()
+                    signature: Bin::new()
                 }.sign(&self.key),
                 txns: BTreeSet::new()
             })
@@ -98,9 +99,9 @@ impl RecordKeeper {
                     shard: if cbh.shard.is_zero() { cbh_h } else { cbh.shard },
                     prev: cbh_h,
                     merkle_root: Block::calculate_merkle_root(&accepted_txns),
-                    blob: Vec::new(),
+                    blob: Bin::new(),
                     creator: self.key_hash,
-                    signature: Vec::new()
+                    signature: Bin::new()
                 }.sign(&self.key),
                 txns: {
                     let mut t = accepted_txns.clone();
