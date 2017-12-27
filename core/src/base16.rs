@@ -1,10 +1,11 @@
-use range::Range;
+use std::cmp;
 
 static BASE16_DIGITS: [char; 16] = 
         ['0', '1', '2', '3', '4', '5', '6', '7',
          '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'];
 
-pub fn bin_to_base16(bin: &[u8]) -> String {
+/// A quick and dirty print for use in data storage and transfer.
+pub fn from_bin(bin: &[u8]) -> String {
     let mut base16 = String::with_capacity(bin.len() * 2);
     for byte in bin {
         let upper = byte >> 4;
@@ -15,20 +16,52 @@ pub fn bin_to_base16(bin: &[u8]) -> String {
     } base16
 }
 
-pub fn base16_to_bin(base16: &str) -> Result<Vec<u8>, &'static str> {
-    if base16.len() % 2 == 1 { return Err("Invalid encoding, string must be of an even length.") }
-    let mut bin: Vec<u8> = Vec::with_capacity(base16.len() / 2);
-    for i in Range(0, base16.len(), 2) {
-        let byte = u8::from_str_radix(&base16[i..i+2], 16)
-            .map_err(|_| "Invalid encoding, unknown character detected.")?;
-        bin.push(byte);
-    } Ok(bin)
+/// Convert a hex string to a binary value
+/// # Errors
+/// * If the string is empty.
+/// * If any character is invalid.
+pub fn to_bin(base16: &str) -> Result<Vec<u8>, &'static str> {
+    let mut i = base16.len() as i64; // i is one beyond the end
+    let mut s: &str = base16;
+
+    // Remove front 0x if there is one
+    if (i >= 3) && (&s[0..2] == "0x") {
+        s = &s[2..];
+        i -= 2;
+    }
+
+    // make sure it is not empty
+    if i <= 0 {
+        return Err("Value is empty.");
+    }
+
+    let mut result: Vec<u8> = Vec::with_capacity((i/2) as usize);
+
+    // Convert the individual segments to u8 s and add to the data.
+    while i > 0 {
+        // grab a u8's width of hex digits
+        let str_range = (cmp::max(i - 2, 0) as usize)..(i as usize);
+        let str_segment = &s[str_range];
+
+        // convert the u8 hex digits to a u8
+        let str_value = u8::from_str_radix(str_segment, 16);
+        match str_value {
+            Ok(value) => result.push(value),
+            Err(_) => return Err("Invalid character.")
+        }
+
+        // increment our position
+        i -= 2;
+    }
+
+    result.reverse();
+    Ok(result)
 }
 
 
 
 #[cfg(test)]
-mod test {
+mod test { // see also U160 and U256 testing
     static A1: &'static str = "00ff225e06";
     static A2: &'static str = "572b71";
     static A3: &'static str = "7b382020555a";
@@ -39,17 +72,17 @@ mod test {
     static B3: [u8; 6] = [123, 56, 32, 32, 85, 90];
 
     #[test]
-    fn bin_to_base16() {
-        assert_eq!(super::bin_to_base16(&B1), A1);
-        assert_eq!(super::bin_to_base16(&B2), A2);
-        assert_eq!(super::bin_to_base16(&B3), A3);
+    fn from_bin() {
+        assert_eq!(super::from_bin(&B1), A1);
+        assert_eq!(super::from_bin(&B2), A2);
+        assert_eq!(super::from_bin(&B3), A3);
     }
 
     #[test]
-    fn base16_to_bin() {
-        assert_eq!(super::base16_to_bin(A1).unwrap(), B1);
-        assert_eq!(super::base16_to_bin(A2).unwrap(), B2);
-        assert_eq!(super::base16_to_bin(A3).unwrap(), B3);
-        assert!(super::base16_to_bin(A4).is_err());
+    fn to_bin() {
+        assert_eq!(super::to_bin(A1).unwrap(), B1);
+        assert_eq!(super::to_bin(A2).unwrap(), B2);
+        assert_eq!(super::to_bin(A3).unwrap(), B3);
+        assert!(super::to_bin(A4).is_err());
     }
 }

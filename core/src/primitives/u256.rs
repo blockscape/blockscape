@@ -1,6 +1,6 @@
+use base16;
 use bincode;
 use bytes::{ByteOrder, BigEndian, LittleEndian};
-use std::cmp;
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -107,7 +107,7 @@ impl Hash for U256 {
 }
 
 impl FromStr for U256 {
-    type Err = String;
+    type Err = &'static str;
     
     /// Convert a hex string to a U256 value
     /// # Errors
@@ -115,38 +115,15 @@ impl FromStr for U256 {
     /// * If the string is empty.
     /// * If any character is invalid.
     fn from_str(v: &str) -> Result<U256, Self::Err> {
-        let mut i: i32 = v.len() as i32; // i is one beyond the end
-        let mut result = U256([0; 4]);
+        let mut bin = base16::to_bin(v)?;
+        let len = bin.len();
+        if len > 32 { return Err("Value too large.") }
         
-        // Remove front 0x if there is one
-        let mut s: &str = v;
-        if (i >= 3) && (&v[0..2] == "0x") {
-            s = &v[2..];
-            i -= 2;
+        bin.reverse();
+        for _ in len..33 {
+            bin.push(0);
         }
-        if i > 64 {
-            return Err(String::from("Value is too long."));
-        }
-
-        // Convert the individual segments to u64 s and add to the data.
-        let mut chunk: usize = 0;
-        while i > 0 {
-            assert!(chunk < 4); // should never happen if earlier checks are correct
-            // grab a u64's width of hex digits
-            let str_range = (cmp::max(i - 16, 0) as usize)..(i as usize);
-            let str_segment: &str = &s[str_range];
-            // convert the u64 hex digits to a u64
-            let str_value = u64::from_str_radix(str_segment, 16);
-            match str_value {
-                Ok(value) => result.0[chunk] = value,
-                Err(e) => return Err(e.to_string())
-            }
-            // increment our position
-            chunk += 1;
-            i -= 16;
-        }
-
-        Ok(result)
+        Ok(Self::from_little_endian(&bin))
     }
 }
 
