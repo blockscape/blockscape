@@ -17,8 +17,6 @@ use serde::de;
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
 pub struct U160([u32; 5]);
 
-pub struct JU160(U160);
-
 /// Defined Zero value for the U160 type.
 pub const U160_ZERO: U160 = U160([0u32; 5]);
 /// Defined Maximum value for the U160 type.
@@ -153,61 +151,6 @@ impl FromStr for U160 {
     }
 }
 
-
-impl From<U160> for JU160 {
-    fn from(v: U160) -> Self {
-        JU160(v)
-    }
-}
-
-impl Into<U160> for JU160 {
-    fn into(self) -> U160 {
-        self.0
-    }
-}
-
-impl Deref for JU160 {
-    type Target = U160;
-
-    fn deref(&self) -> &U160 {
-        &self.0
-    }
-}
-
-impl Serialize for JU160 {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where S: Serializer
-    {
-        serializer.serialize_str(self.to_string().as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for JU160 {
-    fn deserialize<D>(deserializer: D) -> Result<JU160, D::Error>
-        where D: Deserializer<'de>
-    {
-        struct StrVisitor;
-
-        impl<'de> Visitor<'de> for StrVisitor {
-            type Value = JU160;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a hex string")
-            }
-
-            fn visit_str<E>(self, value: &str) -> Result<JU160, E>
-            where E: de::Error
-            {
-                value.parse::<U160>()
-                    .map(|v| JU160(v))
-                    .map_err(Error::custom)
-            }
-        }
-
-        deserializer.deserialize_string(StrVisitor)
-    }
-}
-
 impl U160 {
     /// Checks if the value is zero.
     pub fn is_zero(&self) -> bool {
@@ -265,6 +208,64 @@ impl U160 {
     pub fn to_vec(&self) -> Vec<u8> {
         bincode::serialize(&self, bincode::Bounded(20)).unwrap()
      }
+}
+
+
+
+pub struct JU160(U160);
+
+impl From<U160> for JU160 {
+    fn from(v: U160) -> Self {
+        JU160(v)
+    }
+}
+
+impl Into<U160> for JU160 {
+    fn into(self) -> U160 {
+        self.0
+    }
+}
+
+impl Deref for JU160 {
+    type Target = U160;
+
+    fn deref(&self) -> &U160 {
+        &self.0
+    }
+}
+
+impl Serialize for JU160 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where S: Serializer
+    {
+        serializer.serialize_str(self.to_string().as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for JU160 {
+    fn deserialize<D>(deserializer: D) -> Result<JU160, D::Error>
+        where D: Deserializer<'de>
+    {
+        struct StrVisitor;
+
+        impl<'de> Visitor<'de> for StrVisitor {
+            type Value = JU160;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a hex string")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<JU160, E>
+            where E: de::Error
+            {
+                value.parse::<U160>()
+                    .map(|v| JU160(v))
+                    .map_err(Error::custom)
+            }
+        }
+
+        deserializer.deserialize_string(StrVisitor)
+    }
 }
 
 

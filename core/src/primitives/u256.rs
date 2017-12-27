@@ -17,8 +17,6 @@ use serde::de;
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
 pub struct U256([u64; 4]);
 
-pub struct JU256(U256);
-
 /// Defined Zero value for the U256 type.
 pub const U256_ZERO: U256 = U256([0u64; 4]);
 /// Defined Maximum value for the U256 type.
@@ -152,60 +150,6 @@ impl FromStr for U256 {
     }
 }
 
-impl From<U256> for JU256 {
-    fn from(v: U256) -> Self {
-        JU256(v)
-    }
-}
-
-impl Into<U256> for JU256 {
-    fn into(self) -> U256 {
-        self.0
-    }
-}
-
-impl Deref for JU256 {
-    type Target = U256;
-
-    fn deref(&self) -> &U256 {
-        &self.0
-    }
-}
-
-impl Serialize for JU256 {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where S: Serializer
-    {
-        serializer.serialize_str(self.to_string().as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for JU256 {
-    fn deserialize<D>(deserializer: D) -> Result<JU256, D::Error>
-        where D: Deserializer<'de>
-    {
-        struct StrVisitor;
-
-        impl<'de> Visitor<'de> for StrVisitor {
-            type Value = JU256;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a hex string")
-            }
-
-            fn visit_str<E>(self, value: &str) -> Result<JU256, E>
-            where E: de::Error
-            {
-                value.parse::<U256>()
-                    .map(|v| JU256(v))
-                    .map_err(Error::custom)
-            }
-        }
-
-        deserializer.deserialize_string(StrVisitor)
-    }
-}
-
 impl U256 {
     /// Checks if the value is zero.
     pub fn is_zero(&self) -> bool {
@@ -263,6 +207,64 @@ impl U256 {
     pub fn to_vec(&self) -> Vec<u8> {
         bincode::serialize(&self, bincode::Bounded(32)).unwrap()
      }
+}
+
+
+
+pub struct JU256(U256);
+
+impl From<U256> for JU256 {
+    fn from(v: U256) -> Self {
+        JU256(v)
+    }
+}
+
+impl Into<U256> for JU256 {
+    fn into(self) -> U256 {
+        self.0
+    }
+}
+
+impl Deref for JU256 {
+    type Target = U256;
+
+    fn deref(&self) -> &U256 {
+        &self.0
+    }
+}
+
+impl Serialize for JU256 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where S: Serializer
+    {
+        serializer.serialize_str(self.to_string().as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for JU256 {
+    fn deserialize<D>(deserializer: D) -> Result<JU256, D::Error>
+        where D: Deserializer<'de>
+    {
+        struct StrVisitor;
+
+        impl<'de> Visitor<'de> for StrVisitor {
+            type Value = JU256;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a hex string")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<JU256, E>
+            where E: de::Error
+            {
+                value.parse::<U256>()
+                    .map(|v| JU256(v))
+                    .map_err(Error::custom)
+            }
+        }
+
+        deserializer.deserialize_string(StrVisitor)
+    }
 }
 
 
