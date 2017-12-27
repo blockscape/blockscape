@@ -120,7 +120,7 @@ impl Database {
         let key = Self::with_postfix(key, postfix);
 
         db.get(&key)?
-            .map(|d| d.to_vec().into())
+            .map(|d| d.to_vec())
             .ok_or(Error::NotFound(postfix, Vec::from(key)))
     }
 
@@ -524,7 +524,7 @@ impl Database {
                 
                 contra.changes.push(Change::SetValue {
                     key: key.clone(),
-                    value: self.db.get(&db_key)?.map(|v| v.to_vec().into()), // Option<Bin>
+                    value: self.db.get(&db_key)?.map(|v| v.to_vec()), // Option<Bin>
                     supp: None
                 });
 

@@ -9,16 +9,10 @@ use bin::Bin;
 pub const RSA_KEY_SIZE: usize = 2048;
 
 /// Sign some bytes with a private key.
-pub fn sign_bytes(bytes: &[u8], private_key: &PKey) -> Vec<u8> {
+pub fn sign_bytes(bytes: &[u8], private_key: &PKey) -> Bin {
     let mut signer = sign::Signer::new(hash::MessageDigest::sha256(), &private_key).unwrap();
     signer.update(bytes).unwrap();
     signer.sign_to_vec().unwrap()
-}
-
-/// Sign some binary data with a private key.
-#[inline]
-pub fn sign_bin(bin: &Bin, private_key: &PKey) -> Bin {
-    sign_bytes(&*bin, private_key).into()
 }
 
 /// Verify the bytes have not been tampered with given a signature and public key.
@@ -28,21 +22,15 @@ pub fn verify_bytes(bytes: &[u8], signature: &[u8], public_key: &PKey) -> bool {
     verifier.verify(&signature).unwrap()
 }
 
-/// Verify the binary data has not been tampered with given it's signature and public key.
-#[inline]
-pub fn verify_bin(bin: &Bin, signature: &Bin, public_key: &PKey) -> bool {
-    verify_bytes(&*bin, &*signature, public_key)
-}
-
 /// Sign an object with a private key.
-pub fn sign_obj<S: Serialize>(obj: &S, private_key: &PKey) -> Vec<u8> {
-    let encoded: Vec<u8> = bincode::serialize(&obj, bincode::Infinite).unwrap();
+pub fn sign_obj<S: Serialize>(obj: &S, private_key: &PKey) -> Bin {
+    let encoded: Bin = bincode::serialize(&obj, bincode::Infinite).unwrap();
     sign_bytes(&encoded, private_key)
 }
 
 /// Verify the object has not been tampered with given the signature and public key.
 pub fn verify_obj<S: Serialize>(obj: &S, signature: &[u8], public_key: &PKey) -> bool {
-    let encoded: Vec<u8> = bincode::serialize(&obj, bincode::Infinite).unwrap();
+    let encoded: Bin = bincode::serialize(&obj, bincode::Infinite).unwrap();
     verify_bytes(&encoded, signature, public_key)
 }
 
