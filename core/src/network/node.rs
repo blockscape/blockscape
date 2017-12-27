@@ -259,32 +259,6 @@ impl NodeRepository {
         self.available_nodes = HashMap::new();
         self.sorted_nodes = Vec::new();
 
-        // TODO: Do we need/want this?
-        /*let seed_node_vec = vec![LocalNode {
-            node: Node {
-                endpoint: NodeEndpoint {
-                    host: String::from("seed-1.blockscape"),
-                    port: 42224
-                },
-                key: vec![1],
-                version: 1,
-                name: String::from("Seed Node 1")
-            },
-            score: 10
-        },
-        LocalNode {
-            node: Node {
-                endpoint: NodeEndpoint {
-                    host: String::from("seed-2.blockscape"),
-                    port: 42224
-                },
-                key: vec![2],
-                version: 1,
-                name: String::from("Seed Node 2")
-            },
-            score: 10
-        }];*/
-
         let imported = match nodes.len() {
             // I would put the below stuff into a constant, but making method calls (however constructive) is not allowed, so I must put it here.
             0 => return,
@@ -304,6 +278,7 @@ impl NodeRepository {
     }
 
     pub fn trim(&mut self) {
+        debug!("Trimming saved nodes to {}", NodeRepository::SAVED_NODES_COUNT);
         let nodes: Vec<LocalNode> = self.available_nodes.values().take(NodeRepository::SAVED_NODES_COUNT).map(|n| n.read().unwrap().clone()).collect();
         self.build(&nodes);
     }
@@ -318,6 +293,8 @@ impl NodeRepository {
         let saved: Vec<LocalNode> = self.available_nodes.values().map(|n| n.read().unwrap().clone()).collect();
         
         let serialized = serde_json::to_string_pretty(&saved).unwrap();
+
+        debug!("Save file to: {:?}", self.node_store_path(name).as_path());
 
         // open a file, put serialized data into it
         match File::create(&self.node_store_path(name)) {
@@ -428,6 +405,7 @@ fn custom_node_vec() {
     assert_eq!(nr.get_nodes(0).name, "SuperTest Node 2");
     assert_eq!(nr.get_nodes(1).name, "SuperTest Node 3");
     assert_eq!(nr.get_nodes(2).name, "SuperTest Node 1");
+    assert_eq!(nr.len(), 3);
 
     // should still work if we add another node and score it up a bit
     nr.new_node(Node {
@@ -450,4 +428,5 @@ fn custom_node_vec() {
     assert_eq!(nr.get_nodes(1).name, "SuperTest Node 4");
     assert_eq!(nr.get_nodes(2).name, "SuperTest Node 3");
     assert_eq!(nr.get_nodes(3).name, "SuperTest Node 1");
+    assert_eq!(nr.len(), 4);
 }
