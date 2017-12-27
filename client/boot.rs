@@ -17,7 +17,16 @@ use rpc::RPC;
 use context::Context;
 
 const ADMIN_KEY_PREFIX: &[u8] = b"ADMIN";
-const ADMIN_KEY: &[u8] = b""; //TODO: Insert Admin Key
+const ADMIN_KEY: &[u8] = 
+b"-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyUpw2CKdIHwdHl4eTccx
+gEni8PiypcXR+hQg6j5CrKc3t+WHpgQlyOz32esh+qtT4/rPAFzIAx0UNcuNMtQW
+YtGSsGZW2uDA+yWX9JT221dqkgcEwezE4LxRg4iPmjOhoM/rK3JP4eHQ0QnpR9hc
+uQKdDUNGnD4CIaxonOaTv6BXTm8MJrSjydRB9IguuUsZTMBCkkRsfm61MnSHHquJ
+DI9tcmJxDz4RxyBsluzd4RQMUozk7X+/mwrGYaDILqNJNWV6eCWoGzmQ5qtZXx1f
+vBBOiLZ1XnWuFgpL4Od8C9c2SF3IsWgrCCB2zoGxlB11hY7lDcMpPGFqZAjZne54
+nQIDAQAB
+-----END PUBLIC KEY-----";
 
 /// Loads command line arguments, and returns them as a clap ArgMatches obj
 pub fn parse_cmdline<'a>() -> ArgMatches<'a> {
@@ -101,7 +110,7 @@ pub fn parse_cmdline<'a>() -> ArgMatches<'a> {
 }
 
 /// Returns the genesis block for blockscape
-pub fn make_genesis(key: &PKey) -> (Block, Vec<Txn>) {
+pub fn make_genesis() -> (Block, Vec<Txn>) {
     let mut b = Block {
         header: BlockHeader {
             version: 1,
@@ -110,18 +119,19 @@ pub fn make_genesis(key: &PKey) -> (Block, Vec<Txn>) {
             prev: U256_ZERO,
             merkle_root: U256_ZERO,
             blob: Vec::new(),
-            creator: hash_pub_key(&key.public_key_to_der().unwrap()),
+            creator: U160_ZERO,
             signature: Vec::new()
-        }.sign(key),
+        },
         txns: BTreeSet::new()
     };
 
     let mut m = Mutation::new();
 
+    let admkey = PKey::public_key_from_pem(ADMIN_KEY).unwrap().public_key_to_der().unwrap();
+
     m.changes.push(Change::SetValue {
         key: Vec::from(ADMIN_KEY_PREFIX),
-        // TODO: Put real admin key here
-        value: Some(Vec::from(ADMIN_KEY)),
+        value: Some(admkey),
         supp: None
     });
 
