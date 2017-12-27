@@ -80,7 +80,7 @@ fn main() {
             .expect("Could not automatically find work directory for blockscape! Please check your environment and try again."));
     }
 
-    let rk = Arc::new(RecordKeeper::open(None, Some(rules::build_rules())).expect("Record Keeper was not able to initialize!"));
+    let rk = Arc::new(RecordKeeper::open(load_or_generate_key("user"), None, Some(rules::build_rules())).expect("Record Keeper was not able to initialize!"));
     let wq = Arc::new(WorkQueue::new(rk.clone()));
 
 

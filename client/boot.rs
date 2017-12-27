@@ -10,7 +10,6 @@ use blockscape_core::network::node::NodeEndpoint;
 use blockscape_core::primitives::*;
 use blockscape_core::signer::generate_private_key;
 use blockscape_core::time::Time;
-use blockscape_core::hash::hash_pub_key;
 
 use rpc::RPC;
 
@@ -150,18 +149,10 @@ pub fn make_genesis() -> (Block, Vec<Txn>) {
     (b, vec![txn])
 }
 
-/// Converts the command line arguments to a client config ready to go
-/// # Arguments
-/// * `cmdline`: The argument matches from clap on the command line
-/// *Note*: As this is a high level function, it will automatically try to load the network key from
-/// file, and it will generate a new one if needed
-/// # Panics
-/// If it cannot save a newly created public key, or if the private key loaded is invalid
-pub fn make_network_config(cmdline: &ArgMatches) -> ClientConfig {
-
+pub fn load_or_generate_key(name: &str) -> PKey {
     let key: PKey;
 
-    if let Some(k) = load_key("node") {
+    if let Some(k) = load_key(name) {
         key = k;
         info!("Loaded node keyfile from file.");
     }
@@ -171,10 +162,24 @@ pub fn make_network_config(cmdline: &ArgMatches) -> ClientConfig {
         key = generate_private_key();
 
         // save the key (fail if not saved)
-        if !save_key("node", &key) {
+        if !save_key(name, &key) {
             panic!("Could not save node private key file.");
         }
     }
+
+    key
+}
+
+/// Converts the command line arguments to a client config ready to go
+/// # Arguments
+/// * `cmdline`: The argument matches from clap on the command line
+/// *Note*: As this is a high level function, it will automatically try to load the network key from
+/// file, and it will generate a new one if needed
+/// # Panics
+/// If it cannot save a newly created public key, or if the private key loaded is invalid
+pub fn make_network_config(cmdline: &ArgMatches) -> ClientConfig {
+
+    let key = load_or_generate_key("node");
 
     let mut config = ClientConfig::from_key(key);
 
