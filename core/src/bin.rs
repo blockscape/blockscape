@@ -7,7 +7,7 @@ use serde::de::*;
 use serde::ser::{Serialize, Serializer};
 
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Bin(Vec<u8>);
 
 impl From<Vec<u8>> for Bin {

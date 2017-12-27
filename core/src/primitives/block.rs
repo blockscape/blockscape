@@ -174,6 +174,7 @@ impl Block {
 }
 
 
+
 #[derive(Serialize, Deserialize)]
 pub struct JBlockHeader {
     version: u16,

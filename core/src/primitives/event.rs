@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Weak, Mutex};
+use bin::*;
 
 /// An `Event` is an implementation defined type which will be used when processing the game to
 /// determine how the game computation should be impacted. The final implementation should probably
@@ -8,8 +9,9 @@ use std::sync::{Arc, Weak, Mutex};
 /// store references to external data as they may be brought into and out of existence at any time.
 pub trait Event: Debug + Send + Sync + 'static {}
 
-impl Event for Vec<u8> {}
-pub type RawEvent = Vec<u8>;
+impl Event for Bin {}
+pub type RawEvent = Bin;
+pub type JRawEvent = JBin;
 
 
 /// `EventListener`s are designed to be notified of new events as they happen so the implementing
