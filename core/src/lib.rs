@@ -21,6 +21,7 @@ extern crate log;
 mod util;
 
 pub mod base16;
+pub mod bin;
 pub mod compress;
 pub mod env;
 pub mod hash;
