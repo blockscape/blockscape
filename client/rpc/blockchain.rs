@@ -1,11 +1,12 @@
 use jsonrpc_core::*;
+use jsonrpc_core::error::Error;
 use jsonrpc_macros::IoDelegate;
 use rpc::types::*;
-use std::sync::Arc;
-use jsonrpc_core::error::Error;
 use serde::Serialize;
 use std::result::Result;
+use std::sync::Arc;
 
+use blockscape_core::bin::*;
 use blockscape_core::primitives::*;
 use blockscape_core::record_keeper::RecordKeeper;
 use blockscape_core::record_keeper::Error as RKErr;
@@ -42,49 +43,52 @@ impl BlockchainRPC {
     }
 
     fn create_block(&self, _params: Params, _meta: SocketMetadata) -> RpcResult {
-        to_rpc_res(self.rk.create_block())
+        into_rpc_res::<_, JBlock>(self.rk.create_block())
     }
 
     fn add_block(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
-        let block = expect_one_arg(params)?;
+        let block = expect_one_arg::<JBlock>(params)?.into();
         to_rpc_res(self.rk.add_block(&block))
     }
 
     fn add_pending_txn(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
-        let txn = expect_one_arg(params)?;
+        let txn = expect_one_arg::<JTxn>(params)?.into();
         to_rpc_res(self.rk.add_pending_txn(&txn))
     }
 
     fn get_validator_key(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
-        let id = expect_one_arg::<U160>(params)?;
-        to_rpc_res(self.rk.get_validator_key(&id))
+        let id = expect_one_arg::<JU160>(params)?.into();
+        into_rpc_res::<_, JBin>(self.rk.get_validator_key(&id))
     }
 
     fn get_validator_rep(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
-        let id = expect_one_arg(params)?;
+        let id = expect_one_arg::<JU160>(params)?.into();
         to_rpc_res(self.rk.get_validator_rep(&id))
     }
 
     fn get_current_block_hash(&self, _params: Params, _meta: SocketMetadata) -> RpcResult {
-        Ok(to_value(self.rk.get_current_block_hash()).unwrap())
+        into_rpc_res::<_, JU256>(Ok(self.rk.get_current_block_hash()))
     }
 
     fn get_current_block_header(&self, _params: Params, _meta: SocketMetadata) -> RpcResult {
-        to_rpc_res(self.rk.get_current_block_header())
+        into_rpc_res::<_, JBlockHeader>(self.rk.get_current_block_header())
     }
 
     fn get_current_block(&self, _params: Params, _meta: SocketMetadata) -> RpcResult {
-        to_rpc_res(self.rk.get_current_block())
+        into_rpc_res::<_, JBlock>(self.rk.get_current_block())
     }
 
     fn get_block_height(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
-        let hash = expect_one_arg(params)?;
+        let hash = expect_one_arg::<JU256>(params)?.into();
         to_rpc_res(self.rk.get_block_height(&hash))
     }
 
     fn get_blocks_of_height(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
         let height = expect_one_arg(params)?;
-        to_rpc_res(self.rk.get_blocks_of_height(height))
+        to_rpc_res(
+            self.rk.get_blocks_of_height(height)
+            .map(|v| v.into_iter().map(Into::into).collect::<Vec<JU256>>())
+        )
     }
 
     fn get_latest_blocks(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
@@ -124,13 +128,13 @@ impl BlockchainRPC {
     }
 
     fn get_block(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
-        let hash = expect_one_arg(params)?;
-        to_rpc_res(self.rk.get_block(&hash))
+        let hash = expect_one_arg::<JU256>(params)?.into();
+        into_rpc_res::<_, JBlock>(self.rk.get_block(&hash))
     }
 
     fn get_txn(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
-        let hash = expect_one_arg(params)?;
-        to_rpc_res(self.rk.get_txn(&hash))
+        let hash = expect_one_arg::<JU256>(params)?.into();
+        into_rpc_res::<_, JTxn>(self.rk.get_txn(&hash))
     }
 }
 
