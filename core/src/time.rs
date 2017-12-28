@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicIsize,ATOMIC_ISIZE_INIT};
 use std::sync::atomic::Ordering::Relaxed;
 
 /// Represents an instant in time, defined by the number of milliseconds since the UNIX Epoch
-#[derive(Serialize, Deserialize, PartialEq, PartialOrd, Eq, Ord, Copy, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, PartialOrd, Eq, Ord, Copy, Clone, Hash)]
 pub struct Time(i64);
 
 impl fmt::Debug for Time {
@@ -22,9 +22,9 @@ impl fmt::Debug for Time {
     }
 }
 
-impl From<Time> for i64 {
-    fn from(t: Time) -> i64 {
-        t.0
+impl Into<i64> for Time {
+    fn into(self) -> i64 {
+        self.0
     }
 }
 

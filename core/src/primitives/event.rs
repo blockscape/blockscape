@@ -1,7 +1,7 @@
+use bin::*;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Weak, Mutex};
-use bin::*;
 
 /// An `Event` is an implementation defined type which will be used when processing the game to
 /// determine how the game computation should be impacted. The final implementation should probably
