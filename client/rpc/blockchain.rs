@@ -20,7 +20,6 @@ impl BlockchainRPC {
         let rpc = Arc::new(BlockchainRPC { rk });
 
         let mut d = IoDelegate::<BlockchainRPC, SocketMetadata>::new(rpc.clone());
-        d.add_method_with_meta("create_block", Self::create_block);
         d.add_method_with_meta("add_block", Self::add_block);
         d.add_method_with_meta("add_pending_txn", Self::add_pending_txn);
         d.add_method_with_meta("get_validator_key", Self::get_validator_key);
@@ -31,8 +30,6 @@ impl BlockchainRPC {
         d.add_method_with_meta("get_block_height", Self::get_block_height);
         d.add_method_with_meta("get_blocks_of_height", Self::get_blocks_of_height);
         d.add_method_with_meta("get_latest_blocks", Self::get_latest_blocks);
-        // d.add_method_with_meta("get_blocks_before", Self::get_blocks_before);
-        // d.add_method_with_meta("get_blocks_after", Self::get_blocks_after);
         d.add_method_with_meta("get_plot_events", Self::get_plot_events);
         d.add_method_with_meta("get_block_header", Self::get_block_header);
         d.add_method_with_meta("get_block", Self::get_block);
@@ -40,10 +37,6 @@ impl BlockchainRPC {
 
         io.extend_with(d);
         rpc
-    }
-
-    fn create_block(&self, _params: Params, _meta: SocketMetadata) -> RpcResult {
-        into_rpc_res::<_, JBlock>(self.rk.create_block())
     }
 
     fn add_block(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
@@ -101,21 +94,6 @@ impl BlockchainRPC {
             )
         }
     }
-
-    // fn get_blocks_before(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
-    //     let mut params = expect_map(params)?;
-    //     let last_known = read_value(&mut params, "last_known")?;
-    //     let target = read_value(&mut params, "target")?;
-    //     let limit = read_opt_value(&mut params, "limit")?.unwrap_or(1000);
-    //     to_rpc_res(self.rk.get_blocks_before(&last_known, &target, limit))
-    // }
-
-    // fn get_blocks_after(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
-    //     let mut params = expect_map(params)?;
-    //     let start = read_value(&mut params, "start")?;
-    //     let limit = read_opt_value(&mut params, "limit")?.unwrap_or(1000);
-    //     to_rpc_res(self.rk.get_blocks_after(&start, limit))
-    // }
 
     fn get_plot_events(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
         let (plot_id, after_tick) = expect_two_args(params)?;
