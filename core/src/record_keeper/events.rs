@@ -1,4 +1,4 @@
-use primitives::{U256, Event, RawEvent};
+use primitives::{U256, JU256, Event, RawEvent, JRawEvent};
 use std::collections::BTreeMap;
 use std::mem::size_of;
 use super::PlotID;
@@ -10,7 +10,6 @@ use super::PlotID;
 /// otherwise stated. This means that if there is a `NewBlock` message, a call to retrieve the block
 /// will succeed.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "type")]
 pub enum RecordEvent {
     /// A new block has been added, walk forward (or back, if back, then a state invalidated event
     /// will also be pushed out if relevant)
@@ -61,4 +60,54 @@ pub fn remove_event(events: &mut PlotEvents, tick: u64, event: &PlotEvent) -> bo
     if let Some(ref mut list) = events.get_mut(&tick) {
         list.retain(|e| *e != *event); true
     } else { false }
+}
+
+
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum JRecordEvent {
+    NewBlock { uncled: bool, hash: JU256 },
+    NewTxn { hash: JU256 },
+    StateInvalidated { new_height: u64, after_height: u64, after_tick: u64}
+}
+
+impl From<RecordEvent> for JRecordEvent {
+    fn from(e: RecordEvent) -> JRecordEvent {
+        match e {
+            RecordEvent::NewBlock{uncled, hash} => JRecordEvent::NewBlock{uncled, hash: hash.into()},
+            RecordEvent::NewTxn{hash} => JRecordEvent::NewTxn{hash: hash.into()},
+            RecordEvent::StateInvalidated{new_height, after_height, after_tick} => JRecordEvent::StateInvalidated{new_height, after_height, after_tick}
+        }
+    }
+}
+
+impl Into<RecordEvent> for JRecordEvent {
+    fn into(self) -> RecordEvent {
+        match self {
+            JRecordEvent::NewBlock{uncled, hash} => RecordEvent::NewBlock{uncled, hash: hash.into()},
+            JRecordEvent::NewTxn{hash} => RecordEvent::NewTxn{hash: hash.into()},
+            JRecordEvent::StateInvalidated{new_height, after_height, after_tick} => RecordEvent::StateInvalidated{new_height, after_height, after_tick}
+        }
+    }
+}
+
+
+#[derive(Serialize, Deserialize)]
+pub struct JPlotEvent {
+    from: PlotID,
+    to: PlotID,
+    event: JRawEvent
+}
+
+impl From<PlotEvent> for JPlotEvent {
+    fn from(e: PlotEvent) -> JPlotEvent {
+        JPlotEvent {from: e.from, to: e.to, event: e.event.into()}
+    }
+}
+
+impl Into<PlotEvent> for JPlotEvent {
+    fn into(self) -> PlotEvent {
+        PlotEvent {from: self.from, to: self.to, event: self.event.into()}
+    }
 }
