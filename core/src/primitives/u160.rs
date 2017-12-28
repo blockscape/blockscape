@@ -1,6 +1,6 @@
+use base16;
 use bincode;
 use bytes::{ByteOrder, BigEndian, LittleEndian};
-use std::cmp;
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -16,8 +16,6 @@ use serde::de;
 /// this means that it appears revered when typing a literal array.
 #[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
 pub struct U160([u32; 5]);
-
-pub struct JU160(U160);
 
 /// Defined Zero value for the U160 type.
 pub const U160_ZERO: U160 = U160([0u32; 5]);
@@ -110,7 +108,7 @@ impl Hash for U160 {
 }
 
 impl FromStr for U160 {
-    type Err = String;
+    type Err = &'static str;
     
     /// Convert a hex string to a U160 value
     /// # Errors
@@ -118,93 +116,15 @@ impl FromStr for U160 {
     /// * If the string is empty.
     /// * If any character is invalid.
     fn from_str(v: &str) -> Result<U160, Self::Err> {
-        let mut i: i32 = v.len() as i32; // i is one beyond the end
-        let mut result = U160([0; 5]);
+        let mut bin = base16::to_bin(v)?;
+        let len = bin.len();
+        if len > 20 { return Err("Value too large.") }
         
-        // Remove front 0x if there is one
-        let mut s: &str = v;
-        if (i >= 3) && (&v[0..2] == "0x") {
-            s = &v[2..];
-            i -= 2;
+        bin.reverse();
+        for _ in len..21 {
+            bin.push(0);
         }
-        if i > 40 {
-            return Err(String::from("Value is too long."));
-        }
-
-        // Convert the individual segments to u32 s and add to the data.
-        let mut chunk: usize = 0;
-        while i > 0 {
-            assert!(chunk < 5); // should never happen if earlier checks are correct
-            // grab a u32's width of hex digits
-            let str_range = (cmp::max(i - 8, 0) as usize)..(i as usize);
-            let str_segment: &str = &s[str_range];
-            // convert the u32 hex digits to a u32
-            let str_value = u32::from_str_radix(str_segment, 16);
-            match str_value {
-                Ok(value) => result.0[chunk] = value,
-                Err(e) => return Err(e.to_string())
-            }
-            // increment our position
-            chunk += 1;
-            i -= 8;
-        }
-
-        Ok(result)
-    }
-}
-
-
-impl From<U160> for JU160 {
-    fn from(v: U160) -> Self {
-        JU160(v)
-    }
-}
-
-impl Into<U160> for JU160 {
-    fn into(self) -> U160 {
-        self.0
-    }
-}
-
-impl Deref for JU160 {
-    type Target = U160;
-
-    fn deref(&self) -> &U160 {
-        &self.0
-    }
-}
-
-impl Serialize for JU160 {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where S: Serializer
-    {
-        serializer.serialize_str(self.to_string().as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for JU160 {
-    fn deserialize<D>(deserializer: D) -> Result<JU160, D::Error>
-        where D: Deserializer<'de>
-    {
-        struct StrVisitor;
-
-        impl<'de> Visitor<'de> for StrVisitor {
-            type Value = JU160;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a hex string")
-            }
-
-            fn visit_str<E>(self, value: &str) -> Result<JU160, E>
-            where E: de::Error
-            {
-                value.parse::<U160>()
-                    .map(|v| JU160(v))
-                    .map_err(Error::custom)
-            }
-        }
-
-        deserializer.deserialize_string(StrVisitor)
+        Ok(Self::from_little_endian(&bin))
     }
 }
 
@@ -265,6 +185,65 @@ impl U160 {
     pub fn to_vec(&self) -> Vec<u8> {
         bincode::serialize(&self, bincode::Bounded(20)).unwrap()
      }
+}
+
+
+
+#[derive(PartialOrd, Ord, PartialEq, Eq)]
+pub struct JU160(U160);
+
+impl From<U160> for JU160 {
+    fn from(v: U160) -> Self {
+        JU160(v)
+    }
+}
+
+impl Into<U160> for JU160 {
+    fn into(self) -> U160 {
+        self.0
+    }
+}
+
+impl Deref for JU160 {
+    type Target = U160;
+
+    fn deref(&self) -> &U160 {
+        &self.0
+    }
+}
+
+impl Serialize for JU160 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where S: Serializer
+    {
+        serializer.serialize_str(self.to_string().as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for JU160 {
+    fn deserialize<D>(deserializer: D) -> Result<JU160, D::Error>
+        where D: Deserializer<'de>
+    {
+        struct StrVisitor;
+
+        impl<'de> Visitor<'de> for StrVisitor {
+            type Value = JU160;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a hex string")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<JU160, E>
+            where E: de::Error
+            {
+                value.parse::<U160>()
+                    .map(|v| JU160(v))
+                    .map_err(Error::custom)
+            }
+        }
+
+        deserializer.deserialize_string(StrVisitor)
+    }
 }
 
 

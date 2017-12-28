@@ -1,10 +1,10 @@
+use bin::*;
 use hash::hash_obj;
 use openssl::pkey::PKey;
 use primitives::{Mutation, U256};
 use signer::sign_obj;
 use std::cmp::Ordering;
 use std::mem::size_of;
-use std::vec::Vec;
 use time::Time;
 
 // Expand and divide shard transactions
@@ -19,9 +19,9 @@ use time::Time;
 pub struct Txn {
     pub timestamp: Time,
     pub txn_type: u8,
-    pub pubkey: Vec<u8>,  // stored as a DER format
+    pub pubkey: Bin,  // stored as a DER format
     pub mutation: Mutation,
-    pub signature: Vec<u8>,
+    pub signature: Bin,
 }
 
 pub const EXPANDING_TXN: u8 = 0;
@@ -174,5 +174,40 @@ impl Txn {
         (self.pubkey.len() + 1) +
         self.mutation.calculate_size() +
         (self.signature.len() + 1)
+    }
+}
+
+
+
+#[derive(Serialize, Deserialize)]
+pub struct JTxn {
+    timestamp: Time,
+    txn_type: u8,
+    pubkey: JBin,  // stored as a DER format
+    mutation: Mutation,
+    signature: JBin,
+}
+
+impl From<Txn> for JTxn {
+    fn from(t: Txn) -> JTxn {
+        JTxn {
+            timestamp: t.timestamp,
+            txn_type: t.txn_type,
+            pubkey: t.pubkey.into(),
+            mutation: t.mutation.into(),
+            signature: t.signature.into()
+        }
+    }
+}
+
+impl Into<Txn> for JTxn {
+    fn into(self) -> Txn {
+        Txn {
+            timestamp: self.timestamp,
+            txn_type: self.txn_type,
+            pubkey: self.pubkey.into(),
+            mutation: self.mutation.into(),
+            signature: self.signature.into()
+        }
     }
 }

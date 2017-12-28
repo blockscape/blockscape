@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use std::str::FromStr;
 use std::net::SocketAddr;
 
+use blockscape_core::bin::Bin;
 use blockscape_core::env::*;
 use blockscape_core::network::client::ClientConfig;
 use blockscape_core::network::node::NodeEndpoint;
@@ -16,7 +17,16 @@ use rpc::RPC;
 use context::Context;
 
 const ADMIN_KEY_PREFIX: &[u8] = b"ADMIN";
-const ADMIN_KEY: &[u8] = b""; //TODO: Insert Admin Key
+const ADMIN_KEY: &[u8] = 
+b"-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyUpw2CKdIHwdHl4eTccx
+gEni8PiypcXR+hQg6j5CrKc3t+WHpgQlyOz32esh+qtT4/rPAFzIAx0UNcuNMtQW
+YtGSsGZW2uDA+yWX9JT221dqkgcEwezE4LxRg4iPmjOhoM/rK3JP4eHQ0QnpR9hc
+uQKdDUNGnD4CIaxonOaTv6BXTm8MJrSjydRB9IguuUsZTMBCkkRsfm61MnSHHquJ
+DI9tcmJxDz4RxyBsluzd4RQMUozk7X+/mwrGYaDILqNJNWV6eCWoGzmQ5qtZXx1f
+vBBOiLZ1XnWuFgpL4Od8C9c2SF3IsWgrCCB2zoGxlB11hY7lDcMpPGFqZAjZne54
+nQIDAQAB
+-----END PUBLIC KEY-----";
 
 /// Loads command line arguments, and returns them as a clap ArgMatches obj
 pub fn parse_cmdline<'a>() -> ArgMatches<'a> {
@@ -107,17 +117,23 @@ pub fn make_genesis() -> (Block, Vec<Txn>) {
             timestamp: Time::from_seconds(1508009036),
             shard: U256_ZERO,
             prev: U256_ZERO,
-            merkle_root: U256_ZERO
+            merkle_root: U256_ZERO,
+            blob: Bin::new(),
+            creator: U160_ZERO,
+            signature: Bin::new()
         },
         txns: BTreeSet::new()
     };
 
     let mut m = Mutation::new();
 
+    let admkey = PKey::public_key_from_pem(ADMIN_KEY).unwrap()
+        .public_key_to_der().unwrap()
+        .into();
+
     m.changes.push(Change::SetValue {
-        key: Vec::from(ADMIN_KEY_PREFIX),
-        // TODO: Put real admin key here
-        value: Some(Vec::from(ADMIN_KEY)),
+        key: Vec::from(ADMIN_KEY_PREFIX).into(),
+        value: Some(admkey),
         supp: None
     });
 
@@ -136,18 +152,10 @@ pub fn make_genesis() -> (Block, Vec<Txn>) {
     (b, vec![txn])
 }
 
-/// Converts the command line arguments to a client config ready to go
-/// # Arguments
-/// * `cmdline`: The argument matches from clap on the command line
-/// *Note*: As this is a high level function, it will automatically try to load the network key from
-/// file, and it will generate a new one if needed
-/// # Panics
-/// If it cannot save a newly created public key, or if the private key loaded is invalid
-pub fn make_network_config(cmdline: &ArgMatches) -> ClientConfig {
-
+pub fn load_or_generate_key(name: &str) -> PKey {
     let key: PKey;
 
-    if let Some(k) = load_key("node") {
+    if let Some(k) = load_key(name) {
         key = k;
         info!("Loaded node keyfile from file.");
     }
@@ -157,10 +165,24 @@ pub fn make_network_config(cmdline: &ArgMatches) -> ClientConfig {
         key = generate_private_key();
 
         // save the key (fail if not saved)
-        if !save_key("node", &key) {
+        if !save_key(name, &key) {
             panic!("Could not save node private key file.");
         }
     }
+
+    key
+}
+
+/// Converts the command line arguments to a client config ready to go
+/// # Arguments
+/// * `cmdline`: The argument matches from clap on the command line
+/// *Note*: As this is a high level function, it will automatically try to load the network key from
+/// file, and it will generate a new one if needed
+/// # Panics
+/// If it cannot save a newly created public key, or if the private key loaded is invalid
+pub fn make_network_config(cmdline: &ArgMatches) -> ClientConfig {
+
+    let key = load_or_generate_key("node");
 
     let mut config = ClientConfig::from_key(key);
 

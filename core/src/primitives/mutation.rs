@@ -1,5 +1,6 @@
-use std::hash::{Hash, Hasher};
+use bin::*;
 use record_keeper::{PlotID, PlotEvent};
+use std::hash::{Hash, Hasher};
 use std::mem::size_of;
 
 /// A single change to the database, a mutation may be the composite of multiple changes. This is
@@ -8,10 +9,9 @@ use std::mem::size_of;
 /// types of changes, it is designed to be information used to verify a transaction, but which does
 /// not alter the network state.
 #[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(tag = "type")]
 pub enum Change {
-    SetValue { key: Vec<u8>, value: Option<Vec<u8>>, supp: Option<Vec<u8>> },
-    AddEvent { id: PlotID, tick: u64, event: PlotEvent, supp: Option<Vec<u8>> }
+    SetValue { key: Bin, value: Option<Bin>, supp: Option<Bin> },
+    AddEvent { id: PlotID, tick: u64, event: PlotEvent, supp: Option<Bin> }
 }
 
 impl PartialEq for Change {
@@ -123,4 +123,50 @@ impl Mutation {
         1 +  // contra
         self.changes.iter().fold(0, |total, c| total + c.calculate_size())
     } 
+}
+
+
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum JChange {
+    SetValue { key: Bin, value: Option<JBin>, supp: Option<JBin> },
+    AddEvent { id: PlotID, tick: u64, event: PlotEvent, supp: Option<JBin> }
+}
+
+impl From<Change> for JChange {
+    fn from(c: Change) -> JChange {
+        match c {
+            Change::SetValue{key, value, supp} => JChange::SetValue{key, value: value.map(Into::into), supp: supp.map(Into::into)},
+            Change::AddEvent{id, tick, event, supp} => JChange::AddEvent{id, tick, event, supp: supp.map(Into::into)}
+        }
+    }
+}
+
+impl Into<Change> for JChange {
+    fn into(self) -> Change {
+        match self {
+            JChange::SetValue{key, value, supp} => Change::SetValue{key, value: value.map(Into::into), supp: supp.map(Into::into)},
+            JChange::AddEvent{id, tick, event, supp} => Change::AddEvent{id, tick, event, supp: supp.map(Into::into)}
+        }
+    }
+}
+
+
+#[derive(Serialize, Deserialize)]
+pub struct JMutation {
+    contra: bool,
+    changes: Vec<JChange>
+}
+
+impl From<Mutation> for JMutation {
+    fn from(m: Mutation) -> JMutation {
+        JMutation{contra: m.contra, changes: m.changes.into_iter().map(Into::into).collect()}
+    }
+}
+
+impl Into<Mutation> for JMutation {
+    fn into(self) -> Mutation {
+        Mutation{contra: self.contra, changes: self.changes.into_iter().map(Into::into).collect()}
+    }
 }

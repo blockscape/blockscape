@@ -1,3 +1,4 @@
+use bin::Bin;
 use bincode;
 use env;
 use primitives::{U256, U160, Mutation, Change, Block, BlockHeader, Txn};
@@ -111,11 +112,11 @@ impl Database {
 
     /// Retrieve raw data from the database. Use this for non-storable types (mostly network stuff).
     #[inline]
-    pub fn get_raw_data(&self, key: &[u8], postfix: &'static [u8]) -> Result<Vec<u8>, Error> {
+    pub fn get_raw_data(&self, key: &[u8], postfix: &'static [u8]) -> Result<Bin, Error> {
         Self::get_raw_data_static(&self.db, key, postfix)
     }
 
-    fn get_raw_data_static(db: &DB, key: &[u8], postfix: &'static [u8]) -> Result<Vec<u8>, Error> {
+    fn get_raw_data_static(db: &DB, key: &[u8], postfix: &'static [u8]) -> Result<Bin, Error> {
         let key = Self::with_postfix(key, postfix);
 
         db.get(&key)?
@@ -236,7 +237,7 @@ impl Database {
 
     /// Get the public key of a validator given their ID.
     /// TODO: Handle shard-based reputations
-    pub fn get_validator_key(&self, id: &U160) -> Result<Vec<u8>, Error> {
+    pub fn get_validator_key(&self, id: &U160) -> Result<Bin, Error> {
         let key = Self::with_prefix(VALIDATOR_PREFIX, &id.to_vec());
         self.get_raw_data(&key, NETWORK_POSTFIX)
     }
@@ -304,6 +305,20 @@ impl Database {
     pub fn get_blocks_by_height_key(height: u64) -> Vec<u8> {
         let key: Vec<u8> = bincode::serialize(&height, bincode::Bounded(8)).unwrap();
         Self::with_prefix(BLOCKS_BY_HEIGHT_PREFIX, &key)
+    }
+
+    /// Get a list of the last `count` block headers. If `count` is one, then it will return only
+    /// the most recent block.
+    pub fn get_latest_blocks(&self, count: usize) -> Result<Vec<BlockHeader>, Error> {
+        let mut iter = DownIter(&self, self.head.block).take(count);
+        let mut headers = Vec::new();
+
+        while let Some(r) = iter.next() {
+            let (_, h) = r?;
+            headers.push(h);
+        }
+        
+        Ok(headers)
     }
 
     /// Get blocks before the `target` hash until it collides with the main chain. If the `start`
@@ -523,7 +538,7 @@ impl Database {
                 
                 contra.changes.push(Change::SetValue {
                     key: key.clone(),
-                    value: self.db.get(&db_key)?.map(|v| v.to_vec()), // Option<Vec<u8>>
+                    value: self.db.get(&db_key)?.map(|v| v.to_vec()), // Option<Bin>
                     supp: None
                 });
 

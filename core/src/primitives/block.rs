@@ -1,14 +1,17 @@
+use bin::{Bin, JBin};
 use bincode;
 use hash::{hash_obj, merge_hashes};
-use primitives::{U256, U256_ZERO};
+use openssl::pkey::PKey;
+use primitives::{U256, U160, JU160, JU256, U256_ZERO};
+use range::Range;
+use signer::{sign_bytes, verify_bytes};
+use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::ops::{Deref, DerefMut};
-use std::cmp::Ordering;
 use time::Time;
-use range::Range;
 
 /// The main infromation about a block. This noteably excludes the list of transactions.
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockHeader {
     /// The version used to make the block, allows for backwards compatibility
     pub version: u16,
@@ -20,6 +23,12 @@ pub struct BlockHeader {
     pub prev: U256,
     /// Hash identifer of the txn list
     pub merkle_root: U256,
+    /// Binary blob of data which can be used to save things such as difficulty
+    pub blob: Bin,
+    /// The person who created the block and signed it
+    pub creator: U160,
+    /// Signature of the block creator to verify integrity of the contained data
+    pub signature: Bin
 }
 
 impl PartialEq for BlockHeader {
@@ -29,8 +38,43 @@ impl PartialEq for BlockHeader {
 } impl Eq for BlockHeader {}
 
 impl BlockHeader {
+    /// Calculate the hash of this block by hashing all data in the header.
     pub fn calculate_hash(&self) -> U256 {
         hash_obj(self)
+    }
+
+    /// Sign the data within the block header except the signature itself.
+    pub fn sign(self, key: &PKey) -> BlockHeader {
+        let bytes = self.get_signing_bytes();
+        BlockHeader {
+            version: self.version,
+            timestamp: self.timestamp,
+            shard: self.shard,
+            prev: self.prev,
+            merkle_root: self.merkle_root,
+            blob: self.blob,
+            creator: self.creator,
+            signature: sign_bytes(&bytes, key).into()
+        }
+    }
+
+    /// Verify the signature, requires the public key which signed it to be provided.
+    pub fn verify_signature(&self, key: &PKey) -> bool {
+        let bytes = self.get_signing_bytes();
+        verify_bytes(&bytes, &self.signature, key)
+    }
+
+    /// Get the bytes which are signed or verified for this object.
+    fn get_signing_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend(bincode::serialize(&self.version, bincode::Bounded(2)).unwrap());
+        bytes.extend(bincode::serialize(&self.timestamp, bincode::Bounded(8)).unwrap());
+        bytes.extend(self.shard.to_vec());
+        bytes.extend(self.prev.to_vec());
+        bytes.extend(self.merkle_root.to_vec());
+        bytes.extend_from_slice(&self.blob);
+        bytes.extend(self.creator.to_vec());
+        bytes
     }
 }
 
@@ -125,6 +169,74 @@ impl Block {
             hashes[0]
         } else {
             hash_obj(&U256_ZERO)
+        }
+    }
+}
+
+
+
+#[derive(Serialize, Deserialize)]
+pub struct JBlockHeader {
+    version: u16,
+    timestamp: Time,
+    shard: JU256,
+    prev: JU256,
+    merkle_root: JU256,
+    blob: JBin,
+    creator: JU160,
+    signature: JBin
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct JBlock {
+    header: BlockHeader,
+    txns: BTreeSet<JU256>
+}
+
+impl From<BlockHeader> for JBlockHeader {
+    fn from(h: BlockHeader) -> JBlockHeader {
+        JBlockHeader {
+            version: h.version,
+            timestamp: h.timestamp,
+            shard: h.shard.into(),
+            prev: h.prev.into(),
+            merkle_root: h.merkle_root.into(),
+            blob: h.blob.into(),
+            creator: h.creator.into(),
+            signature: h.signature.into()
+        }
+    }
+}
+
+impl Into<BlockHeader> for JBlockHeader {
+    fn into(self) -> BlockHeader {
+        BlockHeader {
+            version: self.version,
+            timestamp: self.timestamp,
+            shard: self.shard.into(),
+            prev: self.prev.into(),
+            merkle_root: self.merkle_root.into(),
+            blob: self.blob.into(),
+            creator: self.creator.into(),
+            signature: self.signature.into()
+        }
+    }
+}
+
+impl From<Block> for JBlock {
+    fn from(h: Block) -> JBlock {
+        JBlock {
+            header: h.header,
+            txns: h.txns.into_iter().map(|h| h.into()).collect()
+        }
+    }
+}
+
+impl Into<Block> for JBlock {
+    fn into(self) -> Block {
+        Block {
+            header: self.header,
+            txns: self.txns.into_iter().map(|h| h.into()).collect()
         }
     }
 }

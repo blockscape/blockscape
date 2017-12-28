@@ -3,12 +3,13 @@ use openssl;
 use openssl::{sign, hash};
 use openssl::pkey::PKey;
 use serde::Serialize;
+use bin::Bin;
 
 /// The size of any new RSA Keys; other sizes should still be supported.
 pub const RSA_KEY_SIZE: usize = 2048;
 
 /// Sign some bytes with a private key.
-pub fn sign_bytes(bytes: &[u8], private_key: &PKey) -> Vec<u8> {
+pub fn sign_bytes(bytes: &[u8], private_key: &PKey) -> Bin {
     let mut signer = sign::Signer::new(hash::MessageDigest::sha256(), &private_key).unwrap();
     signer.update(bytes).unwrap();
     signer.sign_to_vec().unwrap()
@@ -22,14 +23,14 @@ pub fn verify_bytes(bytes: &[u8], signature: &[u8], public_key: &PKey) -> bool {
 }
 
 /// Sign an object with a private key.
-pub fn sign_obj<S: Serialize>(obj: &S, private_key: &PKey) -> Vec<u8> {
-    let encoded: Vec<u8> = bincode::serialize(&obj, bincode::Infinite).unwrap();
+pub fn sign_obj<S: Serialize>(obj: &S, private_key: &PKey) -> Bin {
+    let encoded: Bin = bincode::serialize(&obj, bincode::Infinite).unwrap();
     sign_bytes(&encoded, private_key)
 }
 
 /// Verify the object has not been tampered with given the signature and public key.
 pub fn verify_obj<S: Serialize>(obj: &S, signature: &[u8], public_key: &PKey) -> bool {
-    let encoded: Vec<u8> = bincode::serialize(&obj, bincode::Infinite).unwrap();
+    let encoded: Bin = bincode::serialize(&obj, bincode::Infinite).unwrap();
     verify_bytes(&encoded, signature, public_key)
 }
 

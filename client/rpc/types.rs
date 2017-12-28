@@ -1,12 +1,13 @@
 use std::net::SocketAddr;
 use std::time::Instant;
+use std::ops::Range;
 
 use jsonrpc_core;
 use jsonrpc_core::futures::Future;
 use jsonrpc_core::error::Error;
 use jsonrpc_core::Params;
-
-use serde_json::Value;
+use serde_json::{Map, Value, from_value};
+use serde::de::DeserializeOwned;
 
 pub type RpcResult = Result<jsonrpc_core::Value, jsonrpc_core::Error>;
 
@@ -54,20 +55,65 @@ impl jsonrpc_core::Middleware<SocketMetadata> for LogMiddleware {
     }
 }
 
-pub fn parse_args_simple(p: Params) -> Result<Vec<String>, jsonrpc_core::Error> {
-	match p.parse() {
-		Ok(Value::Array(vec)) => {
-
-			let pv: Vec<Option<String>> = vec.into_iter().map(|v| v.as_str().map(|s| s.into())).collect();
-
-			for v in &pv {
-				if v.is_none() {
-					return Err(Error::invalid_params("All parameters should be simple strings"));
-				}
-			}
-
-			Ok(pv.into_iter().map(|v| v.unwrap()).collect())
-		}
-		_ => Err(Error::invalid_params("Could not parse or args missing"))
+pub fn expect_array(p: Params, size: Range<usize>) -> Result<Vec<Value>, Error> {
+	match p {
+		Params::Array(a) => {
+			let len = a.len();
+			if (len >= size.start) && (len < size.end) { Ok(a) }
+			else { Err(Error::invalid_params("Incorrect number of arguments.")) }
+		},
+		_ => Err(Error::invalid_params("Expected array."))
 	}
+}
+
+pub fn expect_map(p: Params) -> Result<Map<String, Value>, Error> {
+	match p {
+		Params::Map(m) => Ok(m),
+		_ => Err(Error::invalid_params("Expected map.")),
+	}
+}
+
+pub fn parse_args_simple<T: DeserializeOwned>(p: Params, size: Range<usize>) -> Result<Vec<T>, Error> {
+	let vals = expect_array(p, size)?;
+	let mut res = Vec::with_capacity(vals.len());
+
+	for val in vals.into_iter() {
+		res.push(
+			from_value::<T>(val)
+			.map_err(|e| Error::invalid_params(format!("{:?}", e)))?
+		);
+	} Ok(res)
+}
+
+
+pub fn expect_one_arg<T: DeserializeOwned>(p: Params) -> Result<T, Error> {
+	let mut array = expect_array(p, (1..2))?;
+	from_value(array.pop().unwrap())
+		.map_err( |e| Error::invalid_params(format!("{:?}", e)) )
+}
+
+pub fn expect_two_args<A, B>(p: Params) -> Result<(A, B), Error>
+	where A: DeserializeOwned,
+		  B: DeserializeOwned
+{
+	let mut array = expect_array(p, (2..3))?;
+	let b = from_value(array.pop().unwrap())
+		.map_err( |e| Error::invalid_params(format!("{:?}", e)) )?;
+	let a = from_value(array.pop().unwrap())
+		.map_err( |e| Error::invalid_params(format!("{:?}", e)) )?;
+
+	Ok((a, b))
+}
+
+pub fn read_value<T: DeserializeOwned>(m: &mut Map<String, Value>, key: &'static str) -> Result<T, Error> {	
+	let v = m.remove(key).ok_or(Error::invalid_params(format!("Expected field '{}'.", key)))?;
+	from_value::<T>(v).map_err( |e| Error::invalid_params(format!("{:?}", e)) )
+}
+
+pub fn read_opt_value<T: DeserializeOwned>(m: &mut Map<String, Value>, key: &'static str) -> Result<Option<T>, Error> {	
+	if let Some(v) = m.remove(key) {
+		from_value::<T>(v)
+			.map(|v| Some(v))
+			.map_err( |e| Error::invalid_params(format!("{:?}", e)) )
+	} else { Ok(None) }
 }
