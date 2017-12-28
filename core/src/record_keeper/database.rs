@@ -307,6 +307,20 @@ impl Database {
         Self::with_prefix(BLOCKS_BY_HEIGHT_PREFIX, &key)
     }
 
+    /// Get a list of the last `count` block headers. If `count` is one, then it will return only
+    /// the most recent block.
+    pub fn get_latest_blocks(&self, count: usize) -> Result<Vec<BlockHeader>, Error> {
+        let mut iter = DownIter(&self, self.head.block).take(count);
+        let mut headers = Vec::new();
+
+        while let Some(r) = iter.next() {
+            let (_, h) = r?;
+            headers.push(h);
+        }
+        
+        Ok(headers)
+    }
+
     /// Get blocks before the `target` hash until it collides with the main chain. If the `start`
     /// hash lies between the target and the main chain, it will return the blocks between them,
     /// otherwise it will return the blocks from the main chain until target in that order and it

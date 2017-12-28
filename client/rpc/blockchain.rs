@@ -6,7 +6,7 @@ use jsonrpc_core::error::Error;
 use serde::Serialize;
 use std::result::Result;
 
-use blockscape_core::primitives::{U160};
+use blockscape_core::primitives::*;
 use blockscape_core::record_keeper::RecordKeeper;
 use blockscape_core::record_keeper::Error as RKErr;
 
@@ -29,8 +29,9 @@ impl BlockchainRPC {
         d.add_method_with_meta("get_current_block", Self::get_current_block);
         d.add_method_with_meta("get_block_height", Self::get_block_height);
         d.add_method_with_meta("get_blocks_of_height", Self::get_blocks_of_height);
-        d.add_method_with_meta("get_blocks_before", Self::get_blocks_before);
-        d.add_method_with_meta("get_blocks_after", Self::get_blocks_after);
+        d.add_method_with_meta("get_latest_blocks", Self::get_latest_blocks);
+        // d.add_method_with_meta("get_blocks_before", Self::get_blocks_before);
+        // d.add_method_with_meta("get_blocks_after", Self::get_blocks_after);
         d.add_method_with_meta("get_plot_events", Self::get_plot_events);
         d.add_method_with_meta("get_block_header", Self::get_block_header);
         d.add_method_with_meta("get_block", Self::get_block);
@@ -86,20 +87,31 @@ impl BlockchainRPC {
         to_rpc_res(self.rk.get_blocks_of_height(height))
     }
 
-    fn get_blocks_before(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
-        let mut params = expect_map(params)?;
-        let last_known = read_value(&mut params, "last_known")?;
-        let target = read_value(&mut params, "target")?;
-        let limit = read_opt_value(&mut params, "limit")?.unwrap_or(1000);
-        to_rpc_res(self.rk.get_blocks_before(&last_known, &target, limit))
+    fn get_latest_blocks(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
+        let count = expect_one_arg(params)?;
+        if count > 100 { Err(Error::invalid_params("Count too large.")) }
+        else {
+            to_rpc_res(
+                self.rk.get_latest_blocks(count)
+                .map(|v| v.into_iter().map(Into::into).collect::<Vec<JBlockHeader>>())
+            )
+        }
     }
 
-    fn get_blocks_after(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
-        let mut params = expect_map(params)?;
-        let start = read_value(&mut params, "start")?;
-        let limit = read_opt_value(&mut params, "limit")?.unwrap_or(1000);
-        to_rpc_res(self.rk.get_blocks_after(&start, limit))
-    }
+    // fn get_blocks_before(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
+    //     let mut params = expect_map(params)?;
+    //     let last_known = read_value(&mut params, "last_known")?;
+    //     let target = read_value(&mut params, "target")?;
+    //     let limit = read_opt_value(&mut params, "limit")?.unwrap_or(1000);
+    //     to_rpc_res(self.rk.get_blocks_before(&last_known, &target, limit))
+    // }
+
+    // fn get_blocks_after(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
+    //     let mut params = expect_map(params)?;
+    //     let start = read_value(&mut params, "start")?;
+    //     let limit = read_opt_value(&mut params, "limit")?.unwrap_or(1000);
+    //     to_rpc_res(self.rk.get_blocks_after(&start, limit))
+    // }
 
     fn get_plot_events(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
         let (plot_id, after_tick) = expect_two_args(params)?;
@@ -122,9 +134,17 @@ impl BlockchainRPC {
     }
 }
 
+#[inline]
 fn to_rpc_res<T: Serialize>(r: Result<T, RKErr>) -> RpcResult {
-    r.map(|v| to_value::<T>(v).unwrap())
+    r.map(|v| to_value(v).unwrap())
      .map_err(map_rk_err)
+}
+
+#[inline]
+fn into_rpc_res<T, J>(r: Result<T, RKErr>) -> RpcResult
+    where J: From<T> + Serialize
+{
+    to_rpc_res::<J>( r.map(|v| v.into()) )
 }
 
 fn map_rk_err(e: RKErr) -> Error {
