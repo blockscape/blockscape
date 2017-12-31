@@ -12,3 +12,13 @@ macro_rules! init_array(
         }
     )
 );
+
+/// Like `try!`, but with futures!
+macro_rules! tryf(
+    ($expr:expr) => {
+        match expr {
+            Ok(k) => k,
+            Err(e) => return Box::new(future::err(e))
+        }
+    }
+);
