@@ -124,14 +124,28 @@ impl RecordKeeper {
         Ok(last_block.unwrap())
     }
 
-    /// Add a new block to the chain state after verifying it is valid. Then check pending
-    /// transaction to see which ones are no longer pending, and to see which ones have been
-    /// invalidated. Also move the network state to be at the new end of the chain.
+    /// Add a new block and its associated transactions to the chain state after verifying
+    /// it is valid. Also move the network state to be at the new end of the chain.
     /// Returns true if the block was added, false if it was already in the system.
     pub fn add_block(&self, block: &Block) -> Result<bool, Error> {
+        let mut pending_txns = self.pending_txns.write().unwrap();
         let mut db = self.db.write().unwrap();
 
         self.is_valid_block_given_lock(&*db, block)?;
+
+        // we know it is a valid block, so go ahead and add it's transactions, and then it.
+        for txn_hash in block.txns.iter() {
+            if let Some(txn) = pending_txns.remove(&txn_hash) { // we will need to add it 
+                db.add_txn(&txn)?;
+            } else {
+                // should already be in the DB then because otherwise is_valid_block should give an
+                // error, so use an assert check
+                assert!(db.get_txn(&txn_hash).is_ok())
+            }
+        }
+        // add txns first, so that we make sure all blocks in the system have all their information,
+        // plus, any txn which is somehow added without its block will probably be added by another
+        // anyway so it is the lesser of the evils
 
         // record the block
         if db.add_block(block)? {
@@ -144,20 +158,38 @@ impl RecordKeeper {
 
     /// Add a new transaction to the pool of pending transactions after validating it. Returns true
     /// if it was added successfully to pending transactions, and returns false if it is already in
-    /// the list of pending transactions.
+    /// the list of pending transactions or accepted into the database..
     pub fn add_pending_txn(&self, txn: &Txn) -> Result<bool, Error> {
         let hash = txn.calculate_hash();
 
         let mut txns = self.pending_txns.write().unwrap();
         let db = self.db.read().unwrap();
         
+        // check if it is already pending
         if txns.contains_key(&hash) {
             return Ok(false);
+        }
+
+        // check if it is already in the database
+        match db.get_txn(&hash) {
+            Ok(_) => return Ok(false),
+            Err(Error::NotFound(..)) => {},
+            Err(e) => return Err(e)
         }
 
         self.is_valid_txn_given_lock(&db, txn)?;
         txns.insert(hash, txn.clone());
         Ok(true)
+    }
+
+    /// Import a package of blocks and transactions.
+    pub fn import_pkg(&self, pkg: BlockPackage) -> Result<(), Error> {
+        let (blocks, txns) = pkg.unpack();
+        for txn in txns {
+            self.add_pending_txn(&txn.1)?;
+        } for block in blocks {
+            self.add_block(&block)?;
+        } Ok(())
     }
 
     /// Find a validator's public key given the hash. If they are not found, then they are not a
@@ -329,9 +361,12 @@ impl RecordKeeper {
 
     /// Get a transaction from the database.
     pub fn get_txn(&self, hash: &U256) -> Result<Txn, Error> {
-        //let pending = self.pending_txns.read().unwrap();
+        let pending = self.pending_txns.read().unwrap();
         let db = self.db.read().unwrap();
-        self.get_txn_given_lock(&*db, hash)
+        match pending.get(&hash) {
+            Some(txn) => Ok(txn.clone()),
+            None => self.get_txn_given_lock(&*db, hash)
+        }
     }
 
 

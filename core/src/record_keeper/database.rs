@@ -154,6 +154,12 @@ impl Database {
         self.put_raw_data(&obj.key(), &value, postfix)
     }
 
+    /// Add a new transaction to the database.
+    #[inline]
+    pub fn add_txn(&mut self, txn: &Txn) -> Result<(), Error> {
+        self.put(txn, BLOCKCHAIN_POSTFIX)
+    }
+
     /// Retrieve a block header form the database given a hash.
     pub fn get_block_header(&self, hash: &U256) -> Result<BlockHeader, Error> {
         let id = hash.to_vec();
