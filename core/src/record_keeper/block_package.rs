@@ -1,6 +1,7 @@
 use bincode;
 use compress::{compress, decompress};
 use primitives::{Block, BlockHeader, Txn, U256};
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::mem::size_of;
 use super::database::Database;
@@ -24,7 +25,7 @@ pub struct BlockPackage {
 impl<'a> From<&'a [u8]> for BlockPackage {
     #[inline]
     fn from(data: &'a [u8]) -> BlockPackage {
-        BlockPackage::unpack(data)
+        BlockPackage::unzip(data)
     }
 }
 
@@ -119,14 +120,33 @@ impl BlockPackage {
 
     /// Convert the `BlockPackage` into a compressed binary representation which can be easily
     /// transferred or archived.
-    pub fn pack(&self) -> Vec<u8> {
+    pub fn zip(&self) -> Vec<u8> {
         let raw = bincode::serialize(self, bincode::Infinite).unwrap();
         compress(&raw).unwrap()
     }
 
     /// Unpack a compressed block binary representation of the `BlockPackage`.
-    pub fn unpack(package: &[u8]) -> BlockPackage {
+    pub fn unzip(package: &[u8]) -> BlockPackage {
         let raw = decompress(package).unwrap();
         bincode::deserialize(&raw).unwrap()
+    }
+
+    /// Unpacks the information within into a more useful form.
+    pub fn unpack(self) -> (Vec<Block>, HashMap<U256, Txn>) {
+        let txns = self.txns.into_iter()
+            .map(|txn| (txn.calculate_hash(), txn))
+            .collect::<Vec<(U256, Txn)>>();
+    
+        let blocks = self.blocks.into_iter()
+            .map(|(header, txn_list)| {
+                let txn_list = txn_list.into_iter()
+                    .filter_map(|txn_id| txns.get(txn_id as usize))
+                    .map(|t| t.0 )
+                    .collect::<BTreeSet<U256>>();
+                
+                Block{header, txns: txn_list}
+            }).collect::<Vec<Block>>();
+        
+        (blocks, txns.into_iter().collect())
     }
 }

@@ -78,6 +78,7 @@ impl BlockHeader {
     }
 }
 
+
 /// The core unit of the blockchain.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Block {
