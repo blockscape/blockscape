@@ -3,21 +3,24 @@ use std::sync::Arc;
 use jsonrpc_core::*;
 
 use blockscape_core::network::client::*;
-
 use blockscape_core::primitives::u256::*;
 
 use rpc::types::*;
 
 use jsonrpc_macros::IoDelegate;
 
-use rpc::types::RpcResult;
+use serde_json;
+
+use futures::prelude::*;
+use futures::sync::mpsc::UnboundedSender;
+use futures::sync::oneshot;
 
 pub struct NetworkRPC {
-    net_client: Arc<Client>
+    net_client: UnboundedSender<ClientMsg>
 }
 
 impl NetworkRPC {
-    pub fn add(client: Arc<Client>, io: &mut MetaIoHandler<SocketMetadata, LogMiddleware>) -> Arc<NetworkRPC> {
+    pub fn add(client: UnboundedSender<ClientMsg>, io: &mut MetaIoHandler<SocketMetadata, LogMiddleware>) -> Arc<NetworkRPC> {
         let rpc = Arc::new(NetworkRPC {
             net_client: client
         });
@@ -34,12 +37,28 @@ impl NetworkRPC {
         rpc
     }
 
-    fn get_net_stats(&self, _params: Params, _meta: SocketMetadata) -> RpcResult {
-        Ok(serde_json::to_value(self.net_client.get_stats()).unwrap())
+    fn get_net_stats(&self, _params: Params, _meta: SocketMetadata) -> RpcFuture {
+        let (tx, rx) = oneshot::channel();
+        tryf!(self.net_client.unbounded_send(ClientMsg::GetStatistics(tx)).map_err(|_| Error::internal_error()));
+
+        Box::new(rx
+            .map_err(|_| Error::internal_error())
+            .and_then(|n| serde_json::to_value(n)
+                .map_err(|_| Error::internal_error())))
+
+        //Ok(serde_json::to_value(self.net_client.get_stats()).unwrap())
     }
 
-    fn get_peer_info(&self, _params: Params, _meta: SocketMetadata) -> RpcResult {
-        Ok(serde_json::to_value(self.net_client.get_peer_info()).unwrap())
+    fn get_peer_info(&self, _params: Params, _meta: SocketMetadata) -> RpcFuture {
+        let (tx, rx) = oneshot::channel();
+        tryf!(self.net_client.unbounded_send(ClientMsg::GetPeerInfo(tx)).map_err(|_| Error::internal_error()));
+
+        Box::new(rx
+            .map_err(|_| Error::internal_error())
+            .and_then(|n| serde_json::to_value(n)
+                .map_err(|_| Error::internal_error())))
+
+        //Ok(serde_json::to_value(self.net_client.get_peer_info()).unwrap())
     }
 
     fn attach_network(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
@@ -58,17 +77,19 @@ impl NetworkRPC {
                     return Err(Error::invalid_params(format!("Invalid network mode")))
                 }
             };
-            self.net_client.attach_network(network_id, mode)
-                .map(|_| Value::Bool(true))
-                .map_err(|_| Error::invalid_request())
+
+            //let (tx, rx) = oneshot::channel();
+            try!(self.net_client.unbounded_send(ClientMsg::AttachNetwork(network_id, mode)).map_err(|_| Error::internal_error()));
+
+            // TODO: Better handling
+            Ok(Value::Bool(true))
         }
         else if op == "remove" {
-            if self.net_client.detach_network(&network_id) {
-                Ok(Value::Bool(true))
-            }
-            else {
-                Err(Error::invalid_request())
-            }
+            //let (tx, rx) = oneshot::channel();
+            try!(self.net_client.unbounded_send(ClientMsg::DetachNetwork(network_id)).map_err(|_| Error::internal_error()));
+
+            // TODO: Better handling
+            Ok(Value::Bool(true))
         }
         else {
             Err(Error::invalid_params(format!("Invalid operation: {}", op)))

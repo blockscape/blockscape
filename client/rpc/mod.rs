@@ -1,5 +1,6 @@
 pub mod client;
 
+#[macro_use]
 mod types;
 
 mod blockchain;
@@ -11,6 +12,7 @@ use jsonrpc_core::*;
 use jsonrpc_http_server::{ServerBuilder, Server};
 use rpc::types::LogMiddleware;
 use std::net::SocketAddr;
+use std::rc::Rc;
 
 use rpc::blockchain::BlockchainRPC;
 use rpc::control::ControlRPC;
@@ -22,16 +24,16 @@ pub struct RPC {
 
 impl RPC {
 
-    pub fn run(bind_addr: SocketAddr, ctx: Context) -> RPC {
+    pub fn run(bind_addr: SocketAddr, ctx: Rc<Context>) -> RPC {
         let mut io = MetaIoHandler::with_middleware(LogMiddleware);
 
         ControlRPC::add(&mut io);
 
-        if let Some(net_client) = ctx.network {
+        if let Some(ref net_client) = ctx.network {
             NetworkRPC::add(net_client.clone(), &mut io);
         }
 
-        BlockchainRPC::add(ctx.rk, &mut io);
+        BlockchainRPC::add(ctx.rk.clone(), &mut io);
 
         RPC {
             server: ServerBuilder::new(io).start_http(&bind_addr).expect("Could not start RPC Interface")

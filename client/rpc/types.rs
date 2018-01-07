@@ -6,10 +6,12 @@ use jsonrpc_core;
 use jsonrpc_core::futures::Future;
 use jsonrpc_core::error::Error;
 use jsonrpc_core::Params;
-use serde_json::{Map, Value, from_value};
+use serde_json::{Value, from_value};
 use serde::de::DeserializeOwned;
 
 pub type RpcResult = Result<jsonrpc_core::Value, jsonrpc_core::Error>;
+pub type RpcFuture = Box<Future<Item=jsonrpc_core::Value, Error=jsonrpc_core::Error> + Send>;
+
 
 #[derive(Clone)]
 pub struct SocketMetadata {
@@ -66,12 +68,12 @@ pub fn expect_array(p: Params, size: Range<usize>) -> Result<Vec<Value>, Error> 
 	}
 }
 
-pub fn expect_map(p: Params) -> Result<Map<String, Value>, Error> {
+/*pub fn expect_map(p: Params) -> Result<Map<String, Value>, Error> {
 	match p {
 		Params::Map(m) => Ok(m),
 		_ => Err(Error::invalid_params("Expected map.")),
 	}
-}
+}*/
 
 pub fn parse_args_simple<T: DeserializeOwned>(p: Params, size: Range<usize>) -> Result<Vec<T>, Error> {
 	let vals = expect_array(p, size)?;
@@ -105,7 +107,7 @@ pub fn expect_two_args<A, B>(p: Params) -> Result<(A, B), Error>
 	Ok((a, b))
 }
 
-pub fn read_value<T: DeserializeOwned>(m: &mut Map<String, Value>, key: &'static str) -> Result<T, Error> {	
+/*pub fn read_value<T: DeserializeOwned>(m: &mut Map<String, Value>, key: &'static str) -> Result<T, Error> {	
 	let v = m.remove(key).ok_or(Error::invalid_params(format!("Expected field '{}'.", key)))?;
 	from_value::<T>(v).map_err( |e| Error::invalid_params(format!("{:?}", e)) )
 }
@@ -116,4 +118,15 @@ pub fn read_opt_value<T: DeserializeOwned>(m: &mut Map<String, Value>, key: &'st
 			.map(|v| Some(v))
 			.map_err( |e| Error::invalid_params(format!("{:?}", e)) )
 	} else { Ok(None) }
-}
+}*/
+
+/// Like `try!`, but with futures!
+macro_rules! tryf(
+    ($e:expr) => {
+		use futures::future;
+        match $e {
+            Ok(k) => k,
+            Err(e) => return Box::new(future::err(e))
+        }
+    }
+);

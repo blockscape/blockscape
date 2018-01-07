@@ -10,6 +10,6 @@ EXPOSE 35653
 ENV RUST_LOG=info,blockscape=debug,blockscape_core=debug,blockscape::rpc=info \
     RUST_BACKTRACE=1
 
-STOPSIGNAL SIGTERM
+STOPSIGNAL SIGINT
 
 CMD [ "/blockscape", "--help" ]

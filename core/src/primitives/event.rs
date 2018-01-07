@@ -1,48 +1,32 @@
 use bin::*;
 use std::fmt::Debug;
-use std::ops::{Deref, DerefMut};
-use std::sync::{Arc, Weak, Mutex};
+use futures::prelude::*;
+use futures::sync::mpsc::Sender;
+use futures::future::join_all;
+use futures::future::*;
 
 /// An `Event` is an implementation defined type which will be used when processing the game to
 /// determine how the game computation should be impacted. The final implementation should probably
 /// be an enum, which would easily allow for multiple different kinds of events. Events may not
 /// store references to external data as they may be brought into and out of existence at any time.
-pub trait Event: Debug + Send + Sync + 'static {}
+pub trait Event: Debug + Send + Sync + Clone + 'static {}
 
 impl Event for Bin {}
 pub type RawEvent = Bin;
 pub type JRawEvent = JBin;
 
-
-/// `EventListener`s are designed to be notified of new events as they happen so the implementing
-/// object does not have to regularly check if things have changed.
-pub trait EventListener<E: Event>: Send + Sync {
-    /// Notify will be called when a new event comes in.
-    fn notify(&self, tick: u64, event: &E);
-}
-
-impl<E, L> EventListener<E> for Mutex<L>
-where
-    E: Event,
-    L: EventListener<E> + ?Sized
-{
-    fn notify(&self, tick: u64, event: &E) {
-        self.lock().unwrap().notify(tick, event);
-    }
-}
-
 /// A set of listeners who are ready to receive events. This is designed to be a simple way to
 /// manage a list and to notify all of them at once of something which has happened.
-pub struct ListenerPool<E: Event>(Vec<Weak<EventListener<E>>>);
+pub struct ListenerPool<E: Event>(Vec<Sender<E>>);
 
-impl<E: Event> Deref for ListenerPool<E> {
-    type Target = Vec<Weak<EventListener<E>>>;
+/*impl<E: Event> Deref for ListenerPool<E> {
+    type Target = Vec<Sender<E>>;
     fn deref(&self) -> &Self::Target { &self.0 }
 }
 
 impl<E: Event> DerefMut for ListenerPool<E> {
     fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
-}
+}*/
 
 impl<E: Event> ListenerPool<E> {
     /// Create a new, empty, listener pool.
@@ -51,24 +35,22 @@ impl<E: Event> ListenerPool<E> {
     }
 
     /// Register a new listener with the pool.
-    pub fn register(&mut self, listener: &Arc<EventListener<E>>) {
-        self.clean();
-        self.push(Arc::downgrade(listener));
+    pub fn register(&mut self, listener: Sender<E>) {
+        self.0.push(listener);
     }
 
-    /// Remove any listeners for which our references are no longer relevant.
-    pub fn clean(&mut self) {
-        self.retain(|l| l.upgrade().is_some());
-    }
+    /// Notify all listeners, and return a future that resolves when the messages have all been sent, including the number of listeners we successfully sent messages to.
+    pub fn notify(&mut self, event: &E) -> u32 {
 
-    /// Notify all listeners, and return the number of listeners we successfully sent messages to.
-    pub fn notify(&self, tick: u64, event: &E) -> u32 {
-        let mut count: u32 = 0;
-        for l in &self.0 {
-            if let Some(listener) = l.upgrade() {
-                count += 1;
-                listener.notify(tick, &event);
-            }
-        } count
+        let drn: Vec<Sender<E>> = self.0.drain(..).collect();
+
+        let f1 = join_all(drn.into_iter().map(
+            |l| l.send(event.clone()).map(|lm| Some(lm)).or_else(|_| Ok::<Option<Sender<E>>, ()>(None))
+        ));
+
+        Box::new(f1.and_then(|r| {
+            self.0.extend(r.into_iter().filter_map(|x| x));
+            ok(self.0.len() as u32)
+        })).wait().unwrap()
     }
 }
