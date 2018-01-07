@@ -1,49 +1,46 @@
-use std::sync::Arc;
-use std::sync::mpsc::Receiver;
-
-use std::time::Duration;
+use std::rc::Rc;
 
 use colored::*;
 
-use blockscape_core::network::client::Client;
-use blockscape_core::time::Time;
-
 use format::*;
 
-const PRINT_FREQUENCY: i64 = 30 * 1000; // print statistics every 30 seconds
+use context::Context;
 
-pub fn run(client: &Option<Arc<Client>>, rx: Receiver<()>) {
+use tokio_core::reactor::Handle;
 
-    let mut last_print = Time::current();
+use futures::prelude::*;
+use futures::sync::oneshot;
 
-    loop {
-        //thread::sleep(::std::time::Duration::from_millis(1000));
-        if rx.recv_timeout(Duration::from_millis(1000)).is_ok() {
-            return; // right now if any message is sent, it means quit
+use blockscape_core::network::client::*;
+
+pub fn do_report(context: &Rc<Context>, handler: &Handle) {
+
+    if let Some(ref c) = context.network {
+
+        let (tx, rx) = oneshot::channel();
+        if let Err(e) = c.unbounded_send(ClientMsg::GetStatistics(tx)) {
+            println!("ERROR: Could not collect network stats: {}", e);
+            return;
         }
 
-        let n = Time::current();
 
-        if last_print.diff(&n).millis() > PRINT_FREQUENCY {
-            
-            // print out stuff
-            // network stats
-            if let Some(ref c) = *client {
-                let net_stats = c.get_stats();
-                let config = c.get_config();
+        let f = rx.and_then(|net_stats| {
+            println!("{}\t{} nets\t{} peers\t{} in\t{} out", 
+                "NET:".bold(),
+                value_print(net_stats.attached_networks, 0, 3),
+                value_print(net_stats.connected_peers, 8 * net_stats.attached_networks as u32, 16 * net_stats.attached_networks as u32),
+                as_bytes(net_stats.rx).yellow(),
+                as_bytes(net_stats.tx).yellow()
+            );
 
-                println!("{}\t{} nets\t{}/{} peers\t{} in\t{} out", 
-                    "NET:".bold(),
-                    value_print(net_stats.attached_networks, 0, 3),
-                    value_print(net_stats.connected_peers, config.min_nodes as u32 * net_stats.attached_networks as u32, config.max_nodes as u32 * net_stats.attached_networks as u32),
-                    config.max_nodes.to_string(),
-                    as_bytes(net_stats.rx).yellow(),
-                    as_bytes(net_stats.tx).yellow()
-                );
-            }
+            Ok(())
+        }).or_else(|_| {
+            println!("ERROR: Could not collect network stats: cancelled");
 
-            last_print = n;
-        }
+            Err(())  
+        });
+
+        handler.spawn(f);
     }
 }
 

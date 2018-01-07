@@ -1,5 +1,3 @@
-extern crate blockscape_core;
-extern crate chan_signal;
 extern crate libc;
 extern crate openssl;
 extern crate serde;
@@ -8,6 +6,7 @@ extern crate serde_json;
 extern crate futures;
 extern crate hyper;
 extern crate tokio_core;
+extern crate tokio_signal;
 
 #[macro_use]
 extern crate serde_derive;
@@ -17,6 +16,8 @@ extern crate clap;
 extern crate pretty_env_logger;
 #[macro_use]
 extern crate log;
+
+extern crate blockscape_core;
 
 extern crate colored;
 
@@ -33,16 +34,21 @@ mod format;
 
 mod rpc;
 
-use chan_signal::Signal;
 use std::sync::Arc;
 use std::thread;
-use std::sync::mpsc::channel;
+use std::time::Duration;
+use std::rc::Rc;
+
+use futures::prelude::*;
+use futures::sync::mpsc::UnboundedSender;
+use futures::sync::oneshot::channel;
+
+use tokio_core::reactor::*;
 
 use blockscape_core::env;
-use blockscape_core::network::client::{Client, ShardMode};
+use blockscape_core::network::client::*;
 use blockscape_core::primitives::HasBlockHeader;
 use blockscape_core::record_keeper::RecordKeeper;
-use blockscape_core::work_queue::WorkQueue;
 
 use boot::*;
 
@@ -69,8 +75,6 @@ fn main() {
     // Ready to boot
     println!("Welcome to Blockscape v{}", env!("CARGO_PKG_VERSION"));
 
-    let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
-
     // Open database; populate basic subsystems with latest information
     if let Some(d) = cmdline.value_of("workdir") { 
         env::prepare_storage_dir(&String::from(d).into());
@@ -81,69 +85,64 @@ fn main() {
     }
 
     let rk = Arc::new(RecordKeeper::open(load_or_generate_key("user"), None, Some(rules::build_rules())).expect("Record Keeper was not able to initialize!"));
-    let wq = Arc::new(WorkQueue::new(rk.clone()));
 
-
-    let mut net_client: Option<Arc<Client>> = None;
+    let mut net_client: Option<UnboundedSender<ClientMsg>> = None;
 
     let mut threads: Vec<thread::JoinHandle<()>> = Vec::new();
+    let (qs, qr) = channel::<()>();
+
+    let quit = Box::new(qr).shared();
 
     if !cmdline.is_present("disable-net") {
         // start network
         let cc = make_network_config(&cmdline);
 
-        let c = Client::new(rk.clone(), wq, cc);
+        let (mut h, t) = Client::run(cc, rk.clone(), quit.clone()).expect("Could not start network");
 
         // TODO: Somewhere around here, we read a config or cmdline or something to figure out which net to work for
         // but start with the genesis
         let genesis_net = make_genesis().0.get_header().calculate_hash();
 
         // must be connected to at least one network in order to do anything, might as well be genesis for now.
-        c.attach_network(genesis_net, ShardMode::Primary).expect("Could not attach to a network!");
+        h = h.send(ClientMsg::AttachNetwork(genesis_net, ShardMode::Primary)).wait().expect("Could not attach to root network!");
 
-        net_client = Some(c);
-
-        // start networking threads and handlers
-        let mut ts = Client::run(net_client.clone().unwrap());
-
-        while let Some(t) = ts.pop() {
-            threads.push(t);
-        }
+        net_client = Some(h);
+        threads.push(t);
     }
 
-    let ctx = Context {
+    let ctx = Rc::new(Context {
         rk: rk.clone(),
         network: net_client.clone()
-    };
+    });
 
     // Open RPC interface
-    let rpc = make_rpc(&cmdline, ctx.clone());
+    let rpc = make_rpc(&cmdline, Rc::clone(&ctx));
 
-    // startup the reporter
-    let (tx, rx) = channel();
-    {
-        let nc = net_client.clone();
+    let mut core = Core::new().expect("Could not start main event loop");
 
-        threads.push(
-            thread::Builder::new().name(String::from("Reporter")).spawn(move || {
-                reporter::run(&nc, rx);
-            }).unwrap()
-        );
-    }
+    let handler = core.handle();
+
+    let context = Rc::clone(&ctx);
+    let h2 = core.handle();
+    let rpt_job = Interval::new(Duration::from_secs(30), &handler)
+        .unwrap()
+        .for_each(move |_| {
+            reporter::do_report(&context, &h2);
+            Ok(())
+        })
+        .map_err(|_| ());
+
+    core.handle().spawn(rpt_job);
 
     // wait for the kill signal
-    signal.recv().unwrap();
+    let qsignal = tokio_signal::ctrl_c(&handler).flatten_stream().take(1);
+
+    core.run(qsignal.into_future()).ok().unwrap();
 
     println!("Finishing work, please wait...");
 
     rpc.close();
-
-    // close the network
-    if let Some(client) = net_client {
-        client.close();
-    }
-
-    tx.send(()).expect("Thread was finished prematurely");
+    qs.send(()).expect("Could not send quit signal to handlers.");
 
     debug!("Waiting for threads...");
     

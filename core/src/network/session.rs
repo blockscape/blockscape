@@ -1,9 +1,7 @@
-
-use std::collections::VecDeque;
+use std::cell::*;
 use std::net::SocketAddr;
-use std::sync::{Arc,Mutex};
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering::Relaxed;
+use std::sync::Arc;
+use std::rc::Rc;
 
 use primitives::{Block, Txn, U256};
 use super::node::Node;
@@ -11,8 +9,10 @@ use time::Time;
 
 use signer::RSA_KEY_SIZE;
 
-use network::client::NetworkContext;
+use network::context::NetworkContext;
+use network::client::NetworkActions;
 
+use futures::prelude::*;
 
 pub const PROTOCOL_VERSION: u16 = 1;
 
@@ -28,6 +28,7 @@ pub const TIMEOUT_TOLERANCE: u64 = 3;
 /// The number of nodes which should be sent back on a list node request
 pub const NODE_RESPONSE_SIZE: usize = 8;
 
+pub struct SocketPacket(pub SocketAddr, pub RawPacket);
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RawPacket {
@@ -145,7 +146,6 @@ pub struct SessionInfo {
     network_id: U256,
     peer: Node,
     latency: Time,
-    pending_send: usize,
     established_since: Time
 }
 
@@ -153,23 +153,19 @@ pub struct SessionInfo {
 /// There may be only one session for each peer-network (AKA, a peer could have multiple sessions for separate network_id)
 pub struct Session {
 
-    /// Whether or not we have received Introduce packet from the other end yet. Cannot process any packets otherwise
-    introduced: bool,
+    context: Rc<NetworkContext>,
 
     /// Indicates if the session has completed
-    done: Option<ByeReason>,
+    done: Cell<Option<ByeReason>>,
 
     /// The shard of interest for this session
     network_id: U256,
 
     /// Information about the node on the other end. If this is unset, then the connection is not really fully initialized yet
-    remote_peer: Arc<Node>,
+    remote_peer: RefCell<Arc<Node>>,
 
     /// The port which we connect to on the other end. This starts as 255 for new connections
-    remote_port: u8,
-
-    /// Information about our own node
-    local_peer: Arc<Node>,
+    remote_port: Cell<u8>,
 
     /// Helper variable for router to manage multiple connections from a single client
     local_port: u8,
@@ -181,41 +177,35 @@ pub struct Session {
     established_since: Time,
 
     /// Average latency over the last n ping-pong sequences, round trip
-    latency: Time,
+    latency: Cell<Time>,
 
     /// Time at which the most recent ping packet was sent
-    last_ping_send: Option<Time>,
-
-    /// A queue of packets which should be sent to the client soon
-    send_queue: Mutex<VecDeque<Packet>>,
+    last_ping_send: Cell<Option<Time>>,
 
     /// The unique packet identifier to use for the next packet
-    current_seq: AtomicUsize,
+    current_seq: Cell<u32>,
 
     /// Used to help discern the number of failed replies. When this number exceeds a threshold,
     /// the connection is considered dropped
-    strikes: AtomicUsize,
+    strikes: Cell<u32>,
 }
 
 impl Session {
-    pub fn new(local_peer: Arc<Node>, local_port: u8, remote_peer: Arc<Node>, remote_addr: SocketAddr, network_id: U256, introduce: Option<&Packet>) -> Session {
-        let introduce_n = local_peer.as_ref().clone();
-        
-        let mut sess = Session {
+    pub fn new(context: Rc<NetworkContext>, local_port: u8, remote_peer: Arc<Node>, remote_addr: SocketAddr, network_id: U256, introduce: Option<&Packet>, actions: &mut NetworkActions) -> Session {
+
+        let sess = Session {
+            context: context,
             local_port: local_port,
-            introduced: false,
-            done: None,
-            remote_peer: remote_peer,
-            local_peer: local_peer,
+            done: Cell::new(None),
+            remote_peer: RefCell::new(remote_peer),
             remote_addr: remote_addr,
-            remote_port: 255,
+            remote_port: Cell::new(255),
             network_id: network_id,
             established_since: Time::current(),
-            latency:  Time::from_milliseconds(0),
-            last_ping_send: None,
-            send_queue: Mutex::new(VecDeque::new()),
-            current_seq: AtomicUsize::new(0),
-            strikes: AtomicUsize::new(0),
+            latency:  Cell::new(Time::from_milliseconds(0)),
+            last_ping_send: Cell::new(None),
+            current_seq: Cell::new(0),
+            strikes: Cell::new(0),
         };
 
         if let Some(p) = introduce {
@@ -223,47 +213,48 @@ impl Session {
         }
 
         // connection could have been acquitted while handling the introduce.
-        if sess.done.is_none() {
-            sess.send_queue.lock().unwrap().push_back(Packet {
-                seq: 0,
-                msg: Message::Introduce {
-                    node: introduce_n,
-                    port: local_port,
-                    network_id: network_id
-                }
-            });
+        if sess.done.get().is_none() {
+            actions.send_packets.push(SocketPacket(sess.remote_addr.clone(), RawPacket {
+                port: sess.remote_port.get(),
+                payload: Packet {
+                    seq: 0,
+                    msg: Message::Introduce {
+                        node: sess.context.my_node.clone(),
+                        port: local_port,
+                        network_id: network_id
+                    }
+            }}));
         }
 
         sess
     }
 
-    pub fn get_remote_node(&self) -> &Arc<Node> {
-        &self.remote_peer
+    pub fn get_remote_node(&self) -> Ref<Arc<Node>> {
+        // pulling an arc out of a cell basically requires two swaps
+        self.remote_peer.borrow()
     }
 
-    pub fn get_remote_addr(&self) -> &SocketAddr {
+    /*pub fn get_remote_addr(&self) -> &SocketAddr {
         &self.remote_addr
-    }
+    }*/
 
-    fn handle_introduce(&mut self, msg: &Message) {
+    fn handle_introduce(&self, msg: &Message) {
         if let &Message::Introduce { ref node, ref port, .. } = msg {
-            self.remote_peer = Arc::new(node.clone());
-            self.remote_port = *port;
+            *self.remote_peer.borrow_mut() = Arc::new(node.clone());
 
-            self.introduced = true;
-            self.strikes.store(0, Relaxed);
+            self.remote_port.set(*port);
 
-            //debug!("Remote peer key: {:?}, Local peer key: {:?}", self.remote_peer.key, self.local_peer.key);
+            self.strikes.set(0);
 
-            if self.remote_peer.key.len() != self.local_peer.key.len() {
-                debug!("Key size is wrong from client: {:?}, expected: {:?}, actual: {:?}", self.remote_peer.endpoint, self.remote_peer.key.len(), RSA_KEY_SIZE);
-                self.done = Some(ByeReason::ExitPermanent);
+            if self.remote_peer.borrow().key.len() != self.context.my_node.key.len() {
+                debug!("Key size is wrong from client: {:?}, expected: {:?}, actual: {:?}", node.endpoint, node.key.len(), RSA_KEY_SIZE);
+                self.done.set(Some(ByeReason::ExitPermanent));
             }
 
             // detect if we have connected to self
-            if self.remote_peer.key == self.local_peer.key {
-                debug!("Detected a connection to self, from remote: {:?}", self.remote_peer.endpoint);
-                self.done = Some(ByeReason::ExitPermanent);
+            if node.key == self.context.my_node.key {
+                debug!("Detected a connection to self, from remote: {:?}", self.remote_peer.borrow().endpoint);
+                self.done.set(Some(ByeReason::ExitPermanent));
             }
         }
         else {
@@ -272,13 +263,13 @@ impl Session {
     }
 
     /// Provide a packet which has been received for this session
-    pub fn recv(&mut self, packet: &Packet, context: &mut NetworkContext) {
+    pub fn recv(&self, packet: &Packet, actions: &mut NetworkActions) {
 
-        if self.done.is_some() {
+        if self.done.get().is_some() {
             return; // no need to do any additional processing
         }
 
-        if !self.introduced {
+        if !self.is_introduced() {
             // we cannot take this packet
             match packet.msg {
                 Message::Introduce { .. } => {
@@ -287,7 +278,7 @@ impl Session {
 
                 _ => {
                     // must receive introduce packet first
-                    self.done = Some(ByeReason::Exit);
+                    self.done.set(Some(ByeReason::Exit));
                     return;
                 }
             }
@@ -298,140 +289,183 @@ impl Session {
                 Message::Introduce { .. } => {
                     // cannot be reintroduced
                     // TODO: might not actually be abuse
-                    self.done = Some(ByeReason::Abuse);
+                    self.done.set(Some(ByeReason::Abuse));
                     return;
                 }
 
                 Message::Ping { ref time } => {
                     // Send back a pong
-                    self.send_queue.lock().unwrap().push_back(Packet {
-                        seq: packet.seq,
-                        msg: Message::Pong {
-                            time: time.clone()
-                        }
-                    });
+                    actions.send_packets.push(SocketPacket(self.remote_addr.clone(), RawPacket {
+                        port: self.remote_port.get(),
+                        payload: Packet {
+                            seq: packet.seq,
+                            msg: Message::Pong {
+                                time: time.clone()
+                            }
+                    }}));
                 },
 
                 Message::Pong { ref time } => {
                     // save ping information
-                    if let Some(lps) = self.last_ping_send {
+                    if let Some(lps) = self.last_ping_send.get() {
                         if lps == *time {
                             let f = 1.0 / PING_RETENTION;
-                            self.latency.apply_weight(&lps.diff(time), f);
+                            let mut l = self.latency.get();
+                            l.apply_weight(&lps.diff(time), f);
+                            self.latency.set(l);
                         }
 
-                        self.last_ping_send = None;
+                        self.last_ping_send.set(None);
                         // now we know the connection is still going, reset strike counter
-                        self.strikes.store(0, Relaxed);
+                        self.strikes.set(0);
                     }
                 },
 
                 Message::FindNodes { ref network_id, ref skip } => {
 
-                    /*let nodes = if *network_id == self.network_id {
-                        context.shard.get_session_info()
-                    }
-                    else {
-                        context.nc.get_shard_peer_info(network_id)
-                    }.into_iter()
+                    let nodes = actions.nc.get_shard_peer_info(network_id).into_iter()
                         .skip(*skip as usize)
                         .take(NODE_RESPONSE_SIZE as usize)
                         .filter_map(|p| {
-                            if &p.peer == self.remote_peer.as_ref() {
+                            if &p.peer == (*self.remote_peer.borrow()).as_ref() {
                                 None
                             }
                             else {
                                 Some(p.peer)
                             }
                         })
-                        .collect();*/
+                        .collect();
 
-                    let nodes = if *network_id == self.network_id {
-                        context.shard.get_nodes_from_repo(*skip as usize, NODE_RESPONSE_SIZE as usize)
+                    /*let nodes = if *network_id == self.network_id {
+                        actions.shard.get_nodes_from_repo(*skip as usize, NODE_RESPONSE_SIZE as usize)
                     }
                     else {
-                        context.nc.get_nodes_from_repo(network_id, *skip as usize, NODE_RESPONSE_SIZE as usize)
-                    };
+                        actions.nc.get_nodes_from_repo(network_id, *skip as usize, NODE_RESPONSE_SIZE as usize)
+                    };*/
 
-
-                    self.send_queue.lock().unwrap().push_back(Packet {
-                        seq: packet.seq,
-                        msg: Message::NodeList {
-                            nodes: nodes,
-                            network_id: network_id.clone(),
-                            skip: skip.clone()
-                        }
-                    });
+                    actions.send_packets.push(SocketPacket(self.remote_addr.clone(), RawPacket {
+                        port: self.remote_port.get(),
+                        payload: Packet {
+                            seq: packet.seq,
+                            msg: Message::NodeList {
+                                nodes: nodes,
+                                network_id: network_id.clone(),
+                                skip: skip.clone()
+                            }
+                    }}));
                 },
 
                 Message::NodeList { ref nodes, ref network_id, .. } => {
                     // we got back a list of nodes. For right now, we take only the first n of them in order to prevent overflow/whelm
-                    if context.connect_peers.contains_key(network_id) {
-                        let peers = context.connect_peers.get_mut(network_id).unwrap();
+                    if actions.connect_peers.contains_key(network_id) {
+                        let peers = actions.connect_peers.get_mut(network_id).unwrap();
                         peers.extend_from_slice(&nodes[..]);
                     }
                     else {
-                        context.connect_peers.insert(network_id.clone(), nodes.clone());
+                        actions.connect_peers.insert(network_id.clone(), nodes.clone());
                     }
                 },
 
                 Message::NewTransaction { ref txn } => {
-                    context.work_controller.import_txn(&txn.clone());
+                    let d = txn.clone();
+                    let rk = Arc::clone(&self.context.rk);
+                    self.context.event_loop.spawn(self.context.rk.get_worker().spawn_fn(move || {
+                        rk.add_pending_txn(&d)
+                    }).map(|_| ()).or_else(|_| {
+                        // react for this node's records here if they are bad
+                        Ok::<(), ()>(())
+                    }));
                 },
 
                 Message::NewBlock { ref block } => {
-                    context.work_controller.import_block(&block.clone());
+                    let d = block.clone();
+                    let rk = Arc::clone(&self.context.rk);
+                    self.context.event_loop.spawn(self.context.rk.get_worker().spawn_fn(move || {
+                        rk.add_block(&d)
+                    }).map(|_| ()).or_else(|_| {
+                        // react for this node's records here if they are bad
+                        Ok::<(), ()>(())
+                    }));
                 },
 
                 Message::SyncBlocks { /*ref last_block_hash, ref target_block_hash*/ .. } => {
                     // get stuff from the db
+
                 },
 
                 Message::QueryData { ref hashes } => {
+                    let d = hashes.clone();
+                    let r_addr = self.remote_addr.clone();
+                    let r_port = self.remote_port.get();
+                    let lcontext = Rc::clone(&self.context);
+                    let seq = packet.seq;
                     // get stuff form the db
-                    let mut blocks: Vec<Block> = Vec::new();
-                    let mut txns: Vec<Txn> = Vec::new();
+                    let rk = Arc::clone(&self.context.rk);
+                    self.context.event_loop.spawn(self.context.rk.get_worker().spawn_fn(move || {
+                        let mut blocks: Vec<Block> = Vec::new();
+                        let mut txns: Vec<Txn> = Vec::new();
 
-                    let mut failed: Vec<U256> = Vec::new();
+                        let mut failed: Vec<U256> = Vec::new();
 
-                    for hash in hashes {
-                        if let Ok(txn) = context.rk.get_txn(&hash) {
-                            txns.push(txn);
-                        }
-                        else if let Ok(block) = context.rk.get_block(&hash) {
-                            blocks.push(block);
-                        }
-                        else {
-                            failed.push(hash.clone());
-                        }
-                    }
 
-                    if !blocks.is_empty() || !txns.is_empty() {
-                        self.send_queue.lock().unwrap().push_back(Packet {
-                            seq: packet.seq,
-                            msg: Message::DataList {
-                                blocks: blocks,
-                                transactions: txns
+
+                        for hash in d {
+                            if let Ok(txn) = rk.get_txn(&hash) {
+                                txns.push(txn);
                             }
-                        });
-                    }
-                    if !failed.is_empty() {
-                        self.send_queue.lock().unwrap().push_back(Packet {
-                            seq: packet.seq,
-                            msg: Message::DataError {
-                                err: DataRequestError::HashesNotFound(failed)
+                            else if let Ok(block) = rk.get_block(&hash) {
+                                blocks.push(block);
                             }
-                        });
-                    }
+                            else {
+                                failed.push(hash.clone());
+                            }
+                        }
+
+                        Ok((blocks, txns, failed))
+
+                    }).and_then(move |(blocks, txns, failed)| {
+
+                        let mut to_send = Vec::with_capacity(2);
+
+                        if !blocks.is_empty() || !txns.is_empty() {
+                            to_send.push(SocketPacket(r_addr.clone(), RawPacket {
+                                port: r_port,
+                                payload: Packet {
+                                    seq: seq,
+                                    msg: Message::DataList {
+                                        blocks: blocks,
+                                        transactions: txns
+                                    }
+                            }}));
+                        }
+                        if !failed.is_empty() {
+                            to_send.push(SocketPacket(r_addr, RawPacket {
+                                port: r_port,
+                                payload: Packet {
+                                    seq: seq,
+                                    msg: Message::DataError {
+                                        err: DataRequestError::HashesNotFound(failed)
+                                    }
+                            }}));
+                        }
+
+                        lcontext.send_packets(to_send);
+                        Ok::<(), ()>(())
+                    }));
                 },
 
-                Message::DataList { ref blocks, ref transactions } => {
-                    context.work_controller.import_bulk(
-                        packet.seq, 
-                        &self.remote_peer.get_hash_id(), 
-                        blocks.clone(), 
-                        transactions.clone()
-                    );
+                Message::DataList { .. } => {
+                    let f1 = self.context.rk.get_worker().spawn_fn(|| {
+                        // import block package
+                        Ok::<(), ()>(())
+                    });
+
+                    let f2 = f1.or_else(|_| {
+                        // react for this node's records here if they are bad
+                        Ok::<(), ()>(())
+                    });
+
+                    self.context.event_loop.spawn(f2);
                 },
 
                 Message::DataError { .. } => {
@@ -440,7 +474,7 @@ impl Session {
 
                 Message::Bye { ref reason } => {
                     // remote end has closed the connection, no need to reply, just mark this session as that reason
-                    self.done = Some((*reason).clone());
+                    self.done.set(Some(reason.clone()));
                 }
             }
         }
@@ -449,101 +483,104 @@ impl Session {
     /// Performs checks to verify the current connection state. If the connection appears dead, it will
     /// set this connection as done. Otherwise, it will send a ping packet.
     /// Call this function at regular intervals for best results.
-    pub fn check_conn(&mut self) {
-        if self.done.is_none() {
+    pub fn check_conn(&self, actions: &mut NetworkActions) {
+        if self.done.get().is_none() {
 
-            if !self.introduced {
+            if !self.is_introduced() {
                 // we might have to re-send the introduce packet
-                let introduce_n = self.local_peer.as_ref().clone();
-                self.send_queue.lock().unwrap().push_back(Packet {
-                    seq: 0,
-                    msg: Message::Introduce {
-                        node: introduce_n,
-                        port: self.local_port,
-                        network_id: self.network_id
-                    }
-                });
+                let introduce_n = self.context.my_node.clone();
+                actions.send_packets.push(SocketPacket(self.remote_addr.clone(), RawPacket {
+                    port: self.remote_port.get(),
+                    payload: Packet {
+                        seq: 0,
+                        msg: Message::Introduce {
+                            node: introduce_n,
+                            port: self.local_port,
+                            network_id: self.network_id
+                        }
+                }}));
 
-                if self.strikes.fetch_add(1, Relaxed) + 1 > TIMEOUT_TOLERANCE as usize {
-                    self.done = Some(ByeReason::Timeout);
+                if self.strikes.replace(self.strikes.get() + 1) + 1 > TIMEOUT_TOLERANCE as u32 {
+                    self.done.set(Some(ByeReason::Timeout));
                 }
             }
             else {
                 // if we still have an outgoing ping and too much time has passed, add a strike
-                if let Some(lps) = self.last_ping_send {
+                if let Some(lps) = self.last_ping_send.get() {
                     if lps.diff(&Time::current()).millis() > PING_TIMEOUT {
-                        self.strikes.fetch_add(1, Relaxed);
+                        self.strikes.set(self.strikes.get() + 1);
                     }
                 }
 
                 //debug!("Connection Strikes: {}", self.strikes.load(Relaxed));
 
-                if self.strikes.load(Relaxed) > TIMEOUT_TOLERANCE as usize {
-                    self.done = Some(ByeReason::Timeout);
+                if self.strikes.get() > TIMEOUT_TOLERANCE as u32 {
+                    self.done.set(Some(ByeReason::Timeout));
                 }
                 else {
 
                     let lps = Time::current();
 
-                    self.send_queue.lock().unwrap().push_back(Packet {
-                        seq: self.current_seq.fetch_add(1, Relaxed) as u32,
-                        msg: Message::Ping {
-                            time: lps
-                        }
-                    });
+                    actions.send_packets.push(SocketPacket(self.remote_addr.clone(), RawPacket {
+                        port: self.remote_port.get(),
+                        payload: Packet {
+                            seq: self.current_seq.replace(self.current_seq.get()),
+                            msg: Message::Ping {
+                                time: lps
+                            }
+                    }}));
 
-                    self.last_ping_send = Some(lps);
+                    self.last_ping_send.set(Some(lps));
                 }
             }
         }
     }
 
-    pub fn find_nodes(&self, network_id: &U256) {
-        if self.introduced {
-            self.send_queue.lock().unwrap().push_back(Packet {
-                seq: self.current_seq.fetch_add(1, Relaxed) as u32,
-                msg: Message::FindNodes {
-                    network_id: network_id.clone(),
-                    skip: 0
-                }
-            });
+    pub fn find_nodes(&self, network_id: &U256, actions: &mut NetworkActions) {
+        if self.is_introduced() {
+            actions.send_packets.push(SocketPacket(self.remote_addr.clone(), RawPacket {
+                port: self.remote_port.get(),
+                payload: Packet {
+                    seq: self.current_seq.replace(self.current_seq.get() + 1),
+                    msg: Message::FindNodes {
+                        network_id: network_id.clone(),
+                        skip: 0
+                    }
+            }}));
         }
     }
 
     pub fn get_info(&self) -> SessionInfo {
         SessionInfo {
-            peer: self.remote_peer.as_ref().clone(),
+            peer: self.remote_peer.borrow().as_ref().clone(),
             network_id: self.network_id,
-            latency: self.latency,
-            pending_send: self.send_queue.lock().unwrap().len(),
+            latency: self.latency.get(),
             established_since: self.established_since
         }
     }
 
     /// Appends a bye packet to the end of the queue
     /// NOTE: Dont forget to empty the send queue after calling this function!
-    pub fn close(&mut self) {
-        self.send_queue.lock().unwrap().push_back(Packet {
-            seq: self.current_seq.fetch_add(1, Relaxed) as u32,
-            msg: Message::Bye { reason: ByeReason::Exit }
-        });
+    pub fn close(&self, actions: &mut NetworkActions) {
+        actions.send_packets.push(SocketPacket(self.remote_addr.clone(), RawPacket {
+            port: self.remote_port.get(),
+            payload: Packet {
+                seq: self.current_seq.replace(self.current_seq.get() + 1 as u32),
+                msg: Message::Bye { reason: ByeReason::Exit }
+        }}));
 
-        self.done = Some(ByeReason::Exit);
+        self.done.set(Some(ByeReason::Exit));
     }
 
-    pub fn pop_send_queue(&mut self) -> Option<Packet> {
-        self.send_queue.lock().unwrap().pop_front()
-    }
-
-    pub fn get_remote(&self) -> (&SocketAddr, u8) {
-        (&self.remote_addr, self.remote_port)
-    }
+    /*pub fn get_remote(&self) -> (&SocketAddr, u8) {
+        (&self.remote_addr, self.remote_port.get())
+    }*/
 
     pub fn is_done(&self) -> Option<ByeReason> {
-        self.done
+        self.done.get()
     }
 
     pub fn is_introduced(&self) -> bool {
-        self.introduced
+        self.remote_port.get() != 255
     }
 }

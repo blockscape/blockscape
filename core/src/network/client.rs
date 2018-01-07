@@ -1,27 +1,34 @@
-use bincode::deserialize;
+use bincode;
 use openssl::pkey::PKey;
+use std::cell::*;
 use std::collections::HashMap;
-use std::io::Error;
-use std::net::{SocketAddr,UdpSocket};
-use std::sync::{Arc, RwLock, Mutex};
-use std::sync::atomic::{AtomicBool,AtomicUsize};
-use std::sync::atomic::Ordering::Relaxed;
+use std::io;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::rc::Rc;
+use std::borrow::Borrow;
 use std::thread;
 use std::time::Duration;
-use time::Time;
+
+use futures::prelude::*;
+use futures::sync::*;
+use futures::sync::mpsc::{UnboundedSender, unbounded};
+use futures::future;
+
+use tokio_core::reactor::*;
+use tokio_core::net::{UdpSocket, UdpCodec};
 
 use env::get_client_name;
+use network::context::NetworkContext;
 use network::node::{Node, NodeRepository, NodeEndpoint, LocalNode};
-use network::ntp;
+//use network::ntp;
 use network::session;
-use network::session::{SessionInfo, RawPacket, Message};
+use network::session::{SessionInfo, SocketPacket, Message};
 use network::shard::{ShardInfo};
-use network::work_controller::NetworkWorkController;
 use primitives::U256;
 use record_keeper::RecordKeeper;
 use signer::generate_private_key;
-use work_queue::WorkQueue;
-
+use util::QuitSignal;
 
 /// Defines the kind of interaction this node will take with a particular shard
 pub enum ShardMode {
@@ -34,9 +41,9 @@ pub enum ShardMode {
     QueryOnly
 }
 
-const NODE_SCAN_INTERVAL: i64 = 30000; // every 30 seconds
-const NODE_CHECK_INTERVAL: i64 = 5000; // every 5 seconds
-const NODE_NTP_INTERVAL: i64 = 20 * 60000; // every 20 minutes
+//const NODE_SCAN_INTERVAL: u64 = 30000; // every 30 seconds
+const NODE_CHECK_INTERVAL: u64 = 5000; // every 5 seconds
+//const NODE_NTP_INTERVAL: u64 = 20 * 60000; // every 20 minutes
 
 /// The maximum amount of data that can be in a single message object (the object itself can still be in split into pieces at the datagram level)
 pub const MAX_PACKET_SIZE: usize = 1024 * 128;
@@ -101,6 +108,16 @@ impl ClientConfig {
     }
 }
 
+pub enum ClientMsg {
+    GetStatistics(oneshot::Sender<Statistics>),
+    GetPeerInfo(oneshot::Sender<Vec<SessionInfo>>),
+    AddNode(U256, Node),
+    DropNode(U256, Node),
+
+    AttachNetwork(U256, ShardMode),
+    DetachNetwork(U256),
+}
+
 /// Statistical information which can be queried from the network client
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Statistics {
@@ -132,100 +149,84 @@ impl Statistics {
     }
 }
 
-pub struct NetworkContext<'a> {
+/// A data structure which is passed into session handlers while packets are being processed and during certain events.
+/// The inclusion of this data allows for reactions to be taken by core as appropriate
+pub struct NetworkActions<'a> {
 
     /// The network client instance for certain generative calls
     pub nc: &'a Client,
 
-    /// A reference to the current shard (required because of locks! Be careful of deadlocking)
-    pub shard: &'a ShardInfo,
-
-    /// The database for RO access
-    pub rk: &'a RecordKeeper,
-
-    /// The configuation associated with this client
-    pub config: &'a ClientConfig,
-
-    pub work_controller: &'a Arc<NetworkWorkController>,
-
     /// Nodes which can be connected to which were recently supplied
     pub connect_peers: HashMap<U256, Vec<Node>>,
+
+    /// Packets which should be sent
+    pub send_packets: Vec<SocketPacket>
 }
 
-impl<'a> NetworkContext<'a> {
-    pub fn new(nc: &'a Client, shard: &'a ShardInfo, rk: &'a RecordKeeper, config: &'a ClientConfig, work_controller: &'a Arc<NetworkWorkController>) -> NetworkContext<'a> {
-        NetworkContext {
+impl<'a> NetworkActions<'a> {
+    pub fn new(nc: &'a Client) -> NetworkActions<'a> {
+        NetworkActions {
             nc: nc,
-            shard: shard,
-            rk,
-            config,
-            work_controller: work_controller,
-            connect_peers: HashMap::new()
+            connect_peers: HashMap::new(),
+            send_packets: Vec::new()
         }
+    }
+}
+
+struct P2PCodec;
+
+impl UdpCodec for P2PCodec {
+    type In = SocketPacket;
+    type Out = SocketPacket;
+
+    fn decode(&mut self, src: &SocketAddr, buf: &[u8]) -> io::Result<Self::In> {
+        Ok(SocketPacket(src.clone(), bincode::deserialize(buf).map_err(|_| io::ErrorKind::Other)?))
+    }
+
+    fn encode(&mut self, msg: Self::Out, buf: &mut Vec<u8>) -> SocketAddr {
+        buf.extend(bincode::serialize(&msg.1, bincode::Infinite).unwrap());
+
+        msg.0
     }
 }
 
 pub struct Client {
 
-    /// Configuration options for the behavior of the network client
-    config: ClientConfig,
-
-    /// The node object which represents my own system
-    my_node: Arc<Node>,
-
-    /// The record keeper/database
-    rk: Arc<RecordKeeper>,
-
-    work_controller: Arc<NetworkWorkController>,
+    /// Shared data for all network building blocks
+    context: Rc<NetworkContext>,
 
     /// Data structures associated with shard-specific information
-    shards: [RwLock<Option<ShardInfo>>; 255],
+    shards: [RefCell<Option<ShardInfo>>; 255],
 
-    /// Number of active shards
-    num_shards: u8,
+    curr_port: Cell<u8>,
 
-    /// The socket used to accept and invoke UDP communication
-    socket: Option<UdpSocket>,
-
-    /// A mutex for sending on the socket--this only applies for sending, since we must always be reading
-    socket_mux: Mutex<()>,
-
-    /// Whether or not we are entered the exit state for the network interface
-    done: AtomicBool,
-
-    curr_port: AtomicUsize,
-
-    /// Accumulator reperesnting number bytes received
-    rx: AtomicUsize,
-
-    /// Accumulator representing number of bytes sent
-    tx: AtomicUsize,
+    num_shards: Cell<u8>
 }
 
 impl Client {
-    pub fn new(rk: Arc<RecordKeeper>, wq: Arc<WorkQueue>, config: ClientConfig) -> Arc<Client> {
+    fn new(config: ClientConfig, rk: Arc<RecordKeeper>, core: &Core) -> Arc<Client> {
+
+        let pkeyder = config.private_key.public_key_to_der().expect("Could not convert node key to der!");
+        let epoint = NodeEndpoint { host: config.hostname.clone(), port: config.port };
         
-        let mut client = Client {
-            rk: Arc::clone(&rk),
-            work_controller: NetworkWorkController::new(rk, wq),
-            shards: init_array!(RwLock<Option<ShardInfo>>, 255, RwLock::new(None)),
-            num_shards: 0,
-            my_node: Arc::new(Node {
-                key: config.private_key.public_key_to_der().unwrap(), // TODO: Should be public key only!
-                version: session::PROTOCOL_VERSION,
-                endpoint: NodeEndpoint { host: config.hostname.clone(), port: config.port },
-                name: get_client_name()
+        let client = Client {
+            context: Rc::new(NetworkContext {
+                rk: Arc::clone(&rk),
+                config: config,
+                my_node: Node {
+                    key: pkeyder, // TODO: Should be public key only!
+                    version: session::PROTOCOL_VERSION,
+                    endpoint: epoint,
+                    name: get_client_name()
+                },
+                event_loop: core.handle(), 
+                sink: Cell::new(None),
             }),
-            config: config,
-            socket: None,
-            socket_mux: Mutex::new(()),
-            done: AtomicBool::new(false),
-            curr_port: AtomicUsize::new(0),
-            rx: AtomicUsize::new(0),
-            tx: AtomicUsize::new(0),
+            shards: init_array!(RefCell<Option<ShardInfo>>, 255, RefCell::new(None)),
+            num_shards: Cell::new(0),
+            curr_port: Cell::new(0),
         };
 
-        client.open().expect("Could not open client!");
         let c = Arc::new(client);
         
         c
@@ -236,7 +237,7 @@ impl Client {
     /// Be patient.
     pub fn attach_network(&self, network_id: U256, mode: ShardMode) -> Result<usize, ()> {
 
-        if self.num_shards > 128 {
+        if self.num_shards.get() > 128 {
             // we risk overwhelming the ports
             return Err(());
         }
@@ -250,27 +251,28 @@ impl Client {
         // find a suitable port
         let mut port;
         loop {
-            port = (self.curr_port.fetch_add(1, Relaxed) % 255) as u8;
+            port = (self.curr_port.replace((self.curr_port.get() + 1) % 255)) as u8;
 
             // make sure the port is not taken (this should almost always take one try)
-            let sh = self.shards[port as usize].read().unwrap();
-            match *sh {
-
-                None => break,
-                _ => {}
+            if self.shards[port as usize].borrow().is_none() {
+                break;
             }
         }
 
         // we can now get going
-        let si = ShardInfo::new(network_id, port, mode, repo);
+        let si = ShardInfo::new(network_id, port, mode, Rc::clone(&self.context), repo);
 
-        let mut shard = self.shards[port as usize].write().unwrap();
+        let mut shard = self.shards[port as usize].borrow_mut();
         *shard = Some(si);
 
         // TODO: Constant?
         if node_count >= 2 {
             // we can start connecting to nodes immediately
-            Ok(shard.as_mut().unwrap().node_scan(&self.my_node, 8))
+            let mut actions = NetworkActions::new(self);
+            let r = shard.borrow().as_ref().unwrap().node_scan(8, &mut actions);
+
+            self.context.send_packets(actions.send_packets);
+            Ok(r)
         }
         else {
             // we need to resolve our way over to this shard (TODO)
@@ -285,12 +287,14 @@ impl Client {
     fn detach_network_port(&self, idx: u8) -> bool {
         debug!("Detach network port: {}", idx);
 
-        let mut sh = self.shards[idx as usize].write().unwrap();
+        let mut sh = self.shards[idx as usize].borrow_mut();
         if let None = *sh {
             return false;
         }
 
-        sh.as_ref().unwrap().close(&self.socket.as_ref().unwrap());
+        let mut actions = NetworkActions::new(self);
+
+        sh.as_ref().unwrap().close(&mut actions);
         *sh = None;
 
         true
@@ -298,7 +302,7 @@ impl Client {
 
     fn resolve_port(&self, network_id: &U256) -> u8 {
         for i in 0..255 {
-            let shard = self.shards[i].read().unwrap();
+            let shard = self.shards[i].borrow();
             if let Some(ref sh) = *shard {
                 if sh.get_network_id() == network_id {
                     return i as u8;
@@ -309,256 +313,177 @@ impl Client {
         255
     }
 
-    pub fn open(&mut self) -> Result<(), Error> {
-        match UdpSocket::bind(self.config.bind_addr) {
-            Ok(s) => {
+    fn process_packet(&self, d: SocketPacket) -> Box<Future<Item=(), Error=io::Error>> {
+        // send packet to the correct shard
+        let SocketPacket(addr, p) = d;
+        
+        let mut actions = NetworkActions::new(self);
 
-                // socket should read indefinitely
-                // but we need to break every now and then to check thread signals
-                s.set_read_timeout(Some(Duration::from_millis(100))).expect("Could not set socket read timeout");
+        if p.port == 255 {
+            if let Message::Introduce { ref node, ref network_id, .. } = p.payload.msg {
+                // new session?
+                let idx = self.resolve_port(network_id);
+                if let Some(ref shard) = *self.shards[idx as usize].borrow() {
+                    if let Ok(addr) = shard.open_session(Arc::new(node.clone()), Some(&p.payload), &mut actions) {
+                        info!("New contact opened from {}", addr);
 
-                self.socket = Some(s);
 
-                Ok(())
-            },
-            Err(e) => {
-                warn!("Failed to bind to addr: {:?}", self.config.bind_addr);
-                Err(e)
-            }
-        }
-    }
-
-    #[inline]
-    fn do_send_flush(&self, shard: &ShardInfo, addr: Option<&SocketAddr>) {
-        let _lock = self.socket_mux.lock();
-        let r = match addr {
-            Some(a) => shard.send_packets(a, &self.socket.as_ref().unwrap()),
-            None => shard.send_all_packets(&self.socket.as_ref().unwrap())
-        };
-
-        if let Ok(size) = r {
-            self.tx.fetch_add(size, Relaxed);
-        }
-        else {
-            warn!("Failed to send some data: {:?}", r);
-        }
-    }
-
-    /// Intended to be run in a single thread. Will receive packets, and react to them if necessary.
-    fn recv_loop(&self) {
-        // Let the sessions work on received packets
-        // One kilobyte buffer should handle many packets, but some research is needed
-        let mut buf: [u8; 1024] = [0; 1024];
-        let mut recv_buf: HashMap<SocketAddr, Vec<u8>> = HashMap::new();
-
-        loop {
-            let mut cont = true;
-
-            let mut received_packet: Option<(RawPacket, SocketAddr)> = None;
-
-            match self.socket.as_ref().unwrap().recv_from(&mut buf) {
-                Ok((n, addr)) => {
-
-                    let mut remove = false;
-
-                    let recv_len = recv_buf.len();
-
-                    let mut newb: Option<(SocketAddr, Vec<u8>)> = None;
-                    if let Some(b) = recv_buf.get_mut(&addr) {
-                        if b.len() > MAX_PACKET_SIZE {
-                            // cannot accept more packet data from this client
-                            warn!("Client exceeded max packet size, dumping: {:?}", addr);
-                            remove = true;
-                            cont = false;
-                        }
-                        // use memory
-                        b.extend_from_slice(&buf[..n]);
-                    }
-                    else {
-                        // new peer, can we take more?
-                        if recv_len <= self.config.max_nodes as usize {
-                            // allocate
-                            let mut v: Vec<u8> = Vec::with_capacity(MAX_PACKET_SIZE);
-                            v.extend_from_slice(&buf[..n]);
-                            newb = Some((addr, v));
-                        }
-                        else {
-                            continue;
-                        }
-                    }
-
-                    if remove { //TODO: Check that remove and cont checks are in the correct places, possibly remove booleans and just insert the code in place.
-                        recv_buf.remove(&addr);
-                    }
-                    if !cont {
-                        continue;
-                    }
-
-                    self.rx.fetch_add(n, Relaxed);
-
-                    if let Some((addr, v)) = newb {
-                        recv_buf.insert(addr, v);
-                    }
-
-                    // have we received all the data yet?
-                    let b = recv_buf.get_mut(&addr).unwrap();
-                    let len: usize = deserialize::<u32>(&b[0..4]).unwrap() as usize;
-
-                    if b.len() - 4 >= len {
-                        // we have a full packet, move it into our packet list
-                        match deserialize(&b[4..]) {
-                            Ok(p) => received_packet = Some((p, addr)),
-                            Err(e) => {
-                                warn!("Packet decode failed from {}: {}", addr, e);
-                                warn!("Expected size: {}", len);
-                                // TODO: Note misbehaviors/errors
-                            }
-                        };
-
-                        b.clear();
-                    }
-                },
-                Err(_) => {}
-            }
-
-            if let Some((p, addr)) = received_packet {
-                //debug!("Got packet: {:?}, {:?}", p, addr);
-                if p.port == 255 {
-                    if let Message::Introduce { ref node, ref network_id, .. } = p.payload.msg {
-                        // new session?
-                        let idx = self.resolve_port(network_id);
-                        if let Some(ref shard) = *self.shards[idx as usize].read().unwrap() {
-                            if let Ok(addr) = shard.open_session(Arc::new(node.clone()), self.my_node.clone(), Some(&p.payload)) {
-                                info!("New contact opened from {}", addr);
-                                
-                                self.do_send_flush(shard, Some(&addr));
-                            }
-                        }
-                        else {
-                            debug!("Invalid network ID received in join for network: {}", network_id);
-                        }
-                    }
-                    else {
-                        debug!("Received non-introduce first packet on generic port: {:?}", p);
-                    }
-                }
-                else if let Some(ref shard) = *self.shards[p.port as usize].read().unwrap() {
-                    let mut context = NetworkContext::new(self, shard, &self.rk, &self.config, &self.work_controller);
-
-                    {
-                        shard.process_packet(&p.payload, &addr, &mut context);
-
-                        self.do_send_flush(shard, Some(&addr));
-                    }
-
-                    // finally, any new nodes to connect to?
-                    for (network_id, peers) in context.connect_peers.iter() {
-                        for peer in peers {
-                            // for right now, only save for nodes of open networks
-                            let port = self.resolve_port(network_id) as usize;
-                            if port != 255 {
-                                // add to the connect queue of the network
-                                // a successful connection will result in the node being added to the permanent db
-                                let shard = self.shards[port].read().unwrap();
-                                if let Some(ref sh) = *shard {
-
-                                    sh.add_connect_queue(Arc::new(peer.clone()));
-                                }
-                            }
-                        }
                     }
                 }
                 else {
-                    // bogus network ID received, ignore
-                    // TODO: A good debug print here might also print the packet
-                    debug!("Received unregistered network port packet: {}", p.port);
+                    debug!("Invalid network ID received in join for network: {}", network_id);
                 }
             }
-
-            if self.done.load(Relaxed) {
-                // stop receiving packets
-                break;
+            else {
+                debug!("Received non-introduce first packet on generic port: {:?}", p);
             }
-        };
+        }
+        else if let Some(ref shard) = *self.shards[p.port as usize].borrow() {
+
+            shard.process_packet(&p.payload, &addr, &mut actions);
+        }
+        else {
+            // bogus network ID received, ignore
+            // TODO: A good debug print here might also print the packet
+            debug!("Received unregistered network port packet: {}", p.port);
+        }
+
+        // finally, any new nodes to connect to?
+        for (network_id, peers) in actions.connect_peers.iter() {
+            for peer in peers {
+                // for right now, only save for nodes of open networks
+                let port = self.resolve_port(network_id) as usize;
+                if port != 255 {
+                    // add to the connect queue of the network
+                    // a successful connection will result in the node being added to the permanent db
+                    if let Some(ref s) = *self.shards[port].borrow() {
+                        s.add_connect_queue(Arc::new(peer.clone()));
+                    }
+                }
+            }
+        }
+
+        // send packets
+        self.context.send_packets(actions.send_packets);
+        
+        Box::new(future::ok(()))
     }
 
     /// Spawns the threads and puts the networking into a full working state
-    pub fn run(this: Arc<Client>) -> Vec<thread::JoinHandle<()>> {
+    pub fn run(config: ClientConfig, rk: Arc<RecordKeeper>, quit: QuitSignal) -> Result<(UnboundedSender<ClientMsg>, thread::JoinHandle<()>), io::Error> {        
+        let (tx, rx) = unbounded::<ClientMsg>();
 
-        if this.done.load(Relaxed) {
-            panic!("Tried to run network after already closed");
-        }
+        let t = thread::Builder::new().name("Network Handler".into()).spawn(move || {
+            info!("Network Handler thread ready");
 
-        let mut joins: Vec<thread::JoinHandle<()>> = Vec::new();
+            let mut core = Core::new().expect("Could not create network reactor core");
+            let (nout, nin) = UdpSocket::bind(&config.bind_addr, &core.handle()).expect("Could not bind P2P socket!").framed(P2PCodec).split();
 
-        let this2 = this.clone();
-        // TODO: Do something about thread references! We need to be able to join to shut down the network thread
-        joins.push(thread::Builder::new().name("P2P Handler".into()).spawn(move || {
-            info!("P2P Handler thread ready");
-            this.recv_loop();
-            info!("P2P Handler thread completed");
-        }).expect("Could not start P2P handler thread"));
-        joins.push(thread::Builder::new().name("Net Discovery/Maintenance".into()).spawn(move || {
+            let t = Rc::new(Client::new(config, rk, &core));
 
-            info!("Node discovery/maintenance thread ready");
+            t.context.sink.set(Some(Box::new(nout)));
 
-            let mut last_ntp_scan = Time::from_seconds(0);
-            let mut last_node_scan = Time::from_seconds(0);
-            let mut last_node_check = Time::from_seconds(0);
+            //let this = Rc::clone(&t);
 
-            loop {
+            let mut this = Rc::clone(&t);
+            let packet_listener = nin.for_each(move |p| {
+                this.process_packet(p);
 
-                if this2.done.load(Relaxed) {
-                    break;
-                }
+                future::ok(())
+            }).or_else(|e| {
 
-                let n = Time::current_local();
+                warn!("Failed to listen to packets: {}", e);
 
-                if last_ntp_scan.diff(&n).millis() > NODE_NTP_INTERVAL && !this2.config.ntp_servers.is_empty() {
-                    // TODO: Choose a random NTP server rather than only the first
-                    match ntp::calc_drift(this2.config.ntp_servers[0].as_str()) {
-                        Ok(drift) => {
-                            Time::update_ntp(drift);
-                            debug!("NTP time sync completed: drift is {}", drift);
-                        },
-                        Err(reason) => {
-                            warn!("NTP time sync failed: {}", reason);
+                future::err(())
+            });
+
+            this = Rc::clone(&t);
+            let msg_handler = rx.for_each(move |p| {
+                let f: future::FutureResult<(), ()> = match p {
+                    ClientMsg::GetStatistics(r) => future::result(r.send(this.get_stats()).map_err(|_| ())),
+                    ClientMsg::GetPeerInfo(r) => future::result(r.send(this.get_peer_info()).map_err(|_| ())),
+                    ClientMsg::AddNode(network_id, node) => {
+                        let p = this.resolve_port(&network_id);
+                        if p < 255  {
+                            this.shards[p as usize].borrow().as_ref().unwrap().add_connect_queue(Arc::new(node));                        }
+
+                        future::ok(())
+                    },
+                    ClientMsg::DropNode(network_id, _) => {
+                        let p = this.resolve_port(&network_id);
+                        if p < 255 {
+                            // not implemented
                         }
+
+                        future::ok(())
+                    },
+                    ClientMsg::AttachNetwork(network_id, mode) => future::result(this.attach_network(network_id, mode).map(|_| ())),
+                    ClientMsg::DetachNetwork(network_id) => {
+                        this.detach_network(&network_id);
+
+                        future::ok(())
                     }
+                };
 
-                    last_ntp_scan = n;
+                this.context.event_loop.spawn(f);
+
+                future::ok(())
+            });
+
+            /*let ntpTask = Interval::new_at(Instant::now(), Duration::from_millis(NODE_NTP_INTERVAL))?
+            .and_then(|_| {
+                match ntp::calc_drift(this2.config.ntp_servers[0].as_str()) {
+                    Ok(drift) => {
+                        Time::update_ntp(drift);
+                        debug!("NTP time sync completed: drift is {}", drift);
+                    },
+                    Err(reason) => {
+                        warn!("NTP time sync failed: {}", reason);
+                    }
                 }
-
-                if last_node_check.diff(&n).millis() > NODE_CHECK_INTERVAL {
+            })*/
+            
+            this = Rc::clone(&t);
+            let session_check_task = Interval::new(Duration::from_millis(NODE_CHECK_INTERVAL), &t.context.event_loop)
+                .expect("Cannot start network timer!")
+                .for_each(move |_| {
                     for i in 0..255 {
-                        if let Some(ref mut s) = *this2.shards[i].write().unwrap() {
-                            if last_node_scan.diff(&n).millis() > NODE_SCAN_INTERVAL {
-                                debug!("Node scan started");
-                                s.node_scan(&this2.my_node, this2.config.min_nodes as usize);
+                        if let Some(ref s) = *this.shards[i].borrow() {
 
-                                last_node_scan = n;
-                            }
+                            let mut actions = NetworkActions::new(this.as_ref());
 
-                            s.check_sessions();
+                            debug!("Node scan started");
+                            s.node_scan(this.context.config.min_nodes as usize, &mut actions);
+                            s.check_sessions(&mut actions);
 
-                            // send packets that may have accumulated
-                            //let _ = this2.socket_mux.lock();
-                            //this2.tx.fetch_add(s.send_all_packets(&this2.socket.as_ref().unwrap()), Relaxed);
-
-                            this2.do_send_flush(s, None);
+                            this.context.send_packets(actions.send_packets);
                         }
                     }
 
-                    last_node_check = n;
-                }
+                    Ok(())
+                })
+                .or_else(|e| {
+                    warn!("Failed to check sessions in timer: {}", e);
 
-                thread::sleep(::std::time::Duration::from_millis(1000));
-            }
+                    future::err(())
+                });
 
-            info!("Node discovery thread completed");
-        }).expect("Could not start node discovery thread"));
+            t.context.event_loop.spawn(msg_handler);
+            t.context.event_loop.spawn(packet_listener);
+            //handle.spawn(ntpTask);
+            t.context.event_loop.spawn(session_check_task);
 
-        joins
+            this = Rc::clone(&t);
+            core.run(quit).and_then(|_| {
+                this.close();
+
+                Ok(())
+            }).unwrap(); // technically can never happen
+
+            info!("Network Handler thread completed");
+        }).expect("Could not start network handler thread");
+
+        Ok((tx, t))
     }
 
     /// End all network resources and prepare for program close
@@ -567,11 +492,9 @@ impl Client {
 
         debug!("Closing network...");
 
-        self.done.store(true, Relaxed);
-
         // detach all networks
         for i in 0..255 {
-            let exists = self.shards[i].read().unwrap().is_some();
+            let exists = self.shards[i].borrow().is_some();
 
             if exists {
                 self.detach_network_port(i as u8);
@@ -583,7 +506,7 @@ impl Client {
         let port = self.resolve_port(&network_id);
         if port != 255 {
 
-            let shard = self.shards[port as usize].read().unwrap();
+            let shard = self.shards[port as usize].borrow();
 
             if let Some(ref s) = *shard {
                 return s.get_nodes_from_repo(skip, count);
@@ -598,7 +521,7 @@ impl Client {
         let port = self.resolve_port(network_id);
         if port != 255 {
 
-            let shard = self.shards[port as usize].read().unwrap();
+            let shard = self.shards[port as usize].borrow();
 
             if let Some(ref s) = *shard {
                 return s.get_session_info();
@@ -613,7 +536,7 @@ impl Client {
         let mut p = Vec::new();
 
         for i in 0..255 {
-            if let Some(ref s) = *self.shards[i].read().unwrap() {
+            if let Some(ref s) = *self.shards[i].borrow() {
                 p.append(&mut s.get_session_info());
             }
         }
@@ -625,11 +548,11 @@ impl Client {
 
         let mut stats = Statistics::new();
 
-        stats.rx = self.rx.load(Relaxed) as u64;
-        stats.tx = self.tx.load(Relaxed) as u64;
+        //stats.rx = self.rx.load(Relaxed) as u64;
+        //stats.tx = self.tx.load(Relaxed) as u64;
 
         for i in 0..255 {
-            if let Some(ref s) = *self.shards[i].read().unwrap() {
+            if let Some(ref s) = *self.shards[i].borrow() {
                 stats.attached_networks += 1;
                 stats.connected_peers += s.session_count() as u32;
             }
@@ -639,7 +562,15 @@ impl Client {
     }
 
     pub fn get_config(&self) -> &ClientConfig {
-        &self.config
+        &self.context.config
+    }
+
+    pub fn get_record_keeper(&self) -> &Arc<RecordKeeper> {
+        &self.context.rk
+    }
+
+    pub fn get_handle(&self) -> Handle {
+        self.context.event_loop.clone()
     }
 
     /// Initialize a node repository from file given the ID
@@ -651,7 +582,7 @@ impl Client {
         
         if res.is_ok() && res.unwrap() == 0 {
             // add seed nodes
-            repo.build(&self.config.seed_nodes.iter().cloned().map(|ep| LocalNode::new(Node::new(ep))).collect());
+            repo.build(&self.context.config.seed_nodes.iter().cloned().map(|ep| LocalNode::new(Node::new(ep))).collect());
         }
 
         repo

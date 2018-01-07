@@ -1,4 +1,4 @@
-use ntp::request;
+/*use ntp::request;
 
 use timelib::{Timespec, now_utc};
 
@@ -14,4 +14,4 @@ pub fn calc_drift(ntp_server: &str) -> Result<i64, String> {
             (((recv_time - orig_time) + (transmit_time - dest_time)) / 2).num_milliseconds()
         })
         .map_err(|e| String::from(e.description()))
-}
+}*/

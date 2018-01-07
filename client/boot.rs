@@ -3,6 +3,7 @@ use openssl::pkey::PKey;
 use std::collections::BTreeSet;
 use std::str::FromStr;
 use std::net::SocketAddr;
+use std::rc::Rc;
 
 use blockscape_core::bin::Bin;
 use blockscape_core::env::*;
@@ -204,7 +205,7 @@ pub fn make_network_config(cmdline: &ArgMatches) -> ClientConfig {
 }
 
 /// Starts the JSONRPC server
-pub fn make_rpc(cmdline: &ArgMatches, ctx: Context) -> RPC {
+pub fn make_rpc(cmdline: &ArgMatches, ctx: Rc<Context>) -> RPC {
 
     let bind_addr = SocketAddr::new(cmdline.value_of("rpcbind").unwrap().parse().expect("Invalid RPC bind IP"), 
             cmdline.value_of("rpcport").unwrap().parse::<u16>().expect("Invalid RPC port: must be a number!"));

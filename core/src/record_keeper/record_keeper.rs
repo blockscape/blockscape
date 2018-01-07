@@ -1,15 +1,18 @@
 use bin::Bin;
 use openssl::pkey::PKey;
-use primitives::{U256, U160, Txn, Block, BlockHeader, Mutation, Change, EventListener, ListenerPool};
+use primitives::{U256, U160, Txn, Block, BlockHeader, Mutation, Change, ListenerPool};
 use std::collections::{HashMap, BTreeSet, BTreeMap};
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 use super::{MutationRule, MutationRules, Error, LogicError, Storable, RecordEvent, PlotID};
 use super::{PlotEvent, PlotEvents, events};
 use super::BlockPackage;
 use super::database::*;
 use time::Time;
 use hash::hash_pub_key;
+
+use futures::sync::mpsc::Sender;
+use futures_cpupool;
 
 /// An abstraction on the concept of states and state state data. Builds higher-lsuperevel functionality
 /// On top of the database. The implementation uses RwLocks to provide many read, single write
@@ -19,7 +22,7 @@ use hash::hash_pub_key;
 /// TODO: Also allow for reaching out to the network to request missing information.
 /// TODO: Allow removing state data for shards which are not being processed.
 pub struct RecordKeeper {
-    db: RwLock<Database>,
+    db: RwLock<Database>, 
     rules: RwLock<MutationRules>,
     pending_txns: RwLock<HashMap<U256, Txn>>,
 
@@ -29,7 +32,11 @@ pub struct RecordKeeper {
     /// The hash of this users public key
     key_hash: U160,
     /// This user's private key
-    key: PKey
+    key: PKey,
+
+    /// A CPU pool of a single thread dedicated to processing work related to RecordKeeper. Work can be passed to it. Future compatible.
+    /// It is reccomended to spawn major work for the DB on this thread; one can also spawn their own thread for smaller, higher priority jobs.
+    worker: futures_cpupool::CpuPool
 }
 
 impl RecordKeeper {
@@ -43,8 +50,13 @@ impl RecordKeeper {
             record_listeners: RwLock::new(ListenerPool::new()),
             game_listeners: RwLock::new(ListenerPool::new()),
             key_hash: hash_pub_key(&key.public_key_to_der().unwrap()),
-            key
+            key,
+            worker: futures_cpupool::Builder::new().pool_size(1).create()
         }
+    }
+
+    pub fn get_worker(&self) -> &futures_cpupool::CpuPool {
+        &self.worker
     }
 
     /// Construct a new RecordKeeper by opening a database. This will create a new database if the
@@ -262,13 +274,13 @@ impl RecordKeeper {
 
     /// Add a new listener for events such as new blocks. This will also take a moment to remove any
     /// listeners which no longer exist.
-    pub fn register_record_listener(&self, listener: &Arc<EventListener<RecordEvent>>) {
+    pub fn register_record_listener(&self, listener: Sender<RecordEvent>) {
         self.record_listeners.write().unwrap().register(listener);
     }
 
     /// Add a new listener for plot events. This will also take a moment to remove any listeners
     /// which no longer exist.
-    pub fn register_game_listener(&self, listener: &Arc<EventListener<PlotEvent>>) {
+    pub fn register_game_listener(&self, listener: Sender<PlotEvent>) {
         self.game_listeners.write().unwrap().register(listener);
     }
 

@@ -1,3 +1,5 @@
+set -e
+
 DIR=$(readlink -e $(dirname $0)/..)
 
 if docker ps -a | grep blockscape_build; then
