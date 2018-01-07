@@ -4,8 +4,9 @@ use env;
 use primitives::{U256, U160, Mutation, Change, Block, BlockHeader, Txn};
 use rocksdb::{DB, Options};
 use rocksdb::Error as RocksDBError;
-use std::collections::{HashMap, BTreeMap};
+use std::collections::{HashMap, HashSet, BTreeMap};
 use std::path::PathBuf;
+use std::rc::Rc;
 use super::{Storable, PlotEvent, PlotEvents, events, PlotID};
 use super::error::*;
 
@@ -49,10 +50,148 @@ impl Default for HeadRef {
     }
 }
 
-impl HeadRef {
-    //#[inline]
-    //pub fn is_null(&self) -> bool { self.block.is_zero() }
+
+/// A set of changes which define the difference from a given network state to another though
+/// walking the blockchain from one point to another. This should be used to compile a list of
+/// changes to the network state without having to write to the same place in the DB multiple times.
+/// This is designed to be like a diff, so if an event is added but it had been marked as deleted,
+/// then it will simply remove it from the list of deleted under the assumption that the net change
+/// should be zero.
+pub struct NetDiff {
+    /// The initial block this is changing from
+    pub from: U256,
+    /// The block all these changes lead to (if applied to the initial block)
+    pub to: U256,
+    /// New key-value sets to be added (or overwritten)
+    values: HashMap<Bin, Bin>,
+    /// Keys which are to be removed from the DB
+    delete: HashSet<Bin>,
+    /// Events which need to be added to plots
+    new_events: HashMap<PlotID, HashSet<Rc<PlotEvent>>>,
+    /// Events which need to be removed from plots
+    removed_events: HashMap<PlotID, HashSet<Rc<PlotEvent>>>
 }
+
+impl NetDiff {
+    fn new(from: U256, to: U256) -> NetDiff {
+        NetDiff {
+            from, to,
+            values: HashMap::new(),
+            delete: HashSet::new(),
+            new_events: HashMap::new(),
+            removed_events: HashMap::new()
+        }
+    }
+
+    /// Attempt to remove an event from list and return whether it was was there or not.
+    fn _remove(plots: &mut HashMap<PlotID, HashSet<Rc<PlotEvent>>>, event: &Rc<PlotEvent>) -> bool {
+        if // check if it in the `from` plot
+            if let Some(plot_a) = plots.get_mut(&event.from) {
+                plot_a.remove(event)
+            } else { false } // did not remove because plot is not listed
+        { //it is, so remove from the `to` plot if unique
+            if event.from != event.to {
+                let plot_b = plots.get_mut(&event.to)
+                        .expect("Events to be registered to both from and to plots");
+                plot_b.remove(event);
+            } true
+        } else { false }
+    }
+
+    fn _add(plots: &mut HashMap<PlotID, HashSet<Rc<PlotEvent>>>, event: Rc<PlotEvent>) {
+        // add first to the `from` plot
+        if // check if we need to create a new entry (if not go ahead and append it)
+            if let Some(plot_a) = plots.get_mut(&event.from) {
+                if plot_a.contains(&event) {return;}
+                plot_a.insert(event.clone());
+                false
+            } else { true }
+        { // insert a new entry
+            let mut plot_a = HashSet::new();
+            plot_a.insert(event.clone());
+            plots.insert(event.from, plot_a);
+        }
+
+        // check if we need to handle the `to` plot and handle it if so
+        if event.from == event.to {return;}
+        if // check if we need to create a new entry (if not go ahead and append it)
+            if let Some(plot_b) = plots.get_mut(&event.to) {
+                let not_already_present = plot_b.insert(event.clone());
+                assert!(not_already_present);
+                false
+            } else { true }
+        { // insert new entry
+            let mut plot_b = HashSet::new();
+            plot_b.insert(event.clone());
+            plots.insert(event.to, plot_b);
+        }
+    }
+
+    /// Add an event to the appropriate plots
+    fn add_event(&mut self, event: PlotEvent) {
+        let event = Rc::new(event);
+
+        //if it was in removed events, then we don't need to add it
+        if !Self::_remove(&mut self.removed_events, &event) {
+            Self::_add(&mut self.new_events, event);
+        }
+    }
+
+    /// Remove an event from the appropriate plots (or mark it to be removed).
+    fn remove_event(&mut self, event: PlotEvent) {
+        let event = Rc::new(event);
+
+        //if it was in new events events, then we don't need to add it be removed
+        if !Self::_remove(&mut self.new_events, &event) {
+            Self::_add(&mut self.removed_events, event)
+        }
+    }
+
+    fn set_value(&mut self, key: Bin, value: Bin) {
+        self.delete.remove(&key);
+        self.values.insert(key, value);
+    }
+
+    fn delete_value(&mut self, key: Bin) {
+        self.values.remove(&key);
+        self.delete.insert(key);
+    }
+
+    pub fn get_value(&self, key: &Bin) -> Option<&Bin> {
+        self.values.get(key)
+    }
+
+    pub fn is_value_deleted(&self, key: &Bin) -> bool {
+        self.delete.contains(key)
+    }
+
+    pub fn get_new_events(&self, plot: &PlotID) -> Option<&HashSet<Rc<PlotEvent>>> {
+        self.new_events.get(plot)
+    }
+
+    pub fn get_removed_events(&self, plot: &PlotID) -> Option<&HashSet<Rc<PlotEvent>>> {
+        self.removed_events.get(plot)
+    }
+
+    pub fn is_event_removed(&self, event: &PlotEvent) -> bool {
+        if let Some(plot) = self.removed_events.get(&event.from) {
+            plot.contains(event)
+        } else { false }
+    }
+
+    // pub fn get_event_changes(&self) -> EventDiffIter {
+    //     /// Iterate over each Plot we have information on and give a list of all things to remove
+    //     /// for it and all things to add to it
+    //     unimplemented!()
+    // }
+
+    // pub fn get_value_changes(&self) -> ValueDiffIter {
+    //     /// Iterate over each key we have information on and return if it is deleted or the new
+    //     /// value it should be set to
+    //     unimplemented!()
+    // }
+}
+
 
 
 /// This is a wrapper around a RocksDB instance to provide the access and modifications needed for

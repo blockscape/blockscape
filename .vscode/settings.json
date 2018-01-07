@@ -1,8 +1,10 @@
 {
     "cSpell.words": [
+        "blockchain",
         "deserialization",
         "deserialize",
-        "deserialized"
+        "deserialized",
+        "struct"
     ],
     "files.associations": {
         "*.bats": "shellscript"

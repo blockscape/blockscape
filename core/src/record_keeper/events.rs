@@ -23,11 +23,11 @@ impl Event for RecordEvent {}
 
 
 /// An event representing something which happened on or between plots.
-#[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize, Hash)]
 pub struct PlotEvent {
-    from: PlotID,
-    to: PlotID,
-    event: RawEvent
+    pub from: PlotID,
+    pub to: PlotID,
+    pub event: RawEvent
 }
 impl Event for PlotEvent {}
 
