@@ -51,6 +51,9 @@ impl Default for HeadRef {
 }
 
 
+type EventSet = HashSet<Rc<PlotEvent>>;
+type PlotDiffEvents = HashMap<PlotID, EventSet>;
+
 /// A set of changes which define the difference from a given network state to another though
 /// walking the blockchain from one point to another. This should be used to compile a list of
 /// changes to the network state without having to write to the same place in the DB multiple times.
@@ -67,9 +70,9 @@ pub struct NetDiff {
     /// Keys which are to be removed from the DB
     delete: HashSet<Bin>,
     /// Events which need to be added to plots
-    new_events: HashMap<PlotID, HashSet<Rc<PlotEvent>>>,
+    new_events: PlotDiffEvents,
     /// Events which need to be removed from plots
-    removed_events: HashMap<PlotID, HashSet<Rc<PlotEvent>>>
+    removed_events: PlotDiffEvents
 }
 
 impl NetDiff {
@@ -84,7 +87,7 @@ impl NetDiff {
     }
 
     /// Attempt to remove an event from list and return whether it was was there or not.
-    fn _remove(plots: &mut HashMap<PlotID, HashSet<Rc<PlotEvent>>>, event: &Rc<PlotEvent>) -> bool {
+    fn _remove(plots: &mut HashMap<PlotID, EventSet>, event: &Rc<PlotEvent>) -> bool {
         if // check if it in the `from` plot
             if let Some(plot_a) = plots.get_mut(&event.from) {
                 plot_a.remove(event)
@@ -98,7 +101,7 @@ impl NetDiff {
         } else { false }
     }
 
-    fn _add(plots: &mut HashMap<PlotID, HashSet<Rc<PlotEvent>>>, event: Rc<PlotEvent>) {
+    fn _add(plots: &mut HashMap<PlotID, EventSet>, event: Rc<PlotEvent>) {
         // add first to the `from` plot
         if // check if we need to create a new entry (if not go ahead and append it)
             if let Some(plot_a) = plots.get_mut(&event.from) {
@@ -147,49 +150,95 @@ impl NetDiff {
         }
     }
 
+    /// Mark a value to be updated at a given key.
     fn set_value(&mut self, key: Bin, value: Bin) {
         self.delete.remove(&key);
         self.values.insert(key, value);
     }
 
+    /// Mark a key and its value to be removed from the state.
     fn delete_value(&mut self, key: Bin) {
         self.values.remove(&key);
         self.delete.insert(key);
     }
 
+    /// Retrieve the value if any changes have been specified to it. Will return none if no changes
+    /// are recorded or if it is to be deleted.
     pub fn get_value(&self, key: &Bin) -> Option<&Bin> {
         self.values.get(key)
     }
 
+    /// Returns whether or not a given value is marked for deletion.
     pub fn is_value_deleted(&self, key: &Bin) -> bool {
         self.delete.contains(key)
     }
 
-    pub fn get_new_events(&self, plot: &PlotID) -> Option<&HashSet<Rc<PlotEvent>>> {
+    /// Retrieve a list of new events for a given plot.
+    pub fn get_new_events(&self, plot: &PlotID) -> Option<&EventSet> {
         self.new_events.get(plot)
     }
 
-    pub fn get_removed_events(&self, plot: &PlotID) -> Option<&HashSet<Rc<PlotEvent>>> {
-        self.removed_events.get(plot)
+    /// Retrieves a list of events to be removed from a given plot.
+    pub fn get_removed_events(&self, plot: &PlotID) -> Option<&EventSet> {
+        self.removed_events.get(plot) //TODO: avoid cloning?
     }
 
+    /// Check if an event has been marked for removal from its associated plots.
     pub fn is_event_removed(&self, event: &PlotEvent) -> bool {
         if let Some(plot) = self.removed_events.get(&event.from) {
             plot.contains(event)
         } else { false }
     }
 
-    // pub fn get_event_changes(&self) -> EventDiffIter {
-    //     /// Iterate over each Plot we have information on and give a list of all things to remove
-    //     /// for it and all things to add to it
-    //     unimplemented!()
-    // }
+    /// Get an iterator over each Plot we have information on and give a list of all things to
+    /// remove for it and all things to add to it. See `EventDiffIter`.
+    pub fn get_event_changes<'a>(&'a self) -> EventDiffIter {
+        let keys = {
+            let added: HashSet<_> = self.new_events.keys().cloned().collect();
+            let removed: HashSet<_> = self.removed_events.keys().cloned().collect();
+            added.union(&removed).cloned().collect::<Vec<_>>()
+        };
+        
+        EventDiffIter(self, keys.into_iter())
+    }
 
-    // pub fn get_value_changes(&self) -> ValueDiffIter {
-    //     /// Iterate over each key we have information on and return if it is deleted or the new
-    //     /// value it should be set to
-    //     unimplemented!()
-    // }
+    /// Get an iterator over each key we have information on and return if it is deleted or the new
+    /// value it should be set to. See `ValueDiffIter`.
+    pub fn get_value_changes<'a>(&'a self) -> ValueDiffIter {
+        let keys: Vec<&'a Bin> = {
+            let added: HashSet<_> = self.values.keys().collect();
+            let removed: HashSet<_> = self.delete.iter().collect();
+            added.union(&removed).cloned().collect()
+        };
+
+        ValueDiffIter(self, keys.into_iter())
+    }
+}
+
+use std::vec::IntoIter as VecIntoIter;
+
+/// Iterate over all plots we have event changes to make to. The first value is the key, the next is
+/// the list of events to remove, and finally it has the list of new events,
+pub struct EventDiffIter<'a>(&'a NetDiff, VecIntoIter<PlotID>);
+impl<'a> Iterator for EventDiffIter<'a> {
+    type Item = (PlotID, Option<&'a EventSet>, Option<&'a EventSet>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.1.next().map(|k| (k, self.0.get_removed_events(&k), self.0.get_new_events(&k)) )
+    }
+}
+
+/// Iterate over all values we have changes recorded for. The first part of the Item is the key, and
+/// the second part is the value, if the value is None, then the key should be deleted from the DB.
+pub struct ValueDiffIter<'a>(&'a NetDiff, VecIntoIter<&'a Bin>);
+impl<'a> Iterator for ValueDiffIter<'a> {
+    type Item = (&'a Bin, Option<&'a Bin>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.1.next().map(|k| {
+            (k, self.0.get_value(k))
+        })
+    }
 }
 
 
