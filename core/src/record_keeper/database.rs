@@ -4,10 +4,9 @@ use env;
 use primitives::{U256, U160, Mutation, Change, Block, BlockHeader, Txn};
 use rocksdb::{DB, Options};
 use rocksdb::Error as RocksDBError;
-use std::collections::{HashMap, HashSet, BTreeMap};
+use std::collections::{HashMap, BTreeMap};
 use std::path::PathBuf;
-use std::rc::Rc;
-use super::{Storable, PlotEvent, PlotEvents, events, PlotID};
+use super::{Storable, PlotEvent, PlotEvents, events, PlotID, NetDiff};
 use super::error::*;
 
 pub const BLOCKCHAIN_POSTFIX: &[u8] = b"b";
@@ -47,197 +46,6 @@ impl Default for HeadRef {
     fn default() -> HeadRef {
         use primitives::u256::U256_ZERO;
         HeadRef{block: U256_ZERO, height: 0}
-    }
-}
-
-
-type EventSet = HashSet<Rc<PlotEvent>>;
-type PlotDiffEvents = HashMap<PlotID, EventSet>;
-
-/// A set of changes which define the difference from a given network state to another though
-/// walking the blockchain from one point to another. This should be used to compile a list of
-/// changes to the network state without having to write to the same place in the DB multiple times.
-/// This is designed to be like a diff, so if an event is added but it had been marked as deleted,
-/// then it will simply remove it from the list of deleted under the assumption that the net change
-/// should be zero.
-pub struct NetDiff {
-    /// The initial block this is changing from
-    pub from: U256,
-    /// The block all these changes lead to (if applied to the initial block)
-    pub to: U256,
-    /// New key-value sets to be added (or overwritten)
-    values: HashMap<Bin, Bin>,
-    /// Keys which are to be removed from the DB
-    delete: HashSet<Bin>,
-    /// Events which need to be added to plots
-    new_events: PlotDiffEvents,
-    /// Events which need to be removed from plots
-    removed_events: PlotDiffEvents
-}
-
-impl NetDiff {
-    fn new(from: U256, to: U256) -> NetDiff {
-        NetDiff {
-            from, to,
-            values: HashMap::new(),
-            delete: HashSet::new(),
-            new_events: HashMap::new(),
-            removed_events: HashMap::new()
-        }
-    }
-
-    /// Attempt to remove an event from list and return whether it was was there or not.
-    fn _remove(plots: &mut HashMap<PlotID, EventSet>, event: &Rc<PlotEvent>) -> bool {
-        if // check if it in the `from` plot
-            if let Some(plot_a) = plots.get_mut(&event.from) {
-                plot_a.remove(event)
-            } else { false } // did not remove because plot is not listed
-        { //it is, so remove from the `to` plot if unique
-            if event.from != event.to {
-                let plot_b = plots.get_mut(&event.to)
-                        .expect("Events to be registered to both from and to plots");
-                plot_b.remove(event);
-            } true
-        } else { false }
-    }
-
-    fn _add(plots: &mut HashMap<PlotID, EventSet>, event: Rc<PlotEvent>) {
-        // add first to the `from` plot
-        if // check if we need to create a new entry (if not go ahead and append it)
-            if let Some(plot_a) = plots.get_mut(&event.from) {
-                if plot_a.contains(&event) {return;}
-                plot_a.insert(event.clone());
-                false
-            } else { true }
-        { // insert a new entry
-            let mut plot_a = HashSet::new();
-            plot_a.insert(event.clone());
-            plots.insert(event.from, plot_a);
-        }
-
-        // check if we need to handle the `to` plot and handle it if so
-        if event.from == event.to {return;}
-        if // check if we need to create a new entry (if not go ahead and append it)
-            if let Some(plot_b) = plots.get_mut(&event.to) {
-                let not_already_present = plot_b.insert(event.clone());
-                assert!(not_already_present);
-                false
-            } else { true }
-        { // insert new entry
-            let mut plot_b = HashSet::new();
-            plot_b.insert(event.clone());
-            plots.insert(event.to, plot_b);
-        }
-    }
-
-    /// Add an event to the appropriate plots
-    fn add_event(&mut self, event: PlotEvent) {
-        let event = Rc::new(event);
-
-        //if it was in removed events, then we don't need to add it
-        if !Self::_remove(&mut self.removed_events, &event) {
-            Self::_add(&mut self.new_events, event);
-        }
-    }
-
-    /// Remove an event from the appropriate plots (or mark it to be removed).
-    fn remove_event(&mut self, event: PlotEvent) {
-        let event = Rc::new(event);
-
-        //if it was in new events events, then we don't need to add it be removed
-        if !Self::_remove(&mut self.new_events, &event) {
-            Self::_add(&mut self.removed_events, event)
-        }
-    }
-
-    /// Mark a value to be updated at a given key.
-    fn set_value(&mut self, key: Bin, value: Bin) {
-        self.delete.remove(&key);
-        self.values.insert(key, value);
-    }
-
-    /// Mark a key and its value to be removed from the state.
-    fn delete_value(&mut self, key: Bin) {
-        self.values.remove(&key);
-        self.delete.insert(key);
-    }
-
-    /// Retrieve the value if any changes have been specified to it. Will return none if no changes
-    /// are recorded or if it is to be deleted.
-    pub fn get_value(&self, key: &Bin) -> Option<&Bin> {
-        self.values.get(key)
-    }
-
-    /// Returns whether or not a given value is marked for deletion.
-    pub fn is_value_deleted(&self, key: &Bin) -> bool {
-        self.delete.contains(key)
-    }
-
-    /// Retrieve a list of new events for a given plot.
-    pub fn get_new_events(&self, plot: &PlotID) -> Option<&EventSet> {
-        self.new_events.get(plot)
-    }
-
-    /// Retrieves a list of events to be removed from a given plot.
-    pub fn get_removed_events(&self, plot: &PlotID) -> Option<&EventSet> {
-        self.removed_events.get(plot) //TODO: avoid cloning?
-    }
-
-    /// Check if an event has been marked for removal from its associated plots.
-    pub fn is_event_removed(&self, event: &PlotEvent) -> bool {
-        if let Some(plot) = self.removed_events.get(&event.from) {
-            plot.contains(event)
-        } else { false }
-    }
-
-    /// Get an iterator over each Plot we have information on and give a list of all things to
-    /// remove for it and all things to add to it. See `EventDiffIter`.
-    pub fn get_event_changes<'a>(&'a self) -> EventDiffIter {
-        let keys = {
-            let added: HashSet<_> = self.new_events.keys().cloned().collect();
-            let removed: HashSet<_> = self.removed_events.keys().cloned().collect();
-            added.union(&removed).cloned().collect::<Vec<_>>()
-        };
-        
-        EventDiffIter(self, keys.into_iter())
-    }
-
-    /// Get an iterator over each key we have information on and return if it is deleted or the new
-    /// value it should be set to. See `ValueDiffIter`.
-    pub fn get_value_changes<'a>(&'a self) -> ValueDiffIter {
-        let keys: Vec<&'a Bin> = {
-            let added: HashSet<_> = self.values.keys().collect();
-            let removed: HashSet<_> = self.delete.iter().collect();
-            added.union(&removed).cloned().collect()
-        };
-
-        ValueDiffIter(self, keys.into_iter())
-    }
-}
-
-use std::vec::IntoIter as VecIntoIter;
-
-/// Iterate over all plots we have event changes to make to. The first value is the key, the next is
-/// the list of events to remove, and finally it has the list of new events,
-pub struct EventDiffIter<'a>(&'a NetDiff, VecIntoIter<PlotID>);
-impl<'a> Iterator for EventDiffIter<'a> {
-    type Item = (PlotID, Option<&'a EventSet>, Option<&'a EventSet>);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.1.next().map(|k| (k, self.0.get_removed_events(&k), self.0.get_new_events(&k)) )
-    }
-}
-
-/// Iterate over all values we have changes recorded for. The first part of the Item is the key, and
-/// the second part is the value, if the value is None, then the key should be deleted from the DB.
-pub struct ValueDiffIter<'a>(&'a NetDiff, VecIntoIter<&'a Bin>);
-impl<'a> Iterator for ValueDiffIter<'a> {
-    type Item = (&'a Bin, Option<&'a Bin>);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.1.next().map(|k| {
-            (k, self.0.get_value(k))
-        })
     }
 }
 
@@ -582,19 +390,20 @@ impl Database {
         }
     }
 
-    /// Walk the network state to a given block in the block chain
-    pub fn walk(&mut self, b_block: &U256) -> Result<(), Error> {
-        let a_block = self.head.block;
-        assert!(!b_block.is_zero());
-        
+    /// Find the path between `a_block` and `b_block` along the blockchain and return the blocks
+    /// sorted by height to get to the main chain, and then to go back up to `b_block`.
+    /// Specifically, the first part of the tuple is the sequence of blocks down to the latest
+    /// common ancestor, and the second is the blocks up to `b_block` from the latest common
+    /// ancestor.
+    pub fn calculate_block_path(&self, a_block: &U256, b_block: &U256) -> Result<(BTreeMap<u64, U256>, BTreeMap<u64, U256>), Error> {
         { // verify that we are not crossing shards within reason
-            let a_head = self.get_block_header(&a_block)?;
+            let a_head = self.get_block_header(a_block)?;
             let b_head = self.get_block_header(b_block)?;
             assert!(a_head.shard == b_head.shard || a_head.shard.is_zero() || b_head.shard.is_zero());
         }
 
         let (a_hashes, b_hashes, last_a, last_b) =
-                self.latest_common_ancestor(&a_block, b_block)?;
+                self.latest_common_ancestor(a_block, b_block)?;
         let (a_dist, b_dist) = Self::intersect_dist(&a_hashes, &b_hashes, &last_a, &last_b);
 
         let a_height = self.head.height;
@@ -630,7 +439,7 @@ impl Database {
                 last = Some((h, b));
             }{ // check last element
                 let (h, b) = last.unwrap();
-                assert_eq!(a_block, b);
+                assert_eq!(*a_block, b);
                 assert_eq!(a_height, h);
             }
 
@@ -649,6 +458,37 @@ impl Database {
                 assert_eq!(b_height, h);
             }
         }
+
+        Ok((a_heights, b_heights))
+    }
+
+    /// Calculate the changes needed to move the network state from `a_block` to `b_block`. This
+    /// walks the network state and creates a Diff object of the changes. To walk backwards on the
+    /// chain it requires use of contra transactions, so the `a_block` must be either come before
+    /// `b_block` or be on the main chain to work.
+    pub fn get_diff(&self, a_block: &U256, b_block: &U256) -> Result<NetDiff, Error> {
+        let (a_heights, b_heights) = self.calculate_block_path(a_block, b_block)?;
+        
+        // construct the diff
+        let mut diff = NetDiff::new(*a_block, *b_block);
+        // go down `a` chain and then go up `b` chain.
+        for (h, b) in a_heights.iter().rev() {
+            assert!(*h > 0);
+            diff.apply_contra(self.get_contra(&b)?);
+        }
+        for (h, b) in b_heights {
+            assert!(h > 1);
+            let block = self.get_block(&b)?;
+            diff.apply_mutation(self.get_mutation(&block)?);
+        } Ok(diff)
+    }
+
+    /// Walk the network state to a given block in the block chain
+    pub fn walk(&mut self, b_block: &U256) -> Result<(), Error> {
+        let a_block = self.head.block;
+        assert!(!b_block.is_zero());
+
+        let (a_heights, b_heights) = self.calculate_block_path(&a_block, b_block)?;
 
         // go down `a` chain and then go up `b` chain.
         for (h, b) in a_heights.iter().rev() {
