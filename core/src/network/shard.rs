@@ -1,6 +1,7 @@
 use std::cell::*;
 use std::cmp::min;
 use rand;
+use rand::Rng;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -10,7 +11,7 @@ use std::ops::Deref;
 use std::rc::Rc;
 
 use network::client::{ShardMode, NetworkActions};
-use network::context::NetworkContext;
+use network::context::*;
 use network::node::{Node, NodeRepository};
 use network::session::{Session, Message, SessionInfo, ByeReason, Packet};
 use primitives::{U256, U160};
@@ -223,6 +224,22 @@ impl ShardInfo {
 
     pub fn add_connect_queue(&self, node: Arc<Node>) {
         self.connect_queue.borrow_mut().insert(node);
+    }
+
+    /// Try to give the provided job to a randomly selected node in the network
+    pub fn assign_job(&self, job: &Rc<NetworkJob>) -> bool {
+        let s = self.sessions.borrow();
+        let mut rng = rand::thread_rng();
+        let mut pulls: Vec<&Session> = s.values().collect();
+        rng.shuffle(&mut pulls);
+
+        for pull in pulls {
+            if pull.assign_job(job) {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Call to set this shard to a state where all nodes are disconnected and data should stop being validated/tracked

@@ -22,13 +22,6 @@ pub struct BlockPackage {
     txns: Vec<Txn>
 }
 
-impl<'a> From<&'a [u8]> for BlockPackage {
-    #[inline]
-    fn from(data: &'a [u8]) -> BlockPackage {
-        BlockPackage::unzip(data)
-    }
-}
-
 impl BlockPackage {
     /// Create a new, empty blockpackage.
     fn new() -> BlockPackage {
@@ -120,15 +113,18 @@ impl BlockPackage {
 
     /// Convert the `BlockPackage` into a compressed binary representation which can be easily
     /// transferred or archived.
-    pub fn zip(&self) -> Vec<u8> {
-        let raw = bincode::serialize(self, bincode::Infinite).unwrap();
-        compress(&raw).unwrap()
+    pub fn zip(&self) -> Result<Vec<u8>, Error> {
+        let raw = bincode::serialize(self, bincode::Infinite).map_err(|_| Error::Deserialize("".into()))?;
+        compress(&raw).map_err(|_| Error::Deserialize("".into()))
     }
 
     /// Unpack a compressed block binary representation of the `BlockPackage`.
-    pub fn unzip(package: &[u8]) -> BlockPackage {
-        let raw = decompress(package).unwrap();
-        bincode::deserialize(&raw).unwrap()
+    pub fn unzip(package: &[u8]) -> Result<(BlockPackage, usize), Error> {
+        let raw = decompress(package).map_err(|_| Error::Deserialize("".into()))?;
+        let s = raw.len();
+        bincode::deserialize(&raw)
+            .map(|r| (r, s))
+            .map_err(|_| Error::Deserialize("".into()))
     }
 
     /// Unpacks the information within into a more useful form.
@@ -148,5 +144,15 @@ impl BlockPackage {
             }).collect::<Vec<Block>>();
         
         (blocks, txns.into_iter().collect())
+    }
+
+    /// Get the last block hash serviced by this block package
+    pub fn last_hash(&self) -> U256 {
+        self.blocks.last().unwrap().0.calculate_hash()
+    }
+
+    /// Returns the hash prior to the first block serviced by this block package
+    pub fn starts_at(&self) -> U256 {
+        self.blocks.first().unwrap().0.prev
     }
 }

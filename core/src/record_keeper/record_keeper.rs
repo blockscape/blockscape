@@ -36,7 +36,10 @@ pub struct RecordKeeper {
 
     /// A CPU pool of a single thread dedicated to processing work related to RecordKeeper. Work can be passed to it. Future compatible.
     /// It is reccomended to spawn major work for the DB on this thread; one can also spawn their own thread for smaller, higher priority jobs.
-    worker: futures_cpupool::CpuPool
+    worker: futures_cpupool::CpuPool,
+
+    /// A larger work queue designed for smaller, time sensitive jobs
+    priority_worker: futures_cpupool::CpuPool
 }
 
 impl RecordKeeper {
@@ -51,12 +54,17 @@ impl RecordKeeper {
             game_listeners: RwLock::new(ListenerPool::new()),
             key_hash: hash_pub_key(&key.public_key_to_der().unwrap()),
             key,
-            worker: futures_cpupool::Builder::new().pool_size(1).create()
+            worker: futures_cpupool::Builder::new().pool_size(1).create(),
+            priority_worker: futures_cpupool::Builder::new().pool_size(3).create()
         }
     }
 
     pub fn get_worker(&self) -> &futures_cpupool::CpuPool {
         &self.worker
+    }
+
+    pub fn get_priority_worker(&self) -> &futures_cpupool::CpuPool {
+        &self.priority_worker
     }
 
     /// Construct a new RecordKeeper by opening a database. This will create a new database if the
@@ -194,14 +202,24 @@ impl RecordKeeper {
         Ok(true)
     }
 
-    /// Import a package of blocks and transactions.
-    pub fn import_pkg(&self, pkg: BlockPackage) -> Result<(), Error> {
+    /// Import a package of blocks and transactions. Returns the hash of the last block imported.
+    pub fn import_pkg(&self, pkg: BlockPackage) -> Result<U256, Error> {
         let (blocks, txns) = pkg.unpack();
+
+        if blocks.is_empty() {
+            // it is invalid to import an empty block package
+            return Err(Error::Deserialize("Empty Block Package".into()));
+        }
+
+        let last = blocks.last().unwrap().calculate_hash();
+
         for txn in txns {
             self.add_pending_txn(&txn.1)?;
         } for block in blocks {
             self.add_block(&block)?;
-        } Ok(())
+        }
+        
+        Ok(last)
     }
 
     /// Find a validator's public key given the hash. If they are not found, then they are not a

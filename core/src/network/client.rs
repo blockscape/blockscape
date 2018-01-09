@@ -14,12 +14,13 @@ use futures::prelude::*;
 use futures::sync::*;
 use futures::sync::mpsc::{UnboundedSender, unbounded};
 use futures::future;
+use futures::unsync;
 
 use tokio_core::reactor::*;
 use tokio_core::net::{UdpSocket, UdpCodec};
 
 use env::get_client_name;
-use network::context::NetworkContext;
+use network::context::*;
 use network::node::{Node, NodeRepository, NodeEndpoint, LocalNode};
 //use network::ntp;
 use network::session;
@@ -46,7 +47,8 @@ const NODE_CHECK_INTERVAL: u64 = 5000; // every 5 seconds
 //const NODE_NTP_INTERVAL: u64 = 20 * 60000; // every 20 minutes
 
 /// The maximum amount of data that can be in a single message object (the object itself can still be in split into pieces at the datagram level)
-pub const MAX_PACKET_SIZE: usize = 1024 * 128;
+/// Right now it is set to 10MB
+pub const MAX_PACKET_SIZE: usize = 10 * 1024 * 1024;
 
 //#[derive(Debug)]
 pub struct ClientConfig {
@@ -204,12 +206,11 @@ pub struct Client {
 }
 
 impl Client {
-    fn new(config: ClientConfig, rk: Arc<RecordKeeper>, core: &Core) -> Arc<Client> {
-
+    fn new(config: ClientConfig, rk: Arc<RecordKeeper>, core: &Core, chain_tx: unsync::mpsc::UnboundedSender<Rc<NetworkJob>>) -> Client {
         let pkeyder = config.private_key.public_key_to_der().expect("Could not convert node key to der!");
         let epoint = NodeEndpoint { host: config.hostname.clone(), port: config.port };
         
-        let client = Client {
+        Client {
             context: Rc::new(NetworkContext {
                 rk: Arc::clone(&rk),
                 config: config,
@@ -221,15 +222,12 @@ impl Client {
                 },
                 event_loop: core.handle(), 
                 sink: Cell::new(None),
+                job_targets: chain_tx,
             }),
             shards: init_array!(RefCell<Option<ShardInfo>>, 255, RefCell::new(None)),
             num_shards: Cell::new(0),
-            curr_port: Cell::new(0),
-        };
-
-        let c = Arc::new(client);
-        
-        c
+            curr_port: Cell::new(0)
+        }
     }
 
     /// Connect to the specified shard by shard ID. On success, returns the number of pending connections (the number of nodes)
@@ -379,7 +377,8 @@ impl Client {
             let mut core = Core::new().expect("Could not create network reactor core");
             let (nout, nin) = UdpSocket::bind(&config.bind_addr, &core.handle()).expect("Could not bind P2P socket!").framed(P2PCodec).split();
 
-            let t = Rc::new(Client::new(config, rk, &core));
+            let (chain_tx, chain_rx) = unsync::mpsc::unbounded();
+            let t = Rc::new(Client::new(config, rk, &core, chain_tx));
 
             t.context.sink.set(Some(Box::new(nout)));
 
@@ -430,6 +429,20 @@ impl Client {
                 future::ok(())
             });
 
+            this = Rc::clone(&t);
+            let chain_handler = chain_rx.for_each(move |j| {
+
+                // URGENT: can we merge this with an existing job?
+
+                if let Some(ref shard) = *this.shards[this.resolve_port(&j.network_id) as usize].borrow() {
+                    if !shard.assign_job(&j) {
+                        warn!("Could not assign job in network: {}", j.network_id);
+                    }
+                }
+
+                Ok::<(), ()>(())
+            });
+
             /*let ntpTask = Interval::new_at(Instant::now(), Duration::from_millis(NODE_NTP_INTERVAL))?
             .and_then(|_| {
                 match ntp::calc_drift(this2.config.ntp_servers[0].as_str()) {
@@ -469,6 +482,7 @@ impl Client {
                 });
 
             t.context.event_loop.spawn(msg_handler);
+            t.context.event_loop.spawn(chain_handler);
             t.context.event_loop.spawn(packet_listener);
             //handle.spawn(ntpTask);
             t.context.event_loop.spawn(session_check_task);
