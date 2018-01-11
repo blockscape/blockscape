@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::rc::Rc;
+use std::rc::*;
 use std::borrow::Borrow;
 use std::thread;
 use std::time::Duration;
@@ -200,13 +200,16 @@ pub struct Client {
     /// Data structures associated with shard-specific information
     shards: [RefCell<Option<ShardInfo>>; 255],
 
+    /// All the currently active jobs are kept here. For augmentation.
+    jobs: RefCell<Vec<Weak<NetworkJob>>>,
+
     curr_port: Cell<u8>,
 
     num_shards: Cell<u8>
 }
 
 impl Client {
-    fn new(config: ClientConfig, rk: Arc<RecordKeeper>, core: &Core, chain_tx: unsync::mpsc::UnboundedSender<Rc<NetworkJob>>) -> Client {
+    fn new(config: ClientConfig, rk: Arc<RecordKeeper>, core: &Core, chain_tx: unsync::mpsc::UnboundedSender<(Rc<NetworkJob>, Option<U256>)>) -> Client {
         let pkeyder = config.private_key.public_key_to_der().expect("Could not convert node key to der!");
         let epoint = NodeEndpoint { host: config.hostname.clone(), port: config.port };
         
@@ -225,6 +228,7 @@ impl Client {
                 job_targets: chain_tx,
             }),
             shards: init_array!(RefCell<Option<ShardInfo>>, 255, RefCell::new(None)),
+            jobs: RefCell::new(Vec::new()),
             num_shards: Cell::new(0),
             curr_port: Cell::new(0)
         }
@@ -430,13 +434,43 @@ impl Client {
             });
 
             this = Rc::clone(&t);
-            let chain_handler = chain_rx.for_each(move |j| {
+            let chain_handler = chain_rx.for_each(move |(j, augmenter)| {
 
-                // URGENT: can we merge this with an existing job?
+                // perform job merging if possible, break if we succeeed
+                if let Some(h) = augmenter {
+                    let mut jobs = this.jobs.borrow_mut();
+                    let mut found = false;
+                    let mut x = 0;
+                    while x < jobs.len() {
+                        if let Some(oje) = jobs[x].upgrade() {
+                            if oje.get_target() == h {
+                                // change the existing job rather than creating a new one.
+                                oje.augment(j.get_target());
+                                found = true;
+                            }
+                            else if j.get_target() == oje.get_target() && Rc::ptr_eq(&j, &oje) {
+                                // duplicate jobs
+                                found = true;
+                            }
+
+                            x += 1;
+                        }
+                        else {
+                            jobs.swap_remove(x);
+                        }
+                    }
+
+                    if found {
+                        return Ok::<(), ()>(());
+                    }
+                }
 
                 if let Some(ref shard) = *this.shards[this.resolve_port(&j.network_id) as usize].borrow() {
                     if !shard.assign_job(&j) {
                         warn!("Could not assign job in network: {}", j.network_id);
+                    }
+                    else {
+                        this.jobs.borrow_mut().push(Rc::downgrade(&j))
                     }
                 }
 

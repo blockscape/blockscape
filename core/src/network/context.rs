@@ -83,8 +83,9 @@ pub struct NetworkContext {
     /// The node object which represents my own system
     pub my_node: Node,
 
-    /// A place to chain data which should be retrieved
-    pub job_targets: unsync::mpsc::UnboundedSender<Rc<NetworkJob>>,
+    /// A place to chain data which should be retrieved. The second value in the tuple, a hash, is used to
+    /// identify a possible augmentation. In this case, it is always the previous
+    pub job_targets: unsync::mpsc::UnboundedSender<(Rc<NetworkJob>, Option<U256>)>,
 }
 
 impl NetworkContext {

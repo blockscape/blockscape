@@ -27,6 +27,9 @@ pub const PING_RETENTION: f32 = 40.0;
 /// Number of milliseconds to wait before declaring a ping failed
 pub const PING_TIMEOUT: i64 = 3000;
 
+/// Number of milliseconds to wait before declaring a job failed
+pub const JOB_TIMEOUT: i64 = 5000;
+
 /// The number of strikes which may accumulate before declaring the connection timed out
 pub const TIMEOUT_TOLERANCE: u64 = 3;
 
@@ -382,6 +385,7 @@ impl Session {
 
                 Message::NewBlock(ref block) => {
                     let d = block.clone();
+                    let prev = block.prev;
                     let rk = Arc::clone(&self.context.rk);
                     let lcontext = Rc::clone(&self.context);
                     let network_id = self.network_id;
@@ -394,7 +398,7 @@ impl Session {
                                 // submit a new job
                                 if let Ok(h) = bincode::deserialize(&hash) {
                                     if let Err(e) = lcontext.job_targets.unbounded_send(
-                                        NetworkJob::new(network_id, h, lcontext.rk.get_current_block_hash(), None)
+                                        (NetworkJob::new(network_id, h, lcontext.rk.get_current_block_hash(), None), Some(prev))
                                     ) {
                                         // should never happen
                                         warn!("Could not buffer new network job: {}", e);
@@ -572,7 +576,7 @@ impl Session {
 
                                     if pkg.last_hash() != job.get_target() && c < MAX_JOB_SIZE {
                                         // resubmit the job because we are ready to get more data
-                                        if let Err(e) = lcontext.job_targets.unbounded_send(Rc::clone(job)) {
+                                        if let Err(e) = lcontext.job_targets.unbounded_send((Rc::clone(job), None)) {
                                             // should never happen
                                             warn!("Could not buffer changed network job: {}", e);
                                         };
@@ -592,7 +596,7 @@ impl Session {
                                                 job.concurrent.set(c);
                                                 if imported_to != job.get_target() && c < MAX_JOB_SIZE {
                                                     // resubmit the job because we are ready to get more data
-                                                    if let Err(e) = lcontext2.job_targets.unbounded_send(Rc::clone(job)) {
+                                                    if let Err(e) = lcontext2.job_targets.unbounded_send((Rc::clone(job), None)) {
                                                         // should never happen
                                                         warn!("Could not buffer changed network job: {}", e);
                                                     };
@@ -624,7 +628,7 @@ impl Session {
                                                 // the entire chain of pending jobs in the process
                                                 job.predicted_cur.set(cbh);
 
-                                                if let Err(e) = lcontext2.job_targets.unbounded_send(Rc::clone(job)) {
+                                                if let Err(e) = lcontext2.job_targets.unbounded_send((Rc::clone(job), None)) {
                                                     // should never happen
                                                     warn!("Could not buffer changed network job: {}", e);
                                                 };
@@ -654,7 +658,7 @@ impl Session {
 
                                 // we have to resubmit any job we have
                                 if let Some((ref job, ref _time)) = j {
-                                    if let Err(e) = lcontext.job_targets.unbounded_send(Rc::clone(job)) {
+                                    if let Err(e) = lcontext.job_targets.unbounded_send((Rc::clone(job), None)) {
                                         // should never happen
                                         warn!("Could not buffer changed network job: {}", e);
                                     };
@@ -752,8 +756,14 @@ impl Session {
         }
     }
 
-    pub fn check_job(&self) {
+    pub fn check_job(&self, _: &mut NetworkActions) {
 
+        if let Some((job, time)) = self.current_job.replace(None) {
+            // has it expired?
+            if time.diff(&Time::current_local()) < Time::from_milliseconds(JOB_TIMEOUT) {
+                self.current_job.set(Some((job, time)));
+            }
+        }
     }
 
     pub fn find_nodes(&self, network_id: &U256, actions: &mut NetworkActions) {

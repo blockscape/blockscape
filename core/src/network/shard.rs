@@ -149,6 +149,7 @@ impl ShardInfo {
 
         for (addr, sess) in s.iter_mut() {
             sess.check_conn(actions);
+            sess.check_job(actions);
 
             if let Some(d) = sess.is_done() {
                 removed.push(addr.clone());
