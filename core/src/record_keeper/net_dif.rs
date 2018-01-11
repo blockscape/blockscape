@@ -1,11 +1,7 @@
 use primitives::{Change, Mutation, U256};
 use bin::Bin;
-use super::{PlotEvent, PlotID};
+use super::{PlotEvent, PlotEvents, PlotID, events};
 use std::collections::{HashMap, HashSet};
-use multimap::MultiMap;
-
-type EventSet = MultiMap<u64, PlotEvent>;
-type PlotEvents = HashMap<PlotID, EventSet>;
 
 /// A set of changes which define the difference from a given network state to another though
 /// walking the blockchain from one point to another. This should be used to compile a list of
@@ -23,9 +19,9 @@ pub struct NetDiff {
     /// Keys which are to be removed from the DB
     delete: HashSet<Bin>,
     /// Events which need to be added to plots
-    new_events: PlotEvents,
+    new_events: HashMap<PlotID, PlotEvents>,
     /// Events which need to be removed from plots
-    removed_events: PlotEvents
+    removed_events: HashMap<PlotID, PlotEvents>
 }
 
 impl NetDiff {
@@ -42,7 +38,7 @@ impl NetDiff {
     /// Add an event to the appropriate plot
     pub fn add_event(&mut self, id: PlotID, tick: u64, event: PlotEvent) {
         //if it was in removed events, then we don't need to add it
-        if !Self::remove(&mut self.removed_events, &id, tick, &event) {
+        if !Self::remove(&mut self.removed_events, id, tick, &event) {
             Self::add(&mut self.new_events, id, tick, event);
         }
     }
@@ -50,7 +46,7 @@ impl NetDiff {
     /// Remove an event from the appropriate plot (or mark it to be removed).
     pub fn remove_event(&mut self, id: PlotID, tick: u64, event: PlotEvent) {
         //if it was in new events events, then we don't need to add it be removed
-        if !Self::remove(&mut self.new_events, &id, tick, &event) {
+        if !Self::remove(&mut self.new_events, id, tick, &event) {
             Self::add(&mut self.removed_events, id, tick, event)
         }
     }
@@ -96,13 +92,13 @@ impl NetDiff {
     }
 
     /// Retrieve a list of new events for a given plot.
-    pub fn get_new_events(&self, plot: &PlotID) -> Option<&EventSet> {
-        self.new_events.get(plot)
+    pub fn get_new_events(&self, plot: PlotID) -> Option<&PlotEvents> {
+        self.new_events.get(&plot)
     }
 
     /// Retrieves a list of events to be removed from a given plot.
-    pub fn get_removed_events(&self, plot: &PlotID) -> Option<&EventSet> {
-        self.removed_events.get(plot)
+    pub fn get_removed_events(&self, plot: PlotID) -> Option<&PlotEvents> {
+        self.removed_events.get(&plot)
     }
 
     /// Retrieve the value if any changes have been specified to it. Will return none if no changes
@@ -117,9 +113,9 @@ impl NetDiff {
     }
 
     /// Check if an event has been marked for removal from its associated plots.
-    pub fn is_event_removed(&self, plot: &PlotID, tick: u64, event: &PlotEvent) -> bool {
-        if let Some(plot) = self.removed_events.get(plot) {
-            if let Some(events) = plot.get_vec(&tick) {
+    pub fn is_event_removed(&self, plot: PlotID, tick: u64, event: &PlotEvent) -> bool {
+        if let Some(plot) = self.removed_events.get(&plot) {
+            if let Some(events) = plot.get(&tick) {
                 events.contains(event)
             } else { false }
         } else { false }
@@ -151,30 +147,23 @@ impl NetDiff {
 
 
     /// Attempt to remove an event from list and return whether it was was there or not.
-    fn remove(plots: &mut PlotEvents, id: &PlotID, tick: u64, event: &PlotEvent) -> bool {
-        if let Some(plot) = plots.get_mut(id) {
-            if let Some(events) = plot.get_vec_mut(&tick) {
-                let start = events.len();
-                events.retain(|e| e != event);
-                start != events.len() // if the size changed, then we removed something
-            } else { false }
-        } else { false } // did not remove because plot is not listed
+    fn remove(plots: &mut HashMap<PlotID, PlotEvents>, id: PlotID, tick: u64, event: &PlotEvent) -> bool {
+        if let Some(plot) = plots.get_mut(&id) {
+            events::remove_event(plot, tick, event)
+        } else { false } // did not remove because plot is not listed)
     }
 
-    fn add(plots: &mut PlotEvents, id: PlotID, tick: u64, event: PlotEvent) {
-        if // check if we need to create a new entry (if not go ahead and append it)
-            if let Some(plot) = plots.get_mut(&id) {
-                if // the event is not already stored for that tick
-                    !(if let Some(events) = plot.get_vec(&tick) { events.contains(&event) } else { false })
-                { plot.insert(tick, event.clone()); }
-
-                false // either way it is in there at this point
-            } else { true }
-        { // insert a new entry
-            let mut plot = MultiMap::new();
-            plot.insert(tick, event);
-            plots.insert(id, plot);
+    fn add(plots: &mut HashMap<PlotID, PlotEvents>, id: PlotID, tick: u64, event: PlotEvent) {
+        // check if we need to create a new entry (if not go ahead and append it)
+        if let Some(plot) = plots.get_mut(&id) {
+            events::add_event(plot, tick, event);
+            return;
         }
+
+        // insert a new entry
+        let mut plot = PlotEvents::new();
+        events::add_event(&mut plot, tick, event);
+        plots.insert(id, plot);
     }
 }
 
@@ -184,10 +173,10 @@ use std::vec::IntoIter as VecIntoIter;
 /// the list of events to remove, and finally it has the list of new events,
 pub struct EventDiffIter<'a>(&'a NetDiff, VecIntoIter<PlotID>);
 impl<'a> Iterator for EventDiffIter<'a> {
-    type Item = (PlotID, Option<&'a EventSet>, Option<&'a EventSet>);
+    type Item = (PlotID, Option<&'a PlotEvents>, Option<&'a PlotEvents>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.1.next().map(|k| (k, self.0.get_removed_events(&k), self.0.get_new_events(&k)) )
+        self.1.next().map(|k| (k, self.0.get_removed_events(k), self.0.get_new_events(k)) )
     }
 }
 

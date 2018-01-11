@@ -5,7 +5,6 @@ extern crate dns_lookup;
 extern crate flate2;
 extern crate futures_cpupool;
 extern crate futures;
-extern crate multimap;
 extern crate ntp;
 extern crate openssl;
 extern crate rand;
