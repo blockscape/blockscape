@@ -377,75 +377,80 @@ impl RecordKeeper {
         let db = self.db.read().unwrap();
         match pending.get(&hash) {
             Some(txn) => Ok(txn.clone()),
-            None => self.get_txn_given_lock(&*db, hash)
+            None => db.get_txn(hash)
         }
     }
 
 
     /// Internal use function to check if a block and all its sub-components are valid.
     fn is_valid_block_given_lock(&self, db: &Database, block: &Block) -> Result<(), Error> {
-        if match db.get_validator_key(&block.creator) {
-            Ok(key) => {
-                let key = PKey::public_key_from_der(&key).unwrap();
-                block.verify_signature(&key)
-            }
-            Err(Error::NotFound(..)) => return Err(LogicError::UnrecognizedCreator.into()),
-            Err(e) => return Err(e)
-        } {/* signature is value */}
-        else { return Err(LogicError::InvalidSignature.into())}
+        // if match db.get_validator_key(&block.creator) {
+        //     Ok(key) => {
+        //         let key = PKey::public_key_from_der(&key).unwrap();
+        //         block.verify_signature(&key)
+        //     }
+        //     Err(Error::NotFound(..)) => return Err(LogicError::UnrecognizedCreator.into()),
+        //     Err(e) => return Err(e)
+        // } {/* signature is value */}
+        // else { return Err(LogicError::InvalidSignature.into())}
         
-        match db.get_block_header(&block.prev) {
-            Ok(_) => {},
-            Err(Error::NotFound(..)) => return Err(LogicError::MissingPrevious.into()),
-            Err(e) => return Err(e)
-        }
+        // match db.get_block_header(&block.prev) {
+        //     Ok(_) => {},
+        //     Err(Error::NotFound(..)) => return Err(LogicError::MissingPrevious.into()),
+        //     Err(e) => return Err(e)
+        // }
 
-        //TODO: more validity checks
+        // //TODO: more validity checks
 
-        let mut mutation = Mutation::new();
-        for txn_hash in &block.txns {
-            let txn = self.get_txn_given_lock(db, &txn_hash)?;
-            Self::is_valid_txn_header_given_lock(db, &txn)?;
-            mutation.merge_clone(&txn.mutation);
-        }
+        // let mut mutation = Mutation::new();
+        // for txn_hash in &block.txns {
+        //     let txn = self.get_txn_given_lock(db, &txn_hash)?;
+        //     Self::is_valid_txn_header_given_lock(db, &txn)?;
+        //     mutation.merge_clone(&txn.mutation);
+        // }
         
-        self.is_valid_mutation_given_lock(db, &mutation)
+        // self.is_valid_mutation_given_lock(db, &mutation)
+        unimplemented!()
     }
 
     /// Internal use function, check if a txn is valid and its mutation.
     fn is_valid_txn_given_lock(&self, db: &Database, txn: &Txn) -> Result<(), Error> {
-        Self::is_valid_txn_header_given_lock(db, txn)?;
-        self.is_valid_mutation_given_lock(db, &txn.mutation)
+        // Self::is_valid_txn_header_given_lock(db, txn)?;
+        // self.is_valid_mutation_given_lock(db, &txn.mutation)
+        unimplemented!()
     }
 
     /// Internal use function, check if the basics of a txn is valid, ignore its mutations.
     fn is_valid_txn_header_given_lock(db: &Database, txn: &Txn) -> Result<(), Error> {
-        //TODO: validity checks on things like timestamp, signature, and that the public key is of someone we know
+        // //TODO: validity checks on things like timestamp, signature, and that the public key is of someone we know
         
-        // verify the txn is not already part of the blockchain
-        if let Ok(_) = db.get_raw_data(&txn.calculate_hash().to_vec(), BLOCKCHAIN_POSTFIX) {
-            return Err(Error::from(LogicError::Duplicate))
-        }
+        // // verify the txn is not already part of the blockchain
+        // if let Ok(_) = db.get_raw_data(&txn.calculate_hash().to_vec(), BLOCKCHAIN_POSTFIX) {
+        //     return Err(Error::from(LogicError::Duplicate))
+        // }
 
-        // It is valid on the surface
-        Ok(())
+        // // It is valid on the surface
+        // Ok(())
+        unimplemented!()
     }
 
     /// Internal use function to check if a mutation is valid given a lock of the db.
     fn is_valid_mutation_given_lock(&self, db: &Database, mutation: &Mutation) -> Result<(), Error> {
-        let rules = self.rules.read().unwrap();
-        for rule in &*rules {
-            // verify all rules are satisfied and return, propagate error if not
-            rule.is_valid(db, mutation).map_err(|e| LogicError::InvalidMutation(e))?;
-        }
-        Ok(())
+        // let rules = self.rules.read().unwrap();
+        // let mut cache = Bin::new();
+        // for rule in &*rules {
+        //     // verify all rules are satisfied and return, propagate error if not
+        //     rule.is_valid(db, mutation, &mut cache)?;
+        // }
+        // Ok(())
+        unimplemented!()
     }
 
-    fn get_txn_given_lock(&self, db: &Database, hash: &U256) -> Result<Txn, Error> {
-        if let Some(txn) = self.pending_txns.read().unwrap().get(hash) {
-            Ok(txn.clone())
-        } else {
-            db.get_txn(hash)
-        }
-    }
+    // fn get_txn_given_lock(&self, db: &Database, hash: &U256) -> Result<Txn, Error> {
+    //     if let Some(txn) = self.pending_txns.read().unwrap().get(hash) {
+    //         Ok(txn.clone())
+    //     } else {
+    //         db.get_txn(hash)
+    //     }
+    // }
 }
