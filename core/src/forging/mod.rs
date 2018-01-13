@@ -4,6 +4,7 @@ use futures::prelude::*;
 
 use primitives::block::Block;
 
+#[derive(Debug)]
 pub struct Error(String);
 
 pub trait BlockForger {

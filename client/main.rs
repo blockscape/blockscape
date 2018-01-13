@@ -31,6 +31,7 @@ mod plot_event;
 mod rules;
 mod reporter;
 mod format;
+mod forger;
 
 mod rpc;
 
@@ -49,6 +50,7 @@ use blockscape_core::env;
 use blockscape_core::network::client::*;
 use blockscape_core::primitives::HasBlockHeader;
 use blockscape_core::record_keeper::RecordKeeper;
+use blockscape_core::forging::flower_picking::FlowerPicking;
 
 use boot::*;
 
@@ -56,6 +58,8 @@ use context::Context;
 
 fn main() {
     pretty_env_logger::init().unwrap();
+
+    let mut core = Core::new().expect("Could not start main event loop");
 
     // Parse cmdline
     let cmdline = parse_cmdline();
@@ -86,6 +90,10 @@ fn main() {
 
     let rk = Arc::new(RecordKeeper::open(load_or_generate_key("user"), None, Some(rules::build_rules())).expect("Record Keeper was not able to initialize!"));
 
+    // TODO: Somewhere around here, we read a config or cmdline or something to figure out which net to work for
+    // but start with the genesis
+    let genesis_net = make_genesis().0.get_header().calculate_hash();
+
     let mut net_client: Option<UnboundedSender<ClientMsg>> = None;
 
     let mut threads: Vec<thread::JoinHandle<()>> = Vec::new();
@@ -99,10 +107,6 @@ fn main() {
 
         let (mut h, t) = Client::run(cc, rk.clone(), quit.clone()).expect("Could not start network");
 
-        // TODO: Somewhere around here, we read a config or cmdline or something to figure out which net to work for
-        // but start with the genesis
-        let genesis_net = make_genesis().0.get_header().calculate_hash();
-
         // must be connected to at least one network in order to do anything, might as well be genesis for now.
         h = h.send(ClientMsg::AttachNetwork(genesis_net, ShardMode::Primary)).wait().expect("Could not attach to root network!");
 
@@ -112,13 +116,13 @@ fn main() {
 
     let ctx = Rc::new(Context {
         rk: rk.clone(),
-        network: net_client.clone()
+        network: net_client.clone(),
+        // this block forger will be callibrated to mine a block every 10 seconds, with 6 hours before each recalculate
+        forge_algo: Box::new(FlowerPicking::new(rk.clone(), core.handle(), 10 * 1000, 2160))
     });
 
     // Open RPC interface
     let rpc = make_rpc(&cmdline, Rc::clone(&ctx));
-
-    let mut core = Core::new().expect("Could not start main event loop");
 
     let handler = core.handle();
 
@@ -133,6 +137,10 @@ fn main() {
         .map_err(|_| ());
 
     core.handle().spawn(rpt_job);
+
+    if cmdline.is_present("forge") {
+        forger::start_forging(&ctx, &handler, genesis_net);
+    }
 
     // wait for the kill signal
     let qsignal = tokio_signal::ctrl_c(&handler).flatten_stream().take(1);
