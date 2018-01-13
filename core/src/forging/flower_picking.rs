@@ -82,6 +82,8 @@ impl BlockForger for FlowerPicking {
         // now artificially induce time for the block to become available
         let rand_mod = gen_rand_mod(diff);
 
+        debug!("Scheduled block gen: {:?}", rand_mod);
+
         Box::new(Timeout::new(rand_mod, &self.handle).unwrap()
             .map(|_| block)
             .map_err(|e| Error(format!("Could not set timeout: {}", e))))
