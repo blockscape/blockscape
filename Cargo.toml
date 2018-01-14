@@ -5,6 +5,7 @@ authors = ["Daniel Beal <git@danb.email>", "Matthew Conover <matt@xram.co>"]
 
 [dependencies]
 blockscape_core = { path = "core" }
+bincode = "^0.8"
 clap = "2.26.2"
 colored = "1.5.3"
 futures = "0.1"

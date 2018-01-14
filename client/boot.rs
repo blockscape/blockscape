@@ -5,6 +5,8 @@ use std::str::FromStr;
 use std::net::SocketAddr;
 use std::rc::Rc;
 
+use bincode;
+
 use blockscape_core::bin::Bin;
 use blockscape_core::env::*;
 use blockscape_core::network::client::ClientConfig;
@@ -116,6 +118,8 @@ pub fn parse_cmdline<'a>() -> ArgMatches<'a> {
 
 /// Returns the genesis block for blockscape
 pub fn make_genesis() -> (Block, Vec<Txn>) {
+    let n: u64 = 1;
+
     let mut b = Block {
         header: BlockHeader {
             version: 1,
@@ -123,7 +127,8 @@ pub fn make_genesis() -> (Block, Vec<Txn>) {
             shard: U256_ZERO,
             prev: U256_ZERO,
             merkle_root: U256_ZERO,
-            blob: Bin::new(),
+            // Serialize in the initial block difficulty
+            blob: bincode::serialize(&n, bincode::Bounded(8)).unwrap(),
             creator: U160_ZERO,
             signature: Bin::new()
         },

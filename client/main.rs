@@ -25,6 +25,8 @@ extern crate jsonrpc_core;
 extern crate jsonrpc_macros;
 extern crate jsonrpc_http_server;
 
+extern crate bincode;
+
 mod boot;
 mod context;
 mod plot_event;
