@@ -50,7 +50,6 @@ use tokio_core::reactor::*;
 
 use blockscape_core::env;
 use blockscape_core::network::client::*;
-use blockscape_core::primitives::HasBlockHeader;
 use blockscape_core::record_keeper::RecordKeeper;
 use blockscape_core::forging::flower_picking::FlowerPicking;
 
@@ -90,11 +89,19 @@ fn main() {
             .expect("Could not automatically find work directory for blockscape! Please check your environment and try again."));
     }
 
-    let rk = Arc::new(RecordKeeper::open(load_or_generate_key("user"), None, Some(rules::build_rules())).expect("Record Keeper was not able to initialize!"));
-
     // TODO: Somewhere around here, we read a config or cmdline or something to figure out which net to work for
     // but start with the genesis
-    let genesis_net = make_genesis().0.get_header().calculate_hash();
+    let genesis = make_genesis();
+    let genesis_net = genesis.0.calculate_hash();
+
+    let rk = Arc::new(
+        RecordKeeper::open(
+            load_or_generate_key("user"),
+            None,
+            Some(rules::build_rules()),
+            genesis
+        ).expect("Record Keeper was not able to initialize!")
+    );
 
     let mut net_client: Option<UnboundedSender<ClientMsg>> = None;
 

@@ -2,7 +2,7 @@ use bin::Bin;
 use bincode;
 use env;
 use primitives::{U256, U160, Mutation, Change, Block, BlockHeader, Txn};
-use rocksdb::{DB, Options};
+use rocksdb::{DB, Options, IteratorMode};
 use rocksdb::Error as RocksDBError;
 use std::collections::{HashMap, BTreeMap};
 use std::path::PathBuf;
@@ -110,6 +110,10 @@ impl Database {
         )
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.db.iterator(IteratorMode::Start).next().is_none()
+    }
+
     /// Retrieve raw data from the database. Use this for non-storable types (mostly network stuff).
     #[inline]
     pub fn get_raw_data(&self, key: &[u8], postfix: &'static [u8]) -> Result<Bin, Error> {
@@ -198,8 +202,8 @@ impl Database {
         self.complete_block(header)
     }
 
-    /// Update the head ref and save it to the database
-    pub fn update_current_block(&mut self, hash: &U256, height: Option<u64>) -> Result<(), Error> {
+    /// Update the head ref and save it to the database.
+    fn update_current_block(&mut self, hash: &U256, height: Option<u64>) -> Result<(), Error> {
         let h = { // set the height value if it does not exist
             if let Some(h) = height { h }
             else { self.get_block_height(&hash)? }
@@ -468,7 +472,7 @@ impl Database {
             let header = self.get_block_header(&b)?;
             let contra = self.get_contra(&b)?;
             self.undo_mutate(contra)?;
-            self.head = HeadRef{block: header.prev, height: h - 1};
+            self.update_current_block(&header.prev, Some(h - 1))?;
         }
         for (h, b) in b_heights {
             assert!(h > 1);
@@ -477,7 +481,7 @@ impl Database {
             let contra = self.mutate(&mutation)?;
             self.add_contra(&b, &contra)?;
             self.update_current_chain(h, &b)?;
-            self.head = HeadRef{block: b, height: h};
+            self.update_current_block(&b, Some(h))?;
         }
 
         debug!("Walked network state from {} to {}.", a_block, b_block);
@@ -487,8 +491,17 @@ impl Database {
     /// Find the current head of the block chain and then walk to it.
     #[inline]
     pub fn walk_to_head(&mut self) -> Result<(), Error> {
-        let head = self.find_chain_head()?;
-        self.walk(&head)
+        if self.head.block.is_zero() { // walk from nothingness to genesis block
+            let blocks = self.get_blocks_of_height(1)?;
+            assert_eq!(blocks.len(), 1); // should have exactly one entry if in genesis case
+            let block = self.get_block(&blocks[0])?;
+            self.get_mutation(&block)?; // don't need contra for the genesis block
+            // or to update current chain since there is only one block
+            self.update_current_block(&blocks[0], Some(1))
+        } else { // normal case
+            let head = self.find_chain_head()?;
+            self.walk(&head)
+        }
     }
 
     /// Add a new event to a plot

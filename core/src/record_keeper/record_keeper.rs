@@ -45,7 +45,7 @@ pub struct RecordKeeper {
 impl RecordKeeper {
     /// Construct a new RecordKeeper from an already opened database and possibly an existing set of
     /// rules.
-    pub fn new(db: Database, rules: Option<MutationRules>, key: PKey) -> RecordKeeper {
+    fn new(db: Database, rules: Option<MutationRules>, key: PKey) -> RecordKeeper {
         RecordKeeper {
             db: RwLock::new(db),
             rules: RwLock::new(rules.unwrap_or(MutationRules::new())),
@@ -59,23 +59,38 @@ impl RecordKeeper {
         }
     }
 
-    pub fn get_worker(&self) -> &futures_cpupool::CpuPool {
-        &self.worker
-    }
-
-    pub fn get_priority_worker(&self) -> &futures_cpupool::CpuPool {
-        &self.priority_worker
-    }
-
     /// Construct a new RecordKeeper by opening a database. This will create a new database if the
     /// one specified does not exist. By default, it will open the database in the directory
     /// `env::get_storage_dir()`. See also `Database::open::`.
     /// # Warning
     /// Any database which is opened, is assumed to contain data in a certain way, any outside
     /// modifications can cause undefined behavior.
-    pub fn open(key: PKey, path: Option<PathBuf>, rules: Option<MutationRules>) -> Result<RecordKeeper, Error> {
+    pub fn open(key: PKey, path: Option<PathBuf>, rules: Option<MutationRules>, genesis: (Block, Vec<Txn>)) -> Result<RecordKeeper, Error> {
         let db = Database::open(path)?;
-        Ok(Self::new(db, rules, key))
+        let rk: RecordKeeper = Self::new(db, rules, key);
+        
+        { // Handle Genesis
+            let mut db = rk.db.write().unwrap();
+            if db.is_empty() { // add genesis
+                for ref txn in genesis.1 {
+                    db.add_txn(txn)?;
+                }
+                db.add_block(&genesis.0)?;
+                db.walk_to_head()?;
+            } else { // make sure the (correct) genesis block is there
+                db.get_block(&genesis.0.calculate_hash())?;
+            }
+        }
+
+        Ok(rk)
+    }
+
+    pub fn get_worker(&self) -> &futures_cpupool::CpuPool {
+        &self.worker
+    }
+
+    pub fn get_priority_worker(&self) -> &futures_cpupool::CpuPool {
+        &self.priority_worker
     }
 
     /// Use pending transactions to create a new block which can then be added to the network.
