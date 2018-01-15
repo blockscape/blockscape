@@ -5,6 +5,8 @@ use std::str::FromStr;
 use std::net::SocketAddr;
 use std::rc::Rc;
 
+use serde_json;
+
 use bincode;
 
 use blockscape_core::bin::Bin;
@@ -227,14 +229,30 @@ pub fn call_rpc(cmdline: &ArgMatches) -> bool {
     use rpc::client::JsonRpcRequest;
 
     let method = cmdline.value_of_lossy("rpccmd").expect("Unknown encoding for RPC command!").into_owned();
-    let args = cmdline.values_of_lossy("rpcargs").unwrap_or(Vec::new());
+    let raw_args = cmdline.values_of_lossy("rpcargs").unwrap_or(Vec::new());
+
+    let a = if raw_args.len() == 1 {
+        let res: Result<serde_json::Value, _> = serde_json::from_str(&raw_args[0]);
+        if let Ok(r) = res {
+            r
+        }
+        else {
+            //println!("Could not parse JSON arguments: {:?}", res);
+            //println!("Trying to send literal string...");
+
+            serde_json::to_value(raw_args).unwrap()
+        }
+    }
+    else {
+        serde_json::to_value(raw_args).unwrap()
+    };
 
     debug!("Calling RPC: {}", method);
 
     let bind_addr = SocketAddr::new(cmdline.value_of("rpcbind").unwrap().parse().expect("Invalid RPC bind IP"), 
             cmdline.value_of("rpcport").unwrap().parse::<u16>().expect("Invalid RPC port: must be a number!"));
 
-    let res = JsonRpcRequest::new(method, args).exec_sync(bind_addr);
+    let res = JsonRpcRequest::new(method, a).exec_sync(bind_addr);
 
     if res.is_err() {
         println!("RPC Error: {}", res.err().unwrap());

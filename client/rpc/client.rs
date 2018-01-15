@@ -22,12 +22,12 @@ use futures::future::Either;
 pub struct JsonRpcRequest {
     jsonrpc: String,
     method: String,
-    params: Vec<String>,
+    params: Value,
     id: u64
 }
 
 impl JsonRpcRequest {
-    pub fn new(method: String, params: Vec<String>) -> JsonRpcRequest {
+    pub fn new(method: String, params: Value) -> JsonRpcRequest {
         JsonRpcRequest {
             jsonrpc: "2.0".into(),
             method: method,
