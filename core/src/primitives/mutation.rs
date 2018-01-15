@@ -1,60 +1,32 @@
 use bin::*;
-use record_keeper::{PlotID, PlotEvent};
-use std::hash::{Hash, Hasher};
+use record_keeper::{PlotID, PlotEvent, JPlotEvent};
 use std::mem::size_of;
+use primitives::{U160, JU160};
 
 /// A single change to the database, a mutation may be the composite of multiple changes. This is
 /// designed as a simple structure which the outer world can use to store the changes which should
-/// not know anything about the database. The supplementrary data field is provided for many of the
-/// types of changes, it is designed to be information used to verify a transaction, but which does
-/// not alter the network state.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+/// not know anything about the database.
+#[derive(Debug, Serialize, Deserialize, Clone, Hash, PartialEq, Eq)]
 pub enum Change {
-    SetValue { key: Bin, value: Option<Bin>, supp: Option<Bin> },
-    AddEvent { id: PlotID, tick: u64, event: PlotEvent, supp: Option<Bin> }
-}
-
-impl PartialEq for Change {
-    fn eq(&self, other: &Change) -> bool {
-        match (self, other) {
-            (&Change::SetValue{key: ref a, ..}, &Change::SetValue{key: ref b, ..}) => a == b,
-            (&Change::AddEvent{id: i1, tick: t1, event: ref e1, ..},
-             &Change::AddEvent{id: i2, tick: t2, event: ref e2, ..}) => {
-                (i1 == i2) && (t1 ==t2) && (e1 == e2) //TODO: will comparing the bits be accurate?
-            },
-            _ => false
-        }
-    }
-} //TODO: create different Eq which uses event deserialization?
-
-impl Eq for Change {}
-
-impl Hash for Change {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        match self {
-            &Change::SetValue{key: ref k, ..} => k.hash(state),
-            &Change::AddEvent{id, tick, ..} => {id.hash(state); tick.hash(state)}
-        };
-    }
+    Admin { key: Bin, value: Option<Bin> },
+    BlockReward { id: U160, proof: Bin },
+    Event { id: PlotID, tick: u64, event: PlotEvent },
+    NewValidator { pub_key: Bin, signature: Bin },
+    Slash { id: U160, amount: u64, proof: Bin }
 }
 
 impl Change {
     /// Calculate the encoded size of this change in bytes.
     pub fn calculate_size(&self) -> usize {
         8 + match self {
-            &Change::SetValue{ref key, ref value, ref supp} => {
+            &Change::Admin{ref key, ref value} => {
                 key.len() + 1 +
-                if let Some(a) = value.as_ref() { a.len() }
-                else { 0 } + 2 +
-                if let Some(a) = supp.as_ref() { a.len() }
-                else { 0 } + 2
+                if let Some(a) = value.as_ref() { a.len() } else { 0 } + 2
             },
-            &Change::AddEvent{ref event, ref supp, ..} => {
-                size_of::<PlotID>() + 8 + 
-                event.calculate_size() +
-                if let Some(a) = supp.as_ref() { a.len() }
-                else { 0 } + 2
-            }
+            &Change::BlockReward{ref proof, ..} => 20 + proof.len() + 1,
+            &Change::Event{ref event, ..} => size_of::<PlotID>() + 8 + event.calculate_size(),
+            &Change::NewValidator{ref pub_key, ref signature} => pub_key.len() + signature.len() + 2,
+            &Change::Slash{ref proof, ..} => 20 + 8 + proof.len() + 1
         }
     }
 }
@@ -97,30 +69,21 @@ impl Mutation {
     #[inline]
     pub fn assert_not_contra(&self) { assert!(!self.contra) }
 
-    /// Will merge another mutation into this one. The values from this mutation will be placed
-    /// after the other, thus they will have a "higher" priority should there be conflicting txns.
-    /// This consume the other mutation and re-use its allocated data.
+    /// Will merge another mutation into this one.
     pub fn merge(&mut self, mut other: Mutation) {
         assert!(!self.contra && !other.contra); //Could be a bug if merging contras
-        
-        other.changes.append(&mut self.changes); // empties changes and puts it at the end
-        self.changes = other.changes; // now we move all the content of tmp to destination
+        self.changes.append(&mut other.changes);
     }
 
-    /// Will merge another mutation into this one. The values from this mutation will be placed
-    /// after the other, thus they will have a "higher" priority should there be conflicting txns.
-    /// This will clone data from the incoming mutation.
+    /// Will merge another mutation into this one.
     pub fn merge_clone(&mut self, other: &Mutation) {
         assert!(!self.contra && !other.contra); //Could be a bug if merging contras
-        
-        let mut tmp: Vec<Change> = other.changes.clone();
-        tmp.append(&mut self.changes);
-        self.changes = tmp;
+        self.changes.extend_from_slice(&other.changes)
     }
 
     /// Calculate the encoded size of this mutation in bytes.
     pub fn calculate_size(&self) -> usize {
-        1 +  // contra
+        1 + 8 + // contra + changes count
         self.changes.iter().fold(0, |total, c| total + c.calculate_size())
     } 
 }
@@ -130,15 +93,21 @@ impl Mutation {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum JChange {
-    SetValue { key: Bin, value: Option<JBin>, supp: Option<JBin> },
-    AddEvent { id: PlotID, tick: u64, event: PlotEvent, supp: Option<JBin> }
+    Admin { key: JBin, value: Option<JBin> },
+    BlockReward { id: JU160, proof: JBin },
+    Event { id: PlotID, tick: u64, event: JPlotEvent },
+    NewValidator { pub_key: JBin, signature: JBin },
+    Slash { id: JU160, amount: u64, proof: JBin }
 }
 
 impl From<Change> for JChange {
     fn from(c: Change) -> JChange {
         match c {
-            Change::SetValue{key, value, supp} => JChange::SetValue{key, value: value.map(Into::into), supp: supp.map(Into::into)},
-            Change::AddEvent{id, tick, event, supp} => JChange::AddEvent{id, tick, event, supp: supp.map(Into::into)}
+            Change::Admin{key, value} => JChange::Admin{key: key.into(), value: value.map(Into::into)},
+            Change::BlockReward{id, proof} => JChange::BlockReward{id: id.into(), proof: proof.into()},
+            Change::Event{id, tick, event} => JChange::Event{id, tick, event: event.into()},
+            Change::NewValidator{pub_key, signature} => JChange::NewValidator{pub_key: pub_key.into(), signature: signature.into()},
+            Change::Slash{id, amount, proof} => JChange::Slash{id: id.into(), amount, proof: proof.into()}
         }
     }
 }
@@ -146,8 +115,11 @@ impl From<Change> for JChange {
 impl Into<Change> for JChange {
     fn into(self) -> Change {
         match self {
-            JChange::SetValue{key, value, supp} => Change::SetValue{key, value: value.map(Into::into), supp: supp.map(Into::into)},
-            JChange::AddEvent{id, tick, event, supp} => Change::AddEvent{id, tick, event, supp: supp.map(Into::into)}
+            JChange::Admin{key, value} => Change::Admin{key: key.into(), value: value.map(Into::into)},
+            JChange::BlockReward{id, proof} => Change::BlockReward{id: id.into(), proof: proof.into()},
+            JChange::Event{id, tick, event} => Change::Event{id, tick, event: event.into()},
+            JChange::NewValidator{pub_key, signature} => Change::NewValidator{pub_key: pub_key.into(), signature: signature.into()},
+            JChange::Slash{id, amount, proof} => Change::Slash{id: id.into(), amount, proof: proof.into()}
         }
     }
 }
