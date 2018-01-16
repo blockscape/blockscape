@@ -44,9 +44,8 @@ impl Ord for Txn {
         a.cmp(&b)
     }
 }
-////////////////////
-// TODO: Move the event to the root of txn instead of having a mutation object, and also create a way to create a mutation from all of these events.
-////////////////////
+
+
 impl Txn {
     pub fn calculate_hash(&self) -> U256 {
         hash_obj(self)

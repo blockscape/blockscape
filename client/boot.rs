@@ -132,18 +132,16 @@ pub fn make_genesis() -> (Block, Vec<Txn>) {
         .public_key_to_der().unwrap()
         .into();
 
-    m.changes.push(Change::SetValue {
+    m.changes.push(Change::Admin {
         key: Vec::from(ADMIN_KEY_PREFIX).into(),
-        value: Some(admkey),
-        supp: None
+        value: Some(admkey)
     });
 
     let txn = Txn {
         timestamp: Time::from_seconds(1508009036),
-        txn_type: 255, // special genesis block type txn
-        pubkey: Vec::new(), // empty signature, not required to have one
+        creator: U160_ZERO, // empty signature, not required to have one
         mutation: m,
-        signature: Vec::new(),
+        signature: Bin::new(),
     };
 
     b.txns.insert(0.into());

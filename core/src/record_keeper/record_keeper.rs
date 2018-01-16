@@ -4,7 +4,7 @@ use primitives::{U256, U160, Txn, Block, BlockHeader, Mutation, Change, Listener
 use std::collections::{HashMap, BTreeSet, BTreeMap};
 use std::path::PathBuf;
 use std::sync::RwLock;
-use super::{MutationRule, MutationRules, Error, LogicError, Storable, RecordEvent, PlotID};
+use super::{MutationRule, MutationRules, Error, Storable, RecordEvent, PlotID};
 use super::{PlotEvent, PlotEvents, events};
 use super::BlockPackage;
 use super::database::*;
@@ -293,7 +293,7 @@ impl RecordKeeper {
         let txns = self.pending_txns.read().unwrap();
         for txn in txns.values() {
             for change in &txn.mutation.changes {
-                if let &Change::AddEvent{id, tick, ref event, ..} = change {
+                if let &Change::Event{id, tick, ref event} = change {
                     if tick >= after_tick && id == plot_id {
                         events::add_event(&mut events, tick, event.clone());
                     }
