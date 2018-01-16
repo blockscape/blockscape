@@ -4,8 +4,9 @@ use primitives::{U256, U160, Txn, Block, BlockHeader, Mutation, Change, Listener
 use std::collections::{HashMap, BTreeSet, BTreeMap};
 use std::path::PathBuf;
 use std::sync::RwLock;
-use super::{MutationRule, MutationRules, Error, Storable, RecordEvent, PlotID};
-use super::{PlotEvent, PlotEvents, events};
+use super::{Error, Storable, RecordEvent, PlotID};
+use super::{PlotEvent, PlotEvents, events, NetState, NetDiff};
+use super::{rules, BlockRule, TxnRule, MutationRule, MutationRules};
 use super::BlockPackage;
 use super::database::*;
 use time::Time;
@@ -143,7 +144,7 @@ impl RecordKeeper {
         let mut pending_txns = self.pending_txns.write().unwrap();
         let mut db = self.db.write().unwrap();
 
-        self.is_valid_block_given_lock(&*db, block)?;
+        self.is_valid_block(block)?;
 
         // we know it is a valid block, so go ahead and add it's transactions, and then it.
         for txn_hash in block.txns.iter() {
@@ -189,7 +190,7 @@ impl RecordKeeper {
             Err(e) => return Err(e)
         }
 
-        self.is_valid_txn_given_lock(&db, txn)?;
+        self.is_valid_txn(txn)?;
         txns.insert(hash, txn.clone());
         Ok(true)
     }
@@ -323,23 +324,22 @@ impl RecordKeeper {
         rules_lock.push_back(rule);
     }
 
-    /// Check if a block is valid given the current network state including all of its transactions
-    /// and the resulting mutations.
+    /// Check if a block is valid and all its components.
     pub fn is_valid_block(&self, block: &Block) -> Result<(), Error> {
         let db = self.db.read().unwrap();
-        self.is_valid_block_given_lock(&*db, block)
+        let state = NetState::new(&*db, db.get_diff(&db.get_current_block_hash(), &block.prev)?);
+        self.is_valid_block_given_lock(&state, &db, block)
     }
 
-    /// Check if a txn is valid given the current network state including all of its mutations.
+    /// Check if a txn is valid given the current network state. Use this to validate pending txns.
     pub fn is_valid_txn(&self, txn: &Txn) -> Result<(), Error> {
         let db = self.db.read().unwrap();
-        self.is_valid_txn_given_lock(&*db, txn)
-    }
-
-    /// Check if a mutation is valid given the current network state.
-    pub fn is_valid_mutation(&self, mutation: &Mutation) -> Result<(), Error> {
-        let db = self.db.read().unwrap();
-        self.is_valid_mutation_given_lock(&*db, mutation)
+        let state = {
+            let cur = db.get_current_block_hash();
+            NetState::new(&*db, NetDiff::new(cur, cur))
+        };
+        self.is_valid_txn_given_lock(&state, txn)?;
+        self.is_valid_mutation_given_lock(&state, &txn.mutation)
     }
 
     /// Retrieve cache data from the database. This is for library use only.rules: &MutationRules,
@@ -383,74 +383,42 @@ impl RecordKeeper {
 
 
     /// Internal use function to check if a block and all its sub-components are valid.
-    fn is_valid_block_given_lock(&self, db: &Database, block: &Block) -> Result<(), Error> {
-        // if match db.get_validator_key(&block.creator) {
-        //     Ok(key) => {
-        //         let key = PKey::public_key_from_der(&key).unwrap();
-        //         block.verify_signature(&key)
-        //     }
-        //     Err(Error::NotFound(..)) => return Err(LogicError::UnrecognizedCreator.into()),
-        //     Err(e) => return Err(e)
-        // } {/* signature is value */}
-        // else { return Err(LogicError::InvalidSignature.into())}
-        
-        // match db.get_block_header(&block.prev) {
-        //     Ok(_) => {},
-        //     Err(Error::NotFound(..)) => return Err(LogicError::MissingPrevious.into()),
-        //     Err(e) => return Err(e)
-        // }
+    fn is_valid_block_given_lock(&self, state: &NetState, db: &Database, block: &Block) -> Result<(), Error> {        
+        rules::block::TimeStamp.is_valid(state, db, block)?;
+        rules::block::Signature.is_valid(state, db, block)?;
+        rules::block::MerkleRoot.is_valid(state, db, block)?;
 
-        // //TODO: more validity checks
+        let mut mutation = Mutation::new();
+        for txn_hash in &block.txns {
+            let txn = self.get_txn_given_lock(db, &txn_hash)?;
+            self.is_valid_txn_given_lock(state, &txn)?;
+            mutation.merge_clone(&txn.mutation);
+        }
 
-        // let mut mutation = Mutation::new();
-        // for txn_hash in &block.txns {
-        //     let txn = self.get_txn_given_lock(db, &txn_hash)?;
-        //     Self::is_valid_txn_header_given_lock(db, &txn)?;
-        //     mutation.merge_clone(&txn.mutation);
-        // }
-        
-        // self.is_valid_mutation_given_lock(db, &mutation)
-        unimplemented!()
+        self.is_valid_mutation_given_lock(state, &mutation)
     }
 
-    /// Internal use function, check if a txn is valid and its mutation.
-    fn is_valid_txn_given_lock(&self, db: &Database, txn: &Txn) -> Result<(), Error> {
-        // Self::is_valid_txn_header_given_lock(db, txn)?;
-        // self.is_valid_mutation_given_lock(db, &txn.mutation)
-        unimplemented!()
+    /// Internal use function, check if a txn is valid.
+    fn is_valid_txn_given_lock(&self, state: &NetState, txn: &Txn) -> Result<(), Error> {
+        rules::txn::Signature.is_valid(state, txn)
     }
 
-    /// Internal use function, check if the basics of a txn is valid, ignore its mutations.
-    fn is_valid_txn_header_given_lock(db: &Database, txn: &Txn) -> Result<(), Error> {
-        // //TODO: validity checks on things like timestamp, signature, and that the public key is of someone we know
-        
-        // // verify the txn is not already part of the blockchain
-        // if let Ok(_) = db.get_raw_data(&txn.calculate_hash().to_vec(), BLOCKCHAIN_POSTFIX) {
-        //     return Err(Error::from(LogicError::Duplicate))
-        // }
-
-        // // It is valid on the surface
-        // Ok(())
-        unimplemented!()
+    /// Internal use function to check if a mutation is valid.
+    fn is_valid_mutation_given_lock(&self, state: &NetState, mutation: &Mutation) -> Result<(), Error> {
+        let rules = self.rules.read().unwrap();
+        let mut cache = Bin::new();
+        for rule in &*rules {
+            // verify all rules are satisfied and return, propagate error if not
+            rule.is_valid(state, mutation, &mut cache)?;
+        }
+        Ok(())
     }
 
-    /// Internal use function to check if a mutation is valid given a lock of the db.
-    fn is_valid_mutation_given_lock(&self, db: &Database, mutation: &Mutation) -> Result<(), Error> {
-        // let rules = self.rules.read().unwrap();
-        // let mut cache = Bin::new();
-        // for rule in &*rules {
-        //     // verify all rules are satisfied and return, propagate error if not
-        //     rule.is_valid(db, mutation, &mut cache)?;
-        // }
-        // Ok(())
-        unimplemented!()
+    fn get_txn_given_lock(&self, db: &Database, hash: &U256) -> Result<Txn, Error> {
+        if let Some(txn) = self.pending_txns.read().unwrap().get(hash) {
+            Ok(txn.clone())
+        } else {
+            db.get_txn(hash)
+        }
     }
-
-    // fn get_txn_given_lock(&self, db: &Database, hash: &U256) -> Result<Txn, Error> {
-    //     if let Some(txn) = self.pending_txns.read().unwrap().get(hash) {
-    //         Ok(txn.clone())
-    //     } else {
-    //         db.get_txn(hash)
-    //     }
-    // }
 }

@@ -35,8 +35,13 @@ pub trait TxnRule: Send + Sync {
 }
 
 
-/// Generic definition of a rule regarding whether changes to the database are valid.
-/// Debug implementations should state what the rule means/requires.
+/// Generic definition of a rule regarding whether changes to the database are valid. Debug
+/// implementations should state what the rule means/requires.
+/// #TODO
+/// We will need to take in a GameState object of some sort as well, and to be able to request one
+/// at a certain point in the blockchain's history. This object should be of the game writer's
+/// choosing and so will need to be templated or something. Ultimately the game state will be stored
+/// in RAM, and they will need to keep multiple checkpoints to allow going backwards.
 pub trait MutationRule: Send + Sync {
     /// Return Ok if it is valid, or an error explaining what rule was broken or what error was encountered.
     fn is_valid(&self, net_state: &NetState, mutation: &Mutation, cache: &mut Bin) -> Result<(), Error>;
