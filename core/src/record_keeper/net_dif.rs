@@ -1,7 +1,10 @@
-use primitives::{Change, Mutation, U256};
 use bin::Bin;
-use super::{PlotEvent, PlotEvents, PlotID, events};
+use bincode;
+use hash::hash_pub_key;
+use primitives::{Change, Mutation, U256, U160};
 use std::collections::{HashMap, HashSet};
+use super::{PlotEvent, PlotEvents, PlotID, events};
+use super::database as DB;
 
 /// A set of changes which define the difference from a given network state to another though
 /// walking the blockchain from one point to another. This should be used to compile a list of
@@ -63,16 +66,41 @@ impl NetDiff {
         self.delete.insert(key);
     }
 
+    pub fn change_validator_rep(&mut self, id: &U160, amount: i64) {
+        let key = DB::with_prefix(DB::REPUTATION_PREFIX, &id.to_vec());
+        let value = {
+            let raw = self.values.get(&key);
+        
+            if let Some(r) = raw {
+                bincode::deserialize::<i64>(r).unwrap()
+            } else { 0 }
+        } + amount;
+
+        let raw = bincode::serialize(&value, bincode::Bounded(8)).unwrap();
+        self.set_value(key, raw);
+    }
+
     /// Apply all the changes in a mutation to this diff.
     pub fn apply_mutation(&mut self, m: Mutation) {
         m.assert_not_contra();
         for change in m.changes { match change {
-            Change::SetValue{key, value, ..} => {
+            Change::Admin{key, value} => {
                 if let Some(v) = value { self.set_value(key, v); }
                 else { self.delete_value(key); }
             },
-            Change::AddEvent{id, tick, event, ..} => {
+            Change::BlockReward{id, ..} => {
+                self.change_validator_rep(&id, DB::BLOCK_REWARD);
+            },
+            Change::Event{id, tick, event} => {
                 self.add_event(id, tick, event);
+            },
+            Change::NewValidator{pub_key, ..} => {
+                let id = hash_pub_key(&pub_key);
+                let key = DB::with_prefix(DB::VALIDATOR_PREFIX, &id.to_vec());
+                self.set_value(key, pub_key);
+            },
+            Change::Slash{id, amount, ..} => {
+                self.change_validator_rep(&id, -(amount as i64));
             }
         }}
     }
@@ -81,12 +109,23 @@ impl NetDiff {
     pub fn apply_contra(&mut self, m: Mutation) {
         m.assert_contra();
         for change in m.changes { match change {
-            Change::SetValue{key, value, ..} => {
+            Change::Admin{key, value, ..} => {
                 if let Some(v) = value { self.set_value(key, v); }
                 else { self.delete_value(key) }
             },
-            Change::AddEvent{id, tick, event, ..} => {
+            Change::BlockReward{id, ..} => {
+                self.change_validator_rep(&id, -DB::BLOCK_REWARD);
+            },
+            Change::Event{id, tick, event} => {
                 self.remove_event(id, tick, event);
+            },
+            Change::NewValidator{pub_key, ..} => {
+                let id = hash_pub_key(&pub_key);
+                let key = DB::with_prefix(DB::VALIDATOR_PREFIX, &id.to_vec());
+                self.delete_value(key);
+            },
+            Change::Slash{id, amount, ..} => {
+                self.change_validator_rep(&id, amount as i64)
             }
         }}
     }

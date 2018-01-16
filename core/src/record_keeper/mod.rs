@@ -11,7 +11,7 @@ mod record_keeper;
 
 pub use self::block_package::BlockPackage;
 pub use self::error::{Error, LogicError};
-pub use self::events::{PlotEvent, PlotEvents, RecordEvent};
+pub use self::events::{PlotEvent, JPlotEvent, PlotEvents, RecordEvent};
 pub use self::net_dif::*;
 pub use self::net_state::*;
 pub use self::record_keeper::{RecordKeeper};

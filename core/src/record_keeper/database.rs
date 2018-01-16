@@ -8,6 +8,7 @@ use std::collections::{HashMap, BTreeMap};
 use std::path::PathBuf;
 use super::{Storable, PlotEvent, PlotEvents, events, PlotID, NetDiff};
 use super::error::*;
+use hash::hash_pub_key;
 
 pub const BLOCKCHAIN_POSTFIX: &[u8] = b"b";
 pub const CACHE_POSTFIX: &[u8] = b"c";
@@ -34,6 +35,8 @@ pub const CONTRA_PREFIX: &[u8] = b"CMT";
 /// Key for the current head block used when initializing.
 pub const CURRENT_BLOCK: &[u8] = b"CURblock";
 
+/// The reward bestowed for backing the correct block
+pub const BLOCK_REWARD: i64 = 10;
 
 /// Represents the current head of the blockchain
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -561,6 +564,54 @@ impl Database {
         Ok(mutation)
     }
 
+    /// Set a value in the network state and return the old value if any. It will delete the key
+    /// from the database if value is None.
+    fn set_value(&mut self, key: &Bin, value: &Option<Bin>) -> Result<Option<Bin>, Error> {
+        let db_key = with_postfix(key, NETWORK_POSTFIX);
+        let prior = self.db.get(&db_key)?.map(|v| v.to_vec());
+
+        if let Some(ref v) = *value { // set the value if it is some
+            self.db.put(&db_key, v)?;
+        } else if prior.is_some() { // otherwise delete it if there was a value to delete
+            self.db.delete(&db_key)?
+        } Ok(prior)
+    }
+
+    /// Change a validator's reputation by the amount indicated.
+    fn change_validator_rep(&mut self, id: &U160, amount: i64) -> Result<(), Error> {
+        let db_key = with_pre_post_fix(REPUTATION_PREFIX, &id.to_vec(), NETWORK_POSTFIX);
+        let raw = self.db.get(&db_key)?;
+        
+        let value = if let Some(r) = raw {
+            bincode::deserialize::<i64>(&r)?
+        } else { 0 } + amount;
+
+        let raw = bincode::serialize(&value, bincode::Bounded(8)).unwrap();
+        self.db.put(&db_key, &raw)?;
+        Ok(())
+    }
+
+    /// Remove an event from a plot. Should only be used when undoing a mutation.
+    fn remove_event(&mut self, id: PlotID, tick: u64, event: &PlotEvent) -> Result<(), Error> {
+        let db_key = with_pre_post_fix(PLOT_PREFIX, &id.bytes(), NETWORK_POSTFIX);
+
+        if let Some(raw_events) = self.db.get(&db_key)? {
+            let mut events: PlotEvents = bincode::deserialize(&raw_events)?;
+            if !events::remove_event(&mut events, tick, event) {
+                warn!("Unable to remove event because it does not exist! The network state \
+                        may be desynchronized.");
+                return Ok(());
+            }
+            
+            let raw_events = bincode::serialize(&events, bincode::Infinite).unwrap();
+            self.db.put(&db_key, &raw_events)?;
+        } else {
+            warn!("Unable to remove event because it does not exist! The network state \
+                        may be desynchronized.");
+        }
+        Ok(())
+    }
+
 
     /// Mutate the stored **network state** and return a contra mutation to be able to undo what was
     /// done. Note that changes to either blockchain state or gamestate must occur through other
@@ -569,29 +620,31 @@ impl Database {
         mutation.assert_not_contra();
         let mut contra = Mutation::new_contra();
 
-        for change in &mutation.changes { match change {
-            &Change::SetValue{ref key, ref value, ..} => {
-                let db_key = with_postfix(&key, NETWORK_POSTFIX);
-                
-                contra.changes.push(Change::SetValue {
-                    key: key.clone(),
-                    value: self.db.get(&db_key)?.map(|v| v.to_vec()), // Option<Bin>
-                    supp: None
-                });
-
-                if let Some(ref v) = *value {
-                    self.db.put(&db_key, v)?;
-                } else {  // delete key
-                    if self.db.delete(&db_key).is_err() {
-                        warn!("Unable to delete a key in the network state. The key may not have \
-                        existed, or there could be a problem with the database.");
-                    }
-                }
+        // for all changes, make the described change and add a contra change for it
+        for change in &mutation.changes {   contra.changes.push( match change {
+            &Change::Admin{ref key, ref value} => {
+                let prior = self.set_value(key, value)?;
+                Change::Admin{key: key.clone(), value: prior}
             },
-            &Change::AddEvent{id, tick, ref event, ..} => {
+            &Change::BlockReward{id, ..} => {
+                self.change_validator_rep(&id, BLOCK_REWARD)?;
+                Change::BlockReward{id, proof: Bin::new()}
+            },
+            &Change::Event{id, tick, ref event} => {
                 self.add_plot_event(id, tick, event)?;
+                Change::Event{id, tick, event: event.clone()}
+            },
+            &Change::NewValidator{ref pub_key, ..} => {
+                let id = hash_pub_key(pub_key);
+                let key = with_pre_post_fix(VALIDATOR_PREFIX, &id.to_vec(), NETWORK_POSTFIX);
+                self.db.put(&key, pub_key)?;
+                Change::NewValidator{pub_key: pub_key.clone(), signature: Bin::new()}
+            },
+            &Change::Slash{id, amount, ..} => {
+                self.change_validator_rep(&id, -(amount as i64))?;
+                Change::Slash{id, amount, proof: Bin::new()}
             }
-        }}
+        })}
 
         contra.changes.reverse(); // contra goes in reverse of original actions
         Ok(contra)
@@ -602,37 +655,17 @@ impl Database {
     fn undo_mutate(&mut self, mutation: Mutation) -> Result<(), Error> {
         mutation.assert_contra();
 
+        // For all changes, undo the described action with the data provided
         for change in mutation.changes { match change {
-            Change::SetValue{key, value, ..} => {
-                let db_key = with_postfix(&key, NETWORK_POSTFIX);
-
-                if let Some(v) = value {
-                    self.db.put(&db_key, &v)?;
-                } else { // delete key
-                    if self.db.delete(&db_key).is_err() {
-                        warn!("Unable to delete a key in the network state! The key may not have \
-                        existed, or there could be a problem with the database.");
-                    }
-                }
+            Change::Admin{key, value} => { self.set_value(&key, &value)?; },
+            Change::BlockReward{id, ..} => { self.change_validator_rep(&id, -BLOCK_REWARD)?; },
+            Change::Event{id, tick, event} => { self.remove_event(id, tick, &event)?; },
+            Change::NewValidator{pub_key, ..} => {
+                let id = hash_pub_key(&pub_key);
+                let key = with_pre_post_fix(VALIDATOR_PREFIX, &id.to_vec(), NETWORK_POSTFIX);
+                self.db.delete(&key)?;
             },
-            Change::AddEvent{id, tick, event, ..} => {
-                let db_key = with_prefix(PLOT_PREFIX, &id.bytes());
-
-                if let Some(raw_events) = self.db.get(&db_key)? {
-                    let mut events: PlotEvents = bincode::deserialize(&raw_events).unwrap();
-                    if !events::remove_event(&mut events, tick, &event) {
-                        warn!("Unable to remove event because it does not exist! The network state \
-                               may be desynchronized.");
-                        continue;
-                    }
-                    
-                    let raw_events = bincode::serialize(&events, bincode::Infinite).unwrap();
-                    self.db.put(&db_key, &raw_events)?;
-                } else {
-                   warn!("Unable to remove event because it does not exist! The network state \
-                              may be desynchronized.");
-                }
-            }
+            Change::Slash{id, amount, ..} => { self.change_validator_rep(&id, (amount as i64))?; }
         }}
 
         Ok(())

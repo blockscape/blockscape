@@ -54,6 +54,7 @@ impl Display for Error {
 #[derive(Clone, Debug)]
 pub enum LogicError {
     Duplicate,
+    InvalidMerkleRoot,
     InvalidMutation(String),
     InvalidSignature,
     InvalidTime,
@@ -66,6 +67,7 @@ impl StdErr for LogicError {
     fn description(&self) -> &str {
         match *self {
             LogicError::Duplicate => "This has already been accepted into the blockchain.",
+            LogicError::InvalidMerkleRoot => "The merkle_root does not match the txn list.",
             LogicError::InvalidMutation(_) => "The mutation breaks a rule.",
             LogicError::InvalidSignature => "The data does not match the signature.",
             LogicError::InvalidTime => "The timestamp is after the current time or too long ago.",

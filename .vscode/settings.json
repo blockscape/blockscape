@@ -4,6 +4,7 @@
         "deserialization",
         "deserialize",
         "deserialized",
+        "merkle",
         "struct"
     ],
     "files.associations": {
