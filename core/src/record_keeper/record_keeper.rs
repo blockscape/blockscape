@@ -4,7 +4,7 @@ use primitives::{U256, U160, Txn, Block, BlockHeader, Mutation, Change, Listener
 use std::collections::{HashMap, BTreeSet, BTreeMap};
 use std::path::PathBuf;
 use std::sync::RwLock;
-use super::{Error, Storable, RecordEvent, PlotID};
+use super::{Error, RecordEvent, PlotID};
 use super::{PlotEvent, PlotEvents, events, NetState, NetDiff};
 use super::{rules, BlockRule, TxnRule, MutationRule, MutationRules};
 use super::BlockPackage;
@@ -61,18 +61,20 @@ impl RecordKeeper {
     }
 
     /// Construct a new RecordKeeper by opening a database. This will create a new database if the
-    /// one specified does not exist. By default, it will open the database in the directory
-    /// `env::get_storage_dir()`. See also `Database::open::`.
+    /// one specified does not exist.
     /// # Warning
     /// Any database which is opened, is assumed to contain data in a certain way, any outside
     /// modifications can cause undefined behavior.
-    pub fn open(key: PKey, path: Option<PathBuf>, rules: Option<MutationRules>, genesis: (Block, Vec<Txn>)) -> Result<RecordKeeper, Error> {
+    pub fn open(key: PKey, path: PathBuf, rules: Option<MutationRules>, genesis: (Block, Vec<Txn>)) -> Result<RecordKeeper, Error> {
+        info!("Opening a RecordKeeper object with path '{:?}'", path);
         let db = Database::open(path)?;
         let rk: RecordKeeper = Self::new(db, rules, key);
         
         { // Handle Genesis
+            println!("Handle genesis...");
             let mut db = rk.db.write().unwrap();
             if db.is_empty() { // add genesis
+                debug!("Loaded DB is empty, adding genesis block...");
                 for ref txn in genesis.1 {
                     db.add_txn(txn)?;
                 }
@@ -373,18 +375,6 @@ impl RecordKeeper {
         };
         self.is_valid_txn_given_lock(&state, txn)?;
         self.is_valid_mutation_given_lock(&state, &txn.mutation)
-    }
-
-    /// Retrieve cache data from the database. This is for library use only.rules: &MutationRules,
-    pub fn get_cache_data<S: Storable>(&self, instance_id: &[u8]) -> Result<S, Error> {
-        let db = self.db.read().unwrap();
-        db.get::<S>(instance_id, CACHE_POSTFIX)
-    }
-
-    /// Put cache data into the database. This is for library use only.
-    pub fn put_cache_data<S: Storable>(&self, obj: &S) -> Result<(), Error> {
-        let mut db = self.db.write().unwrap();
-        db.put::<S>(obj, CACHE_POSTFIX)
     }
 
     /// Retrieve a block header from the database.

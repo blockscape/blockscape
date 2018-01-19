@@ -79,6 +79,7 @@ fn main() {
 
     // Ready to boot
     println!("Welcome to Blockscape v{}", env!("CARGO_PKG_VERSION"));
+    debug!("Debug logging ENABLED.");
 
     // Open database; populate basic subsystems with latest information
     if let Some(d) = cmdline.value_of("workdir") { 
@@ -97,7 +98,7 @@ fn main() {
     let rk = Arc::new(
         RecordKeeper::open(
             load_or_generate_key("user"),
-            None,
+            {let mut p = env::get_storage_dir().unwrap(); p.push("db"); p},
             Some(rules::build_rules()),
             genesis
         ).expect("Record Keeper was not able to initialize!")

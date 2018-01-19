@@ -14,7 +14,7 @@ use signer::RSA_KEY_SIZE;
 use network::context::*;
 use network::client::{NetworkActions, MAX_PACKET_SIZE};
 
-use record_keeper::{BlockPackage,Error};
+use record_keeper::{BlockPackage,Error,DBKey};
 
 use futures::prelude::*;
 use futures::future;
@@ -367,7 +367,7 @@ impl Session {
                     }).map(|_| ()).or_else(|err| {
                         // react for this node's records here if they are bad
                         match err {
-                            Error::NotFound(_, _) => {
+                            Error::NotFound(_) => {
                                 // submit a new job
                                 // TODO: currently undefined/should not happen, so what
                             },
@@ -394,7 +394,7 @@ impl Session {
                     }).map(|_| ()).or_else(move |err| {
                         // react for this node's records here if they are bad
                         match err {
-                            Error::NotFound(_, hash) => {
+                            Error::NotFound(DBKey(_, hash, _)) => {
                                 // submit a new job
                                 if let Ok(h) = bincode::deserialize(&hash) {
                                     if let Err(e) = lcontext.job_targets.unbounded_send(
@@ -447,7 +447,7 @@ impl Session {
                         }
                         else {
                             match r.unwrap_err() {
-                                Error::NotFound(_, hash) => {
+                                Error::NotFound(DBKey(_, hash, _)) => {
                                     if let Ok(h) = bincode::deserialize(&hash) {
                                         // send back a data error
                                         lcontext.send_packets(vec![SocketPacket(r_addr.clone(), RawPacket {

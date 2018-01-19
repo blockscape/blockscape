@@ -3,7 +3,7 @@ FROM debian:stretch
 RUN apt-get update && \
     apt-get install -y libssl1.1
 
-ADD target/release/blockscape /
+ADD target/debug/blockscape /
 
 EXPOSE 35653
 
