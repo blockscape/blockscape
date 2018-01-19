@@ -3,11 +3,12 @@ use rocksdb::Error as RocksDBError;
 use std::error::Error as StdErr;
 use std::fmt;
 use std::fmt::Display;
+use record_keeper::database as DB;
 
 #[derive(Clone, Debug)]
 pub enum Error {
     DB(RocksDBError), // when there is an error working with the database itself
-    NotFound(&'static [u8], Vec<u8>), // when data is not found in the database
+    NotFound(DB::Key), // when data is not found in the database (prefix, key, postfix).
     Deserialize(String), // when data cannot be deserialized
     Logic(LogicError), // When something is wrong with a block, txn, or mutation
 }
@@ -16,7 +17,7 @@ impl StdErr for Error {
     fn description(&self) -> &str {
         match *self { //TODO: why can we just get a ref of the objects
             Error::DB(_) => "RocksDB error: aka, not my fault ☺",
-            Error::NotFound(_, _) => "Could not find the data requested at that Hash (may not be an issue).",
+            Error::NotFound(_) => "Could not find the data requested at that Hash (may not be an issue).",
             Error::Deserialize(ref e) => e,
             Error::Logic(_) => "Something is not right with the block, txn, or mutations."
         }
@@ -25,7 +26,7 @@ impl StdErr for Error {
     fn cause(&self) -> Option<&StdErr> {
         match *self {
             Error::DB(ref e) => Some(e),
-            Error::NotFound(_, _) => None,
+            Error::NotFound(..) => None,
             Error::Deserialize(_) => None,
             Error::Logic(ref e) => Some(e),
         }
@@ -47,6 +48,16 @@ impl From<LogicError> for Error {
 impl Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str(self.description())
+    }
+}
+
+/// Map a Result of type <T, Error> to <T, Error> setting an Error::NotFound to be val.
+#[inline]
+pub fn map_not_found<T>(res: Result<T, Error>, val: T) -> Result<T, Error> {
+    match res {
+        Ok(v) => Ok(v),
+        Err(Error::NotFound(..)) => Ok(val),
+        Err(e) => Err(e)
     }
 }
 

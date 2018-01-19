@@ -22,28 +22,27 @@ impl<'a> NetState<'a> {
     /// Retrieve a value first from the diff if it has been defined, and then from the database if
     /// not. This will return a NotFound Error if the value is not in the database or if it has been
     /// 'deleted' in the diff.
-    pub fn get_value(&self, key: &Bin) -> Result<Bin, Error> {
-        if let Some(v) = self.diff.get_value(key) {
+    pub fn get_value(&self, key: DB::Key) -> Result<Bin, Error> {
+        if let Some(v) = self.diff.get_value(&key) {
             Ok(v.clone())
-        } else if self.diff.is_value_deleted(key) {
-            Err(Error::NotFound(DB::NETWORK_POSTFIX, key.clone()))
+        } else if self.diff.is_value_deleted(&key) {
+            Err(Error::NotFound(key))
         } else {
-            self.db.get_raw_data(key, DB::NETWORK_POSTFIX)
+            self.db.get_raw_data(key)
         }
     }
 
     /// Get the public key of a validator given their ID.
     /// See `get_validator_key` in `Database`
     pub fn get_validator_key(&self, id: &U160) -> Result<Bin, Error> {
-        let key = DB::with_prefix(DB::VALIDATOR_PREFIX, &id.to_vec());
-        self.get_value(&key)
+        self.get_value(DB::Key(Some(DB::VALIDATOR_PREFIX), id.to_vec(), DB::NETWORK_POSTFIX))
     }
 
     /// Get the reputation of a validator given their ID.
     /// See `get_validator_rep` in `Database`
     pub fn get_validator_rep(&self, id: &U160) -> Result<i64, Error> {
-        let key = DB::with_prefix(DB::REPUTATION_PREFIX, &id.to_vec());
-        let raw = self.get_value(&key)?;
+        let key = DB::Key(Some(DB::REPUTATION_PREFIX), id.to_vec(), DB::NETWORK_POSTFIX);
+        let raw = self.get_value(key)?;
         Ok(bincode::deserialize::<i64>(&raw)?)
     }
 
