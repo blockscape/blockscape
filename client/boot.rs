@@ -16,6 +16,7 @@ use blockscape_core::network::node::NodeEndpoint;
 use blockscape_core::primitives::*;
 use blockscape_core::signer::generate_private_key;
 use blockscape_core::time::Time;
+use blockscape_core::hash::hash_pub_key;
 
 use rpc::RPC;
 
@@ -122,26 +123,13 @@ pub fn parse_cmdline<'a>() -> ArgMatches<'a> {
 pub fn make_genesis() -> (Block, Vec<Txn>) {
     let n: u64 = 1;
 
-    let mut b = Block {
-        header: BlockHeader {
-            version: 1,
-            timestamp: Time::from_seconds(1508009036),
-            shard: U256_ZERO,
-            prev: U256_ZERO,
-            merkle_root: U256_ZERO,
-            // Serialize in the initial block difficulty
-            blob: bincode::serialize(&n, bincode::Bounded(8)).unwrap(),
-            creator: U160_ZERO,
-            signature: Bin::new()
-        },
-        txns: BTreeSet::new()
-    };
+    let admkey: Bin = PKey::public_key_from_pem(ADMIN_KEY).unwrap()
+        .public_key_to_der().unwrap()
+        .into();
 
     let mut m = Mutation::new();
 
-    let admkey = PKey::public_key_from_pem(ADMIN_KEY).unwrap()
-        .public_key_to_der().unwrap()
-        .into();
+    let adm_key_hash = hash_pub_key(&admkey);
 
     m.changes.push(Change::Admin {
         key: Vec::from(ADMIN_KEY_PREFIX).into(),
@@ -150,15 +138,30 @@ pub fn make_genesis() -> (Block, Vec<Txn>) {
 
     let txn = Txn {
         timestamp: Time::from_seconds(1508009036),
-        creator: U160_ZERO, // empty signature, not required to have one
+        creator: adm_key_hash,
         mutation: m,
         signature: Bin::new(),
     };
 
-    b.txns.insert(0.into());
+    let mut txns = BTreeSet::new();
+    txns.insert(txn.calculate_hash());
+    let merkle_root = Block::calculate_merkle_root(&txns);
 
-    // TODO: Merkle root hash happens here:
-    //b.calculate_merkle_root();
+    let b = Block {
+        header: BlockHeader {
+            version: 1,
+            timestamp: Time::from_seconds(1508009036),
+            shard: U256_ZERO,
+            prev: U256_ZERO,
+            merkle_root,
+            // Serialize in the initial block difficulty
+            blob: bincode::serialize(&n, bincode::Bounded(8)).unwrap(),
+            creator: adm_key_hash,
+            signature: Bin::new()
+        },
+        txns
+    };
+
     (b, vec![txn])
 }
 

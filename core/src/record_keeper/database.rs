@@ -32,6 +32,14 @@ pub const HEIGHT_BY_BLOCK_PREFIX: &[u8] = b"BHT";
 /// A contra transaction for a block
 pub const CONTRA_PREFIX: &[u8] = b"CMT";
 
+//--- BLOCKCHAIN STATE ---//
+/// A block (header) stored by its hash
+pub const BLOCK_HEADER_PREFIX: &[u8] = b"b";
+/// The list of txns associated with each block stored by merkle_root
+pub const TXN_LIST_PREFIX: &[u8] = b"l";
+/// The transaction objects stored by their hash.
+pub const TXN_PREFIX: &[u8] = b"t";
+
 
 /// Key for the current head block used when initializing.
 pub const CURRENT_BLOCK: &[u8] = b"CURblock";
@@ -153,6 +161,7 @@ impl Database {
 
     pub fn get<S: DeserializeOwned>(&self, key: Key) -> Result<S, Error> {
         let raw = self.get_raw_data(key)?;
+        // println!("GET {:?}: {:?}", key.bin(), &raw);
         Ok(bincode::deserialize(&raw)?)
     }
 
@@ -172,19 +181,21 @@ impl Database {
             None => bincode::serialize(object, bincode::Infinite).unwrap()
         };
 
+        // println!("PUT {:?}: {:?}", key.bin(), &raw);
         self.put_raw_data(key, &raw)
     }
 
     /// Add a new transaction to the database.
     #[inline]
     pub fn add_txn(&mut self, txn: &Txn) -> Result<(), Error> {
-        debug!("Adding txn ({}) to database", txn.calculate_hash());
-        self.put(Key(None, txn.calculate_hash().to_vec(), BLOCKCHAIN_POSTFIX), txn, None)
+        let hash = txn.calculate_hash();
+        debug!("Adding txn ({}) to database", &hash);
+        self.put(Key(Some(TXN_PREFIX), hash.to_vec(), BLOCKCHAIN_POSTFIX), txn, None)
     }
 
     /// Retrieve a block header form the database given a hash.
     pub fn get_block_header(&self, hash: &U256) -> Result<BlockHeader, Error> {
-        self.get(Key(None, hash.to_vec(), BLOCKCHAIN_POSTFIX))
+        self.get(Key(Some(BLOCK_HEADER_PREFIX), hash.to_vec(), BLOCKCHAIN_POSTFIX))
     }
 
     /// Adds a block to the database and records it in the height cache.
@@ -196,9 +207,9 @@ impl Database {
         if self.get_block_header(&hash).is_ok() { return Ok(false) }
 
         // put the header in the db
-        self.put(Key(None, hash.to_vec(), BLOCKCHAIN_POSTFIX), &block.header, None)?;
+        self.put(Key(Some(BLOCK_HEADER_PREFIX), hash.to_vec(), BLOCKCHAIN_POSTFIX), &block.header, None)?;
         // put txns into db under the merkle root
-        self.put(Key(None, block.merkle_root.to_vec(), BLOCKCHAIN_POSTFIX), &block.txns, None)?;
+        self.put(Key(Some(TXN_LIST_PREFIX), block.merkle_root.to_vec(), BLOCKCHAIN_POSTFIX), &block.txns, None)?;
         
         // add the block to the height cache
         let height = self.get_block_height(&block.prev)? + 1;
@@ -215,9 +226,7 @@ impl Database {
         // Blocks are stored with their header separate from the transaction body, so get the header
         // first to find the merkle_root, and then get the list of transactions and piece them
         // together.
-        println!("getting block header");
         let header = self.get_block_header(hash)?;
-        println!("got block header, completing block...");
         self.complete_block(header)
     }
 
@@ -236,14 +245,14 @@ impl Database {
 
     /// Retrieve the transactions for a block to complete a `BlockHeader` as a `Block` object.
     pub fn complete_block(&self, header: BlockHeader) -> Result<Block, Error> {
-        let txns = self.get(Key(None, header.merkle_root.to_vec(), BLOCKCHAIN_POSTFIX))?;
+        let txns = self.get(Key(Some(TXN_LIST_PREFIX), header.merkle_root.to_vec(), BLOCKCHAIN_POSTFIX))?;
         Ok(Block{header, txns})
     }
 
     /// Get a transaction that has been recorded in the database. It will only be recorded in the DB
     /// if it was accepted in a block. Said block may be an uncle.
     pub fn get_txn(&self, hash: &U256) -> Result<Txn, Error> {
-        self.get(Key(None, hash.to_vec(), BLOCKCHAIN_POSTFIX))
+        self.get(Key(Some(TXN_PREFIX), hash.to_vec(), BLOCKCHAIN_POSTFIX))
     }
 
     /// Get the public key of a validator given their ID.
@@ -494,16 +503,11 @@ impl Database {
     /// Find the current head of the block chain and then walk to it.
     #[inline]
     pub fn walk_to_head(&mut self) -> Result<(), Error> {
-        println!("Attempting to walk to head");
         if self.head.block.is_zero() { // walk from nothingness to genesis block
-            println!("head is zero, walk to genesis");
             let blocks = self.get_blocks_of_height(1)?;
             assert_eq!(blocks.len(), 1); // should have exactly one entry if in genesis case
-            println!("retrieving genesis block");
             let block = self.get_block(&blocks[0])?;
-            println!("got genesis block, getting mutation");
             self.get_mutation(&block)?; // don't need contra for the genesis block
-            println!("got mutation");
             // or to update current chain since there is only one block
             self.update_current_block(&blocks[0], Some(1))
         } else { // normal case

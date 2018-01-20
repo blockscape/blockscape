@@ -160,11 +160,8 @@ impl Block {
             len = hashes.len();
         }
 
-        if len == 1 {
-            hashes[0]
-        } else {
-            hash_obj(&U256_ZERO)
-        }
+        if len == 1 { hashes[0] }
+        else { U256_ZERO }
     }
 }
 
