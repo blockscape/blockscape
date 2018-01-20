@@ -63,7 +63,7 @@ spec:
         name: blockscape
         env:
         - name: RUST_LOG
-          value: debug
+          value: info,blockscape=debug,blockscape_core=debug,blockscape::rpc=info
         ports:
         - containerPort: 35653
           protocol: UDP
