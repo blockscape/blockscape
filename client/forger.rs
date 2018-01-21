@@ -56,8 +56,12 @@ pub fn start_forging(context: &Rc<Context>, handler: &Handle, _network_id: U256)
                                 Ok(Either::B((block, _))) => {
                                     let rk = Arc::clone(&ctx2.rk);
                                     h2.spawn(ctx2.rk.get_priority_worker().spawn_fn(move || {
-                                        if let Ok(_) = rk.add_block(&block) {
+                                        let r = rk.add_block(&block);
+                                        if let Ok(_) = r {
                                             println!("FORGE: Submitted {} was accepted!", block.calculate_hash());
+                                        }
+                                        else {
+                                            println!("FORGE: Submitted {} was rejected: {:?}", block.calculate_hash(), r.unwrap_err());
                                         }
 
                                         Ok::<(), ()>(())
