@@ -206,10 +206,13 @@ impl NodeRepository {
     /// Remove the given node from the repository. This should only be done if the node data is
     /// found to be bogus
     pub fn remove(&mut self, node: &U160) {
-        self.available_nodes.remove(node);
-        self.sorted_nodes.retain(|n| n != node);
 
-        self.changes += 1;
+        if self.available_nodes.contains_key(node) {
+            self.available_nodes.remove(node);
+            self.sorted_nodes.retain(|n| n != node);
+
+            self.changes += 1;
+        }
     }
 
     /// Increment the connection score for the given node ID. Does nothing if the node does not exist in the repo, so call after apply() if the node is new.
