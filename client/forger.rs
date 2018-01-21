@@ -63,7 +63,7 @@ pub fn start_forging(context: &Rc<Context>, handler: &Handle, _network_id: U256)
                                         Ok::<(), ()>(())
                                     }).map(|_| ()).map_err(|_| ()));
                                 },
-                                Err(Either::B(err)) => {
+                                Err(Either::B((err, _))) => {
                                     warn!("Forging algorithm had an error: {:?}", err);
                                 },
                                 _ => {}

@@ -85,7 +85,7 @@ impl ShardInfo {
 
             let nrepo = self.node_repo.borrow();
 
-            info!("Starting new node queue size: {}, repo size: {}", queue.len(), nrepo.len());
+            //info!("Starting new node queue size: {}, repo size: {}", queue.len(), nrepo.len());
 
             // do we need more nodes to connect to (from the queue)? If so, pull from the node repo
             let mut attempts = 0;
@@ -106,7 +106,7 @@ impl ShardInfo {
                 }
             }
 
-            info!("Reaching for {} new nodes...", queue.len());
+            debug!("Reaching for {} new nodes...", queue.len());
 
             // pull from the connection queue
 

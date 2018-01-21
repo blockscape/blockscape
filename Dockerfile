@@ -8,7 +8,7 @@ EXPOSE 35653 2345
 STOPSIGNAL SIGINT
 
 ENV RUST_LOG=info,blockscape=debug,blockscape_core=debug,blockscape::rpc=info \
-    RUST_BACKTRACE=1
+    RUST_BACKTRACE=full
     
 ARG RELEASE=debug
 
