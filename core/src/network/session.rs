@@ -9,10 +9,14 @@ use time::Time;
 
 use signer::RSA_KEY_SIZE;
 
-use network::context::NetworkContext;
-use network::client::NetworkActions;
+use network::context::*;
+use network::client::{NetworkActions, MAX_PACKET_SIZE};
+
+use record_keeper::{BlockPackage,Error};
+use record_keeper::key::*;
 
 use futures::prelude::*;
+use futures::future;
 
 pub const PROTOCOL_VERSION: u16 = 1;
 
@@ -21,6 +25,9 @@ pub const PING_RETENTION: f32 = 40.0;
 
 /// Number of milliseconds to wait before declaring a ping failed
 pub const PING_TIMEOUT: i64 = 3000;
+
+/// Number of milliseconds to wait before declaring a job failed
+pub const JOB_TIMEOUT: i64 = 5000;
 
 /// The number of strikes which may accumulate before declaring the connection timed out
 pub const TIMEOUT_TOLERANCE: u64 = 3;
@@ -53,7 +60,9 @@ pub enum DataRequestError {
     /// Too many requests have come from your node to be processed in quick succession
     RateExceeded,
     /// This node is not an authoritative source for information on the requested shard ID
-    NetworkNotAvailable
+    NetworkNotAvailable,
+    /// Service could not be provided because of an error within the contacted node which is not believed to be related to the request itself
+    InternalError
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
@@ -82,15 +91,9 @@ pub enum Message {
     },                   
 
     /// Sent to check connection status with client
-    Ping {
-        /// The time at which the ping started
-        time: Time
-    },
+    Ping(Time),
     /// Sent to reply to a previous connection status request
-    Pong {
-        /// The time at which the ping started
-        time: Time
-    },
+    Pong(Time),
 
     /// Sent when a node would like to query peers of another node, in order to form more connections to the network
     FindNodes {
@@ -112,32 +115,25 @@ pub enum Message {
     },
 
     /// Sent by reliable flooding to indicate a new transaction has entered the network and should be propogated
-    NewTransaction { txn: Txn },
+    NewTransaction(Txn),
     /// Sent by reliable flooding to indicClientate that a new block has entered the network and should be propogated
-    NewBlock { block: Block },
+    NewBlock(Block),
 
     /// Request block synchronization data, starting from the given block hash, proceeding to the last block hash
     SyncBlocks { last_block_hash: U256, target_block_hash: U256 },
     /// Request specific block or transaction data as indicated by the list of hashes given
-    QueryData { hashes: Vec<U256> },
+    QueryData(Vec<U256>),
     /// Returned in response to a request for txn/block data (either SyncBlocks or QueryData) to provide bulk data to import from the blockchain
-    DataList {
-        /// A list of blocks to import
-        blocks: Vec<Block>,    
-        /// A list of transactions to import                 
-        transactions: Vec<Txn>,
-    },
+    ChainData(Vec<u8>),
+
+    /// In the case that a node somehow missed some individual piece of data (like a single txn), this function is used to send it
+    SpotChainData(Vec<Block>, Vec<Txn>),
 
     /// Sent to signal the end of the connection
-    Bye {
-        /// Why the connection was closed
-        reason: ByeReason
-    },
+    Bye(ByeReason),
 
     /// Sent when a previous call to QueryData or SyncBlocks is not able to be fulfilled, in whole or in part.
-    DataError {
-        err: DataRequestError
-    }
+    DataError(DataRequestError)
 }
 
 /// Statistical information object for detailed information about a session
@@ -163,7 +159,7 @@ pub struct Session {
 
     /// Information about the node on the other end. If this is unset, then the connection is not really fully initialized yet
     remote_peer: RefCell<Arc<Node>>,
-
+ 
     /// The port which we connect to on the other end. This starts as 255 for new connections
     remote_port: Cell<u8>,
 
@@ -181,6 +177,10 @@ pub struct Session {
 
     /// Time at which the most recent ping packet was sent
     last_ping_send: Cell<Option<Time>>,
+
+    /// To keep track of the most recent request for info from a node. Allows us to prevent having more than one request per node.
+    /// Also lets us keep track of retransmissions.
+    current_job: Cell<Option<(Rc<NetworkJob>, Time)>>,
 
     /// The unique packet identifier to use for the next packet
     current_seq: Cell<u32>,
@@ -205,6 +205,7 @@ impl Session {
             latency:  Cell::new(Time::from_milliseconds(0)),
             last_ping_send: Cell::new(None),
             current_seq: Cell::new(0),
+            current_job: Cell::new(None),
             strikes: Cell::new(0),
         };
 
@@ -241,7 +242,7 @@ impl Session {
     fn handle_introduce(&self, msg: &Message) {
         if let &Message::Introduce { ref node, ref port, .. } = msg {
             *self.remote_peer.borrow_mut() = Arc::new(node.clone());
-
+ 
             self.remote_port.set(*port);
 
             self.strikes.set(0);
@@ -293,25 +294,23 @@ impl Session {
                     return;
                 }
 
-                Message::Ping { ref time } => {
+                Message::Ping(time) => {
                     // Send back a pong
                     actions.send_packets.push(SocketPacket(self.remote_addr.clone(), RawPacket {
                         port: self.remote_port.get(),
                         payload: Packet {
                             seq: packet.seq,
-                            msg: Message::Pong {
-                                time: time.clone()
-                            }
+                            msg: Message::Pong(time)
                     }}));
                 },
 
-                Message::Pong { ref time } => {
+                Message::Pong(time) => {
                     // save ping information
                     if let Some(lps) = self.last_ping_send.get() {
-                        if lps == *time {
+                        if lps == time {
                             let f = 1.0 / PING_RETENTION;
                             let mut l = self.latency.get();
-                            l.apply_weight(&lps.diff(time), f);
+                            l.apply_weight(&lps.diff(&time), f);
                             self.latency.set(l);
                         }
 
@@ -336,13 +335,6 @@ impl Session {
                         })
                         .collect();
 
-                    /*let nodes = if *network_id == self.network_id {
-                        actions.shard.get_nodes_from_repo(*skip as usize, NODE_RESPONSE_SIZE as usize)
-                    }
-                    else {
-                        actions.nc.get_nodes_from_repo(network_id, *skip as usize, NODE_RESPONSE_SIZE as usize)
-                    };*/
-
                     actions.send_packets.push(SocketPacket(self.remote_addr.clone(), RawPacket {
                         port: self.remote_port.get(),
                         payload: Packet {
@@ -366,34 +358,132 @@ impl Session {
                     }
                 },
 
-                Message::NewTransaction { ref txn } => {
+                Message::NewTransaction(ref txn) => {
                     let d = txn.clone();
                     let rk = Arc::clone(&self.context.rk);
                     self.context.event_loop.spawn(self.context.rk.get_worker().spawn_fn(move || {
                         rk.add_pending_txn(&d)
-                    }).map(|_| ()).or_else(|_| {
+                    }).map(|_| ()).or_else(|err| {
                         // react for this node's records here if they are bad
+                        match err {
+                            Error::NotFound(_) => {
+                                // submit a new job
+                                // TODO: currently undefined/should not happen, so what
+                            },
+                            Error::Logic(_e) => {
+                                // TODO: Mark on node record and kick
+                            },
+                            _ => {
+                                // TODO: most likely some internal error occured, but where?
+                            }
+                        }
+
                         Ok::<(), ()>(())
                     }));
                 },
 
-                Message::NewBlock { ref block } => {
+                Message::NewBlock(ref block) => {
                     let d = block.clone();
+                    let prev = block.prev;
                     let rk = Arc::clone(&self.context.rk);
+                    let lcontext = Rc::clone(&self.context);
+                    let network_id = self.network_id;
                     self.context.event_loop.spawn(self.context.rk.get_worker().spawn_fn(move || {
                         rk.add_block(&d)
-                    }).map(|_| ()).or_else(|_| {
+                    }).map(|_| ()).or_else(move |err| {
                         // react for this node's records here if they are bad
+                        match err {
+                            Error::NotFound(Key::Blockchain(missing_obj)) => {
+                                match missing_obj {
+                                    BlockchainEntry::BlockHeader(hash) => {
+                                        // set a new work target
+                                        if let Err(e) = lcontext.job_targets.unbounded_send(
+                                            (NetworkJob::new(network_id, hash, lcontext.rk.get_current_block_hash(), None), Some(prev))
+                                        ) {
+                                            // should never happen
+                                            warn!("Could not buffer new network job: {}", e);
+                                        };
+                                    },
+                                    BlockchainEntry::Txn(_hash) => {
+                                        // TODO: request a single txn from some node so we can get patched up
+                                    },
+                                    BlockchainEntry::TxnList(_hash) => {
+                                        // should never happen
+                                        panic!("Database is missing an entire txn list! Should never happen.");
+                                    }
+                                }
+                            },
+                            Error::Logic(_e) => {
+                                // TODO: Mark on node record and kick
+                            },
+                            _ => {
+                                // TODO: most likely some internal error occured, but where?
+                            }
+                        }
+
                         Ok::<(), ()>(())
                     }));
                 },
 
-                Message::SyncBlocks { /*ref last_block_hash, ref target_block_hash*/ .. } => {
-                    // get stuff from the db
+                Message::SyncBlocks { ref last_block_hash, ref target_block_hash } => {
+                    // generate a block package from the db
+                    let lbh = last_block_hash.clone();
+                    let tbh = target_block_hash.clone();
+                    let rk = Arc::clone(&self.context.rk);
+                    let lcontext = Rc::clone(&self.context);
+                    let r_addr = self.remote_addr.clone();
+                    let r_port = self.remote_port.get();
+                    let seq = packet.seq;
+                    self.context.event_loop.spawn(self.context.rk.get_priority_worker().spawn_fn(move || {
+                        let bp = rk.get_blocks_before(&lbh, &tbh, MAX_PACKET_SIZE)?;
 
+                        Ok(bp.zip()?)
+                    })
+                    .then(move |r| {
+
+                        if let Ok(d) = r {
+                            // send back
+                            lcontext.send_packets(vec![SocketPacket(r_addr.clone(), RawPacket {
+                                port: r_port,
+                                payload: Packet {
+                                    seq: seq,
+                                    msg: Message::ChainData(d)
+                            }})]);
+                        }
+                        else {
+                            match r.unwrap_err() {
+                                Error::NotFound(Key::Blockchain(missing_obj)) => {
+                                    let h = match missing_obj {
+                                        BlockchainEntry::BlockHeader(hash) => hash,
+                                        BlockchainEntry::Txn(hash) => hash,
+                                        BlockchainEntry::TxnList(hash) => hash
+                                    };
+
+                                    lcontext.send_packets(vec![SocketPacket(r_addr.clone(), RawPacket {
+                                        port: r_port,
+                                        payload: Packet {
+                                        seq: seq,
+                                        msg: Message::DataError(DataRequestError::HashesNotFound(vec![h]))
+                                    }})]);
+                                },
+
+                                _ => {
+                                    // no idea what happened
+                                    lcontext.send_packets(vec![SocketPacket(r_addr.clone(), RawPacket {
+                                        port: r_port,
+                                        payload: Packet {
+                                            seq: seq,
+                                            msg: Message::DataError(DataRequestError::InternalError)
+                                    }})]);
+                                }
+                            }
+                        }
+
+                        Ok::<(), ()>(())
+                    }));
                 },
 
-                Message::QueryData { ref hashes } => {
+                Message::QueryData(ref hashes) => {
                     let d = hashes.clone();
                     let r_addr = self.remote_addr.clone();
                     let r_port = self.remote_port.get();
@@ -401,13 +491,11 @@ impl Session {
                     let seq = packet.seq;
                     // get stuff form the db
                     let rk = Arc::clone(&self.context.rk);
-                    self.context.event_loop.spawn(self.context.rk.get_worker().spawn_fn(move || {
+                    self.context.event_loop.spawn(self.context.rk.get_priority_worker().spawn_fn(move || {
                         let mut blocks: Vec<Block> = Vec::new();
                         let mut txns: Vec<Txn> = Vec::new();
 
                         let mut failed: Vec<U256> = Vec::new();
-
-
 
                         for hash in d {
                             if let Ok(txn) = rk.get_txn(&hash) {
@@ -432,10 +520,7 @@ impl Session {
                                 port: r_port,
                                 payload: Packet {
                                     seq: seq,
-                                    msg: Message::DataList {
-                                        blocks: blocks,
-                                        transactions: txns
-                                    }
+                                    msg: Message::SpotChainData(blocks, txns)
                             }}));
                         }
                         if !failed.is_empty() {
@@ -443,9 +528,7 @@ impl Session {
                                 port: r_port,
                                 payload: Packet {
                                     seq: seq,
-                                    msg: Message::DataError {
-                                        err: DataRequestError::HashesNotFound(failed)
-                                    }
+                                    msg: Message::DataError(DataRequestError::HashesNotFound(failed))
                             }}));
                         }
 
@@ -454,25 +537,163 @@ impl Session {
                     }));
                 },
 
-                Message::DataList { .. } => {
-                    let f1 = self.context.rk.get_worker().spawn_fn(|| {
-                        // import block package
-                        Ok::<(), ()>(())
+                Message::SpotChainData(ref _blocks, ref _hashes) => {
+                    
+                },
+
+                Message::ChainData(ref raw_pkg) => {
+
+                    let lcontext = Rc::clone(&self.context);
+                    let lcontext2 = Rc::clone(&self.context);
+                    let rk = Arc::clone(&self.context.rk);
+                    let rk2 = Arc::clone(&self.context.rk);
+                    let j = self.current_job.replace(None);
+                    let raw_pkg = raw_pkg.clone();
+                    let f1 = self.context.rk.get_priority_worker().spawn_fn(move || {
+                        BlockPackage::unzip(&raw_pkg)
+                            .map_err(|e| (e, rk.get_current_block_hash()))
                     });
 
-                    let f2 = f1.or_else(|_| {
-                        // react for this node's records here if they are bad
-                        Ok::<(), ()>(())
+                    let f2 = f1.then(move |res| {
+                        match res {
+                            Ok((pkg, size)) => {
+                                if let Some((ref job, ref _time)) = j {
+
+                                    // here we need to check if previous imported data was for some reason invalidated
+                                    if pkg.starts_at() != job.predicted_cur.get() {
+                                        // for whatever, the cur block before our submit no longer matches, so cancel import
+                                        debug!("Cancel import of block package starting at {}", pkg.starts_at());
+                                        return future::err(());
+                                    }
+
+                                    // update the job size
+                                    let mut c = job.concurrent.get();
+                                    c += size;
+                                    job.concurrent.set(c);
+
+                                    job.predicted_cur.set(pkg.last_hash());
+
+                                    if pkg.last_hash() != job.get_target() && c < MAX_JOB_SIZE {
+                                        // resubmit the job because we are ready to get more data
+                                        if let Err(e) = lcontext.job_targets.unbounded_send((Rc::clone(job), None)) {
+                                            // should never happen
+                                            warn!("Could not buffer changed network job: {}", e);
+                                        };
+                                    }
+                                }
+
+                                // now that we have unpacked, actually import the data
+                                let f = lcontext.rk.get_priority_worker().spawn_fn(move || {
+                                    rk2.import_pkg(pkg).map_err(|e| (e, rk2.get_current_block_hash()))
+                                }).then(move |res| {
+                                    match res {
+                                        Ok(imported_to) => {
+                                            if let Some((ref job, ref _time)) = j {
+                                                // update the job size
+                                                let mut c = job.concurrent.get();
+                                                c -= size;
+                                                job.concurrent.set(c);
+                                                if imported_to != job.get_target() && c < MAX_JOB_SIZE {
+                                                    // resubmit the job because we are ready to get more data
+                                                    if let Err(e) = lcontext2.job_targets.unbounded_send((Rc::clone(job), None)) {
+                                                        // should never happen
+                                                        warn!("Could not buffer changed network job: {}", e);
+                                                    };
+                                                }
+                                            }
+
+                                            Ok::<(), ()>(())
+                                        },
+                                        Err((err, cbh)) => {
+                                            // react for this node's records here if they are bad
+                                            match err {
+                                                Error::Deserialize(_e) => {
+                                                    // TODO: Mark on node record and kick
+                                                },
+                                                Error::Logic(_e) => {
+                                                    // TODO: Mark on node record and kick
+
+                                                }
+                                                _ => {
+                                                    // TODO: most likely some internal error occured, but where?
+                                                }
+                                            }
+
+                                            if let Some((ref job, ref _time)) = j {
+                                                // in any case of error, we have to reset
+                                                job.concurrent.set(job.concurrent.get() - size);
+
+                                                // this will set the current block hash back to what we know to be currently imported, and reset
+                                                // the entire chain of pending jobs in the process
+                                                job.predicted_cur.set(cbh);
+
+                                                if let Err(e) = lcontext2.job_targets.unbounded_send((Rc::clone(job), None)) {
+                                                    // should never happen
+                                                    warn!("Could not buffer changed network job: {}", e);
+                                                };
+                                            }
+
+                                            Ok::<(), ()>(())
+                                        }
+                                    }
+                                });
+
+                                lcontext.event_loop.spawn(f);
+                            },
+                            Err((err, _cbh)) => {
+                                // react for this node's records here if they are bad
+                                match err {
+                                    Error::Deserialize(_e) => {
+                                        // TODO: Mark on node record and kick
+                                    },
+                                    Error::Logic(_e) => {
+                                        // TODO: Mark on node record and kick
+
+                                    }
+                                    _ => {
+                                        // TODO: most likely some internal error occured, but where?
+                                    }
+                                }
+
+                                // we have to resubmit any job we have
+                                if let Some((ref job, ref _time)) = j {
+                                    if let Err(e) = lcontext.job_targets.unbounded_send((Rc::clone(job), None)) {
+                                        // should never happen
+                                        warn!("Could not buffer changed network job: {}", e);
+                                    };
+                                }
+                            }
+                        }
+
+                        future::ok(())
                     });
 
                     self.context.event_loop.spawn(f2);
                 },
 
-                Message::DataError { .. } => {
+                Message::DataError(ref err) => {
+                    // data could not be requested: does this have to do with our currently active job?
+                    match *err {
+                        DataRequestError::HashesNotFound(ref hashes) => {
+                            if let Some((job, time)) = self.current_job.replace(None) {
+                                for hash in hashes {
+                                    if *hash == job.get_target() {
+                                        // current 
+                                    }
+                                }
 
+                                // no problems found, put hte job back
+                                self.current_job.replace(Some((job, time)));
+                            }
+                        }
+                        _ => {
+                            // TODO:
+                            // currently unimplemented
+                        }
+                    }
                 },
 
-                Message::Bye { ref reason } => {
+                Message::Bye(ref reason) => {
                     // remote end has closed the connection, no need to reply, just mark this session as that reason
                     self.done.set(Some(reason.clone()));
                 }
@@ -525,13 +746,21 @@ impl Session {
                         port: self.remote_port.get(),
                         payload: Packet {
                             seq: self.current_seq.replace(self.current_seq.get()),
-                            msg: Message::Ping {
-                                time: lps
-                            }
+                            msg: Message::Ping(lps)
                     }}));
 
                     self.last_ping_send.set(Some(lps));
                 }
+            }
+        }
+    }
+
+    pub fn check_job(&self, _: &mut NetworkActions) {
+
+        if let Some((job, time)) = self.current_job.replace(None) {
+            // has it expired?
+            if time.diff(&Time::current_local()) < Time::from_milliseconds(JOB_TIMEOUT) {
+                self.current_job.set(Some((job, time)));
             }
         }
     }
@@ -550,6 +779,18 @@ impl Session {
         }
     }
 
+    /// Attempts to assign the given job to this node and send requests to resolve it. Will return whether or not the node
+    /// was able to accept the job (depending on what it's current job happened to be at the time)
+    pub fn assign_job(&self, job: &Rc<NetworkJob>) -> bool {
+        if let Some((oj, time)) = self.current_job.replace(Some((Rc::clone(job), Time::current_local()))) {
+            // swap it back in
+            self.current_job.replace(Some((oj, time)));
+            return false;
+        }
+
+        true
+    }
+
     pub fn get_info(&self) -> SessionInfo {
         SessionInfo {
             peer: self.remote_peer.borrow().as_ref().clone(),
@@ -566,7 +807,7 @@ impl Session {
             port: self.remote_port.get(),
             payload: Packet {
                 seq: self.current_seq.replace(self.current_seq.get() + 1 as u32),
-                msg: Message::Bye { reason: ByeReason::Exit }
+                msg: Message::Bye(ByeReason::Exit)
         }}));
 
         self.done.set(Some(ByeReason::Exit));

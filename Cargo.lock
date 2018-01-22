@@ -64,6 +64,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 name = "blockscape"
 version = "0.0.1"
 dependencies = [
+ "bincode 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "blockscape_core 0.0.1",
  "clap 2.29.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "colored 1.6.0 (registry+https://github.com/rust-lang/crates.io-index)",

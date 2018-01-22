@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use bin::*;
 use bincode;
 
 /// Square an integer
@@ -35,6 +36,10 @@ impl Ord for Cord {
         else if self.x != other.x { self.x.cmp(&other.x) }
         else { self.y.cmp(&other.y) }
     }
+}
+
+impl AsBin for Cord {
+    fn as_bin(&self) -> Bin { bincode::serialize(self, bincode::Bounded(8)).unwrap() }
 }
 
 

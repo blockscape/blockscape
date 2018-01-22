@@ -5,6 +5,10 @@ use std::str::FromStr;
 use std::net::SocketAddr;
 use std::rc::Rc;
 
+use serde_json;
+
+use bincode;
+
 use blockscape_core::bin::Bin;
 use blockscape_core::env::*;
 use blockscape_core::network::client::ClientConfig;
@@ -12,6 +16,7 @@ use blockscape_core::network::node::NodeEndpoint;
 use blockscape_core::primitives::*;
 use blockscape_core::signer::generate_private_key;
 use blockscape_core::time::Time;
+use blockscape_core::hash::hash_pub_key;
 
 use rpc::RPC;
 
@@ -50,6 +55,10 @@ pub fn parse_cmdline<'a>() -> ArgMatches<'a> {
                 .long("ntp-servers")
                 .default_value("pool.ntp.org:123")
                 .help("NTP servers to use for time correction. Must be in the format: <hostname>:<port> (default is port 123). Separated by commas."))
+            .arg(Arg::with_name("forge")
+                .long("forge")
+                .short("F")
+                .help("Run the forging application on all primary shards"))
         .group(ArgGroup::with_name("network"))
             .arg(Arg::with_name("hostname")
                 .long("host")
@@ -112,25 +121,15 @@ pub fn parse_cmdline<'a>() -> ArgMatches<'a> {
 
 /// Returns the genesis block for blockscape
 pub fn make_genesis() -> (Block, Vec<Txn>) {
-    let mut b = Block {
-        header: BlockHeader {
-            version: 1,
-            timestamp: Time::from_seconds(1508009036),
-            shard: U256_ZERO,
-            prev: U256_ZERO,
-            merkle_root: U256_ZERO,
-            blob: Bin::new(),
-            creator: U160_ZERO,
-            signature: Bin::new()
-        },
-        txns: BTreeSet::new()
-    };
+    let n: u64 = 1;
+
+    let admkey: Bin = PKey::public_key_from_pem(ADMIN_KEY).unwrap()
+        .public_key_to_der().unwrap()
+        .into();
 
     let mut m = Mutation::new();
 
-    let admkey = PKey::public_key_from_pem(ADMIN_KEY).unwrap()
-        .public_key_to_der().unwrap()
-        .into();
+    let adm_key_hash = hash_pub_key(&admkey);
 
     m.changes.push(Change::Admin {
         key: Vec::from(ADMIN_KEY_PREFIX).into(),
@@ -139,15 +138,30 @@ pub fn make_genesis() -> (Block, Vec<Txn>) {
 
     let txn = Txn {
         timestamp: Time::from_seconds(1508009036),
-        creator: U160_ZERO, // empty signature, not required to have one
+        creator: adm_key_hash,
         mutation: m,
         signature: Bin::new(),
     };
 
-    b.txns.insert(0.into());
+    let mut txns = BTreeSet::new();
+    txns.insert(txn.calculate_hash());
+    let merkle_root = Block::calculate_merkle_root(&txns);
 
-    // TODO: Merkle root hash happens here:
-    //b.calculate_merkle_root();
+    let b = Block {
+        header: BlockHeader {
+            version: 1,
+            timestamp: Time::from_seconds(1508009036),
+            shard: U256_ZERO,
+            prev: U256_ZERO,
+            merkle_root,
+            // Serialize in the initial block difficulty
+            blob: bincode::serialize(&n, bincode::Bounded(8)).unwrap(),
+            creator: adm_key_hash,
+            signature: Bin::new()
+        },
+        txns
+    };
+
     (b, vec![txn])
 }
 
@@ -216,14 +230,30 @@ pub fn call_rpc(cmdline: &ArgMatches) -> bool {
     use rpc::client::JsonRpcRequest;
 
     let method = cmdline.value_of_lossy("rpccmd").expect("Unknown encoding for RPC command!").into_owned();
-    let args = cmdline.values_of_lossy("rpcargs").unwrap_or(Vec::new());
+    let raw_args = cmdline.values_of_lossy("rpcargs").unwrap_or(Vec::new());
+
+    let a = if raw_args.len() == 1 {
+        let res: Result<serde_json::Value, _> = serde_json::from_str(&raw_args[0]);
+        if let Ok(r) = res {
+            r
+        }
+        else {
+            //println!("Could not parse JSON arguments: {:?}", res);
+            //println!("Trying to send literal string...");
+
+            serde_json::to_value(raw_args).unwrap()
+        }
+    }
+    else {
+        serde_json::to_value(raw_args).unwrap()
+    };
 
     debug!("Calling RPC: {}", method);
 
     let bind_addr = SocketAddr::new(cmdline.value_of("rpcbind").unwrap().parse().expect("Invalid RPC bind IP"), 
             cmdline.value_of("rpcport").unwrap().parse::<u16>().expect("Invalid RPC port: must be a number!"));
 
-    let res = JsonRpcRequest::new(method, args).exec_sync(bind_addr);
+    let res = JsonRpcRequest::new(method, a).exec_sync(bind_addr);
 
     if res.is_err() {
         println!("RPC Error: {}", res.err().unwrap());

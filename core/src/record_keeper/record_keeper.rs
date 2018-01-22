@@ -4,7 +4,7 @@ use primitives::{U256, U160, Txn, Block, BlockHeader, Mutation, Change, Listener
 use std::collections::{HashMap, BTreeSet, BTreeMap};
 use std::path::PathBuf;
 use std::sync::RwLock;
-use super::{Error, Storable, RecordEvent, PlotID};
+use super::{Error, RecordEvent, PlotID};
 use super::{PlotEvent, PlotEvents, events, NetState, NetDiff};
 use super::{rules, BlockRule, TxnRule, MutationRule, MutationRules};
 use super::BlockPackage;
@@ -37,13 +37,16 @@ pub struct RecordKeeper {
 
     /// A CPU pool of a single thread dedicated to processing work related to RecordKeeper. Work can be passed to it. Future compatible.
     /// It is reccomended to spawn major work for the DB on this thread; one can also spawn their own thread for smaller, higher priority jobs.
-    worker: futures_cpupool::CpuPool
+    worker: futures_cpupool::CpuPool,
+
+    /// A larger work queue designed for smaller, time sensitive jobs
+    priority_worker: futures_cpupool::CpuPool
 }
 
 impl RecordKeeper {
     /// Construct a new RecordKeeper from an already opened database and possibly an existing set of
     /// rules.
-    pub fn new(db: Database, rules: Option<MutationRules>, key: PKey) -> RecordKeeper {
+    fn new(db: Database, rules: Option<MutationRules>, key: PKey) -> RecordKeeper {
         RecordKeeper {
             db: RwLock::new(db),
             rules: RwLock::new(rules.unwrap_or(MutationRules::new())),
@@ -52,23 +55,45 @@ impl RecordKeeper {
             game_listeners: RwLock::new(ListenerPool::new()),
             key_hash: hash_pub_key(&key.public_key_to_der().unwrap()),
             key,
-            worker: futures_cpupool::Builder::new().pool_size(1).create()
+            worker: futures_cpupool::Builder::new().pool_size(1).create(),
+            priority_worker: futures_cpupool::Builder::new().pool_size(3).create()
         }
+    }
+
+    /// Construct a new RecordKeeper by opening a database. This will create a new database if the
+    /// one specified does not exist.
+    /// # Warning
+    /// Any database which is opened, is assumed to contain data in a certain way, any outside
+    /// modifications can cause undefined behavior.
+    pub fn open(key: PKey, path: PathBuf, rules: Option<MutationRules>, genesis: (Block, Vec<Txn>)) -> Result<RecordKeeper, Error> {
+        info!("Opening a RecordKeeper object with path '{:?}'", path);
+        let db = Database::open(path)?;
+        let rk: RecordKeeper = Self::new(db, rules, key);
+        
+        { // Handle Genesis
+            println!("Handle genesis...");
+            let mut db = rk.db.write().unwrap();
+            if db.is_empty() { // add genesis
+                debug!("Loaded DB is empty, adding genesis block...");
+                for ref txn in genesis.1 {
+                    db.add_txn(txn)?;
+                }
+                db.add_block(&genesis.0)?;
+                db.walk_to_head()?;
+            } else { // make sure the (correct) genesis block is there
+                db.get_block(&genesis.0.calculate_hash())?;
+            }
+        }
+
+        Ok(rk)
     }
 
     pub fn get_worker(&self) -> &futures_cpupool::CpuPool {
         &self.worker
     }
 
-    /// Construct a new RecordKeeper by opening a database. This will create a new database if the
-    /// one specified does not exist. By default, it will open the database in the directory
-    /// `env::get_storage_dir()`. See also `Database::open::`.
-    /// # Warning
-    /// Any database which is opened, is assumed to contain data in a certain way, any outside
-    /// modifications can cause undefined behavior.
-    pub fn open(key: PKey, path: Option<PathBuf>, rules: Option<MutationRules>) -> Result<RecordKeeper, Error> {
-        let db = Database::open(path)?;
-        Ok(Self::new(db, rules, key))
+    pub fn get_priority_worker(&self) -> &futures_cpupool::CpuPool {
+        &self.priority_worker
     }
 
     /// Use pending transactions to create a new block which can then be added to the network.
@@ -141,19 +166,19 @@ impl RecordKeeper {
     /// it is valid. Also move the network state to be at the new end of the chain.
     /// Returns true if the block was added, false if it was already in the system.
     pub fn add_block(&self, block: &Block) -> Result<bool, Error> {
+        self.is_valid_block(block)?;
+
         let mut pending_txns = self.pending_txns.write().unwrap();
         let mut db = self.db.write().unwrap();
 
-        self.is_valid_block(block)?;
-
         // we know it is a valid block, so go ahead and add it's transactions, and then it.
         for txn_hash in block.txns.iter() {
-            if let Some(txn) = pending_txns.remove(&txn_hash) { // we will need to add it 
+            if let Some(txn) = pending_txns.remove(txn_hash) { // we will need to add it 
                 db.add_txn(&txn)?;
             } else {
                 // should already be in the DB then because otherwise is_valid_block should give an
                 // error, so use an assert check
-                assert!(db.get_txn(&txn_hash).is_ok())
+                assert!(db.get_txn(*txn_hash).is_ok())
             }
         }
         // add txns first, so that we make sure all blocks in the system have all their information,
@@ -184,7 +209,7 @@ impl RecordKeeper {
         }
 
         // check if it is already in the database
-        match db.get_txn(&hash) {
+        match db.get_txn(hash) {
             Ok(_) => return Ok(false),
             Err(Error::NotFound(..)) => {},
             Err(e) => return Err(e)
@@ -195,14 +220,24 @@ impl RecordKeeper {
         Ok(true)
     }
 
-    /// Import a package of blocks and transactions.
-    pub fn import_pkg(&self, pkg: BlockPackage) -> Result<(), Error> {
+    /// Import a package of blocks and transactions. Returns the hash of the last block imported.
+    pub fn import_pkg(&self, pkg: BlockPackage) -> Result<U256, Error> {
         let (blocks, txns) = pkg.unpack();
+
+        if blocks.is_empty() {
+            // it is invalid to import an empty block package
+            return Err(Error::Deserialize("Empty Block Package".into()));
+        }
+
+        let last = blocks.last().unwrap().calculate_hash();
+
         for txn in txns {
             self.add_pending_txn(&txn.1)?;
         } for block in blocks {
             self.add_block(&block)?;
-        } Ok(())
+        }
+        
+        Ok(last)
     }
 
     /// Find a validator's public key given the hash. If they are not found, then they are not a
@@ -210,14 +245,14 @@ impl RecordKeeper {
     /// TODO: Handle shard-based reputations
     pub fn get_validator_key(&self, id: &U160) -> Result<Bin, Error> {
         self.db.read().unwrap()
-            .get_validator_key(id)
+            .get_validator_key(*id)
     }
 
     /// Get the reputation of a validator given their ID.
     /// TODO: Handle shard-based reputations
     pub fn get_validator_rep(&self, id: &U160) -> Result<i64, Error> {
         self.db.read().unwrap()
-            .get_validator_rep(id)
+            .get_validator_rep(*id)
     }
 
     /// Retrieve the current block hash which the network state represents.
@@ -243,7 +278,7 @@ impl RecordKeeper {
     /// block which is denoted by having a previous block reference of 0.
     pub fn get_block_height(&self, hash: &U256) -> Result<u64, Error> {
         let db = self.db.read().unwrap();
-        db.get_block_height(hash)
+        db.get_block_height(*hash)
     }
 
     /// Return a list of **known** blocks which have a given height. If the block has not been added
@@ -342,18 +377,6 @@ impl RecordKeeper {
         self.is_valid_mutation_given_lock(&state, &txn.mutation)
     }
 
-    /// Retrieve cache data from the database. This is for library use only.rules: &MutationRules,
-    pub fn get_cache_data<S: Storable>(&self, instance_id: &[u8]) -> Result<S, Error> {
-        let db = self.db.read().unwrap();
-        db.get::<S>(instance_id, CACHE_POSTFIX)
-    }
-
-    /// Put cache data into the database. This is for library use only.
-    pub fn put_cache_data<S: Storable>(&self, obj: &S) -> Result<(), Error> {
-        let mut db = self.db.write().unwrap();
-        db.put::<S>(obj, CACHE_POSTFIX)
-    }
-
     /// Retrieve a block header from the database.
     pub fn get_block_header(&self, hash: &U256) -> Result<BlockHeader, Error> {
         let db = self.db.read().unwrap();
@@ -377,7 +400,7 @@ impl RecordKeeper {
         let db = self.db.read().unwrap();
         match pending.get(&hash) {
             Some(txn) => Ok(txn.clone()),
-            None => db.get_txn(hash)
+            None => db.get_txn(*hash)
         }
     }
 
@@ -418,7 +441,7 @@ impl RecordKeeper {
         if let Some(txn) = self.pending_txns.read().unwrap().get(hash) {
             Ok(txn.clone())
         } else {
-            db.get_txn(hash)
+            db.get_txn(*hash)
         }
     }
 }

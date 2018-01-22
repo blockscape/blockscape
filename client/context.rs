@@ -4,9 +4,10 @@ use futures::sync::mpsc::UnboundedSender;
 
 use blockscape_core::network::client::ClientMsg;
 use blockscape_core::record_keeper::RecordKeeper;
+use blockscape_core::forging::BlockForger;
 
-#[derive(Clone)]
 pub struct Context {
     pub network: Option<UnboundedSender<ClientMsg>>,
-    pub rk: Arc<RecordKeeper>
+    pub rk: Arc<RecordKeeper>,
+    pub forge_algo: Box<BlockForger>
 }

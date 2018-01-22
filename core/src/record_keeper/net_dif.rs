@@ -4,6 +4,7 @@ use hash::hash_pub_key;
 use primitives::{Change, Mutation, U256, U160};
 use std::collections::{HashMap, HashSet};
 use super::{PlotEvent, PlotEvents, PlotID, events};
+use super::key::*;
 use super::database as DB;
 
 /// A set of changes which define the difference from a given network state to another though
@@ -18,9 +19,9 @@ pub struct NetDiff {
     /// The block all these changes lead to (if applied to the initial block)
     pub to: U256,
     /// New key-value sets to be added (or overwritten). Keys do not include the Network postfix.
-    values: HashMap<Bin, Bin>,
+    values: HashMap<Key, Bin>,
     /// Keys which are to be removed from the DB
-    delete: HashSet<Bin>,
+    delete: HashSet<Key>,
     /// Events which need to be added to plots
     new_events: HashMap<PlotID, PlotEvents>,
     /// Events which need to be removed from plots
@@ -55,19 +56,19 @@ impl NetDiff {
     }
 
     /// Mark a value to be updated at a given key.
-    pub fn set_value(&mut self, key: Bin, value: Bin) {
+    pub fn set_value(&mut self, key: Key, value: Bin) {
         self.delete.remove(&key);
         self.values.insert(key, value);
     }
 
     /// Mark a key and its value to be removed from the state.
-    pub fn delete_value(&mut self, key: Bin) {
+    pub fn delete_value(&mut self, key: Key) {
         self.values.remove(&key);
         self.delete.insert(key);
     }
 
     pub fn change_validator_rep(&mut self, id: &U160, amount: i64) {
-        let key = DB::with_prefix(DB::REPUTATION_PREFIX, &id.to_vec());
+        let key = NetworkEntry::ValidatorRep(*id).into();
         let value = {
             let raw = self.values.get(&key);
         
@@ -85,8 +86,9 @@ impl NetDiff {
         m.assert_not_contra();
         for change in m.changes { match change {
             Change::Admin{key, value} => {
-                if let Some(v) = value { self.set_value(key, v); }
-                else { self.delete_value(key); }
+                let k = NetworkEntry::Generic(key).into();
+                if let Some(v) = value { self.set_value(k, v); }
+                else { self.delete_value(k); }
             },
             Change::BlockReward{id, ..} => {
                 self.change_validator_rep(&id, DB::BLOCK_REWARD);
@@ -95,8 +97,7 @@ impl NetDiff {
                 self.add_event(id, tick, event);
             },
             Change::NewValidator{pub_key, ..} => {
-                let id = hash_pub_key(&pub_key);
-                let key = DB::with_prefix(DB::VALIDATOR_PREFIX, &id.to_vec());
+                let key = NetworkEntry::ValidatorRep( hash_pub_key(&pub_key) ).into();
                 self.set_value(key, pub_key);
             },
             Change::Slash{id, amount, ..} => {
@@ -110,8 +111,9 @@ impl NetDiff {
         m.assert_contra();
         for change in m.changes { match change {
             Change::Admin{key, value, ..} => {
-                if let Some(v) = value { self.set_value(key, v); }
-                else { self.delete_value(key) }
+                let k = NetworkEntry::Generic(key).into();
+                if let Some(v) = value { self.set_value(k, v); }
+                else { self.delete_value(k) }
             },
             Change::BlockReward{id, ..} => {
                 self.change_validator_rep(&id, -DB::BLOCK_REWARD);
@@ -120,9 +122,7 @@ impl NetDiff {
                 self.remove_event(id, tick, event);
             },
             Change::NewValidator{pub_key, ..} => {
-                let id = hash_pub_key(&pub_key);
-                let key = DB::with_prefix(DB::VALIDATOR_PREFIX, &id.to_vec());
-                self.delete_value(key);
+                self.delete_value(NetworkEntry::ValidatorKey( hash_pub_key(&pub_key) ).into());
             },
             Change::Slash{id, amount, ..} => {
                 self.change_validator_rep(&id, amount as i64)
@@ -142,12 +142,12 @@ impl NetDiff {
 
     /// Retrieve the value if any changes have been specified to it. Will return none if no changes
     /// are recorded or if it is to be deleted.
-    pub fn get_value(&self, key: &Bin) -> Option<&Bin> {
+    pub fn get_value(&self, key: &Key) -> Option<&Bin> {
         self.values.get(key)
     }
 
     /// Returns whether or not a given value is marked for deletion.
-    pub fn is_value_deleted(&self, key: &Bin) -> bool {
+    pub fn is_value_deleted(&self, key: &Key) -> bool {
         self.delete.contains(key)
     }
 
@@ -175,7 +175,7 @@ impl NetDiff {
     /// Get an iterator over each key we have information on and return if it is deleted or the new
     /// value it should be set to. See `ValueDiffIter`.
     pub fn get_value_changes<'a>(&'a self) -> ValueDiffIter {
-        let keys: Vec<&'a Bin> = {
+        let keys: Vec<&'a Key> = {
             let added: HashSet<_> = self.values.keys().collect();
             let removed: HashSet<_> = self.delete.iter().collect();
             added.union(&removed).cloned().collect()
@@ -221,9 +221,9 @@ impl<'a> Iterator for EventDiffIter<'a> {
 
 /// Iterate over all values we have changes recorded for. The first part of the Item is the key, and
 /// the second part is the value, if the value is None, then the key should be deleted from the DB.
-pub struct ValueDiffIter<'a>(&'a NetDiff, VecIntoIter<&'a Bin>);
+pub struct ValueDiffIter<'a>(&'a NetDiff, VecIntoIter<&'a Key>);
 impl<'a> Iterator for ValueDiffIter<'a> {
-    type Item = (&'a Bin, Option<&'a Bin>);
+    type Item = (&'a Key, Option<&'a Bin>);
 
     fn next(&mut self) -> Option<Self::Item> {
         self.1.next().map(|k| {

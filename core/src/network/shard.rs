@@ -1,6 +1,7 @@
 use std::cell::*;
 use std::cmp::min;
 use rand;
+use rand::Rng;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -10,7 +11,7 @@ use std::ops::Deref;
 use std::rc::Rc;
 
 use network::client::{ShardMode, NetworkActions};
-use network::context::NetworkContext;
+use network::context::*;
 use network::node::{Node, NodeRepository};
 use network::session::{Session, Message, SessionInfo, ByeReason, Packet};
 use primitives::{U256, U160};
@@ -32,6 +33,8 @@ pub struct ShardInfo {
     /// Independant "connections" to each of the other NodeEndpoints we interact with
     sessions: RefCell<HashMap<SocketAddr, Session>>,
 
+    peer_ids: RefCell<HashSet<U160>>,
+
     connect_queue: RefCell<HashSet<Arc<Node>>>,
 
     /// The index of the node we should scan next in the node repository. Incremented for each connection attempt
@@ -49,6 +52,7 @@ impl ShardInfo {
             port: port,
             mode: mode,
             sessions: RefCell::new(HashMap::new()),
+            peer_ids: RefCell::new(HashSet::new()),
             last_peer_idx: Cell::new(0),
             node_repo: RefCell::new(repo),
             connect_queue: RefCell::new(HashSet::new())
@@ -81,7 +85,7 @@ impl ShardInfo {
 
             let nrepo = self.node_repo.borrow();
 
-            info!("Starting new node queue size: {}, repo size: {}", queue.len(), nrepo.len());
+            //info!("Starting new node queue size: {}, repo size: {}", queue.len(), nrepo.len());
 
             // do we need more nodes to connect to (from the queue)? If so, pull from the node repo
             let mut attempts = 0;
@@ -90,7 +94,9 @@ impl ShardInfo {
                     let peer = nrepo.get_nodes(self.last_peer_idx.get());
                     self.last_peer_idx.set(self.last_peer_idx.get() + 1);
 
-                    queue.insert(peer);
+                    if !self.peer_ids.borrow().contains(&peer.get_hash_id()) && peer.get_hash_id() != self.context.my_node.get_hash_id() {
+                        queue.insert(peer);
+                    }
 
                     attempts += 1;
 
@@ -100,7 +106,7 @@ impl ShardInfo {
                 }
             }
 
-            info!("Reaching for {} new nodes...", queue.len());
+            debug!("Reaching for {} new nodes...", queue.len());
 
             // pull from the connection queue
 
@@ -145,14 +151,18 @@ impl ShardInfo {
 
 
         let mut s = self.sessions.borrow_mut();
+        let mut pids = self.peer_ids.borrow_mut();
+
+        pids.clear();
 
         for (addr, sess) in s.iter_mut() {
             sess.check_conn(actions);
+            sess.check_job(actions);
 
             if let Some(d) = sess.is_done() {
-                removed.push(addr.clone());
 
                 debug!("Remove session: {:?}", sess.get_remote_node().endpoint);
+                removed.push(addr.clone());
 
                 // may have to do something additional depending on the failure reason:
                 match d {
@@ -172,11 +182,14 @@ impl ShardInfo {
                     _ => {}
                 }
             }
+            else {
+                pids.insert(sess.get_remote_node().get_hash_id());
+            }
 
             // TODO: for now this is a little inefficient (requires a U160 hash for each client every 5 seconds), but it works
             // add introduced nodes to the repo
             if sess.is_introduced() && self.node_repo.borrow().get(&sess.get_remote_node().get_hash_id()).is_none() {
-                debug!("Add node to DB: {:?}", addr);
+                debug!("Add node to DB: {:?}", sess.get_remote_node().get_hash_id());
                 self.node_repo.borrow_mut().new_node(
                     sess.get_remote_node().deref().as_ref().clone()
                 );
@@ -205,11 +218,12 @@ impl ShardInfo {
                 return Err(()); // already connected
             }
 
-            debug!("New session: {:?}", peer.endpoint);
+            //debug!("New session: {:?}", peer.endpoint);
 
             // readyf to connect
             let sess = Session::new(Rc::clone(&self.context), self.port, peer, addr, self.network_id.clone(), introduce, actions);
 
+            self.peer_ids.borrow_mut().insert(sess.get_remote_node().get_hash_id());
             self.sessions.borrow_mut().insert(addr, sess);
 
             Ok(addr)
@@ -222,7 +236,26 @@ impl ShardInfo {
     }
 
     pub fn add_connect_queue(&self, node: Arc<Node>) {
-        self.connect_queue.borrow_mut().insert(node);
+
+        if !self.peer_ids.borrow().contains(&node.get_hash_id()) && node.get_hash_id() != self.context.my_node.get_hash_id() {
+            self.connect_queue.borrow_mut().insert(node);
+        }
+    }
+
+    /// Try to give the provided job to a randomly selected node in the network
+    pub fn assign_job(&self, job: &Rc<NetworkJob>) -> bool {
+        let s = self.sessions.borrow();
+        let mut rng = rand::thread_rng();
+        let mut pulls: Vec<&Session> = s.values().collect();
+        rng.shuffle(&mut pulls);
+
+        for pull in pulls {
+            if pull.assign_job(job) {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Call to set this shard to a state where all nodes are disconnected and data should stop being validated/tracked
@@ -236,9 +269,12 @@ impl ShardInfo {
     /// Evaluate a single packet and route it to a session as necessary
     pub fn process_packet(&self, p: &Packet, addr: &SocketAddr, actions: &mut NetworkActions) {
         
+        // debug logging
         match p.msg {
             Message::Ping { .. } => {},
             Message::Pong { .. } => {},
+            Message::Introduce { ref node, .. } => debug!("{} ==> Introduce {}", addr, node.get_hash_id()),
+            Message::NodeList { ref nodes, .. } => debug!("Received NodeList of {} nodes", nodes.len()),
             _ => debug!("{} ==> {:?}", addr, &p)
         };
         

@@ -139,12 +139,6 @@ impl Ord for Block {
 }
 
 impl Block {
-    /// Custom deserialization implementation
-    pub fn deserialize(header: BlockHeader, raw_txns: &[u8]) -> Result<Block, bincode::Error> {
-        let txns = bincode::deserialize::<BTreeSet<U256>>(raw_txns)?;
-        Ok(Block{header, txns})
-    }
-
     /// Calculate the merkle root of a set of transactions.
     pub fn calculate_merkle_root(txn_set: &BTreeSet<U256>) -> U256 {
         // What we want to do, is calculate the hash of each two hashes in series, and then form a
@@ -166,11 +160,8 @@ impl Block {
             len = hashes.len();
         }
 
-        if len == 1 {
-            hashes[0]
-        } else {
-            hash_obj(&U256_ZERO)
-        }
+        if len == 1 { hashes[0] }
+        else { U256_ZERO }
     }
 }
 

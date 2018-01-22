@@ -44,6 +44,8 @@ wait_for_rpc() {
 
     done
 
+    echo "Failed to wait for RPC!"
+
     return 1
 }
 
