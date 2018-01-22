@@ -4,9 +4,39 @@ use std::fmt;
 use serde::de;
 use serde::de::*;
 use serde::ser::{Serialize, Serializer};
+use bincode::{serialize, Bounded};
 
+use primitives::{U160, U256};
 
 pub type Bin = Vec<u8>;
+
+pub trait AsBin {
+    fn as_bin(&self) -> Bin;
+}
+
+impl AsBin for U160 {
+    fn as_bin(&self) -> Bin { self.to_vec() }
+} impl AsBin for U256{
+    fn as_bin(&self) -> Bin { self.to_vec() }
+} impl AsBin for u64 {
+    fn as_bin(&self) -> Bin { serialize(self, Bounded(8)).unwrap() }
+} impl AsBin for i64 {
+    fn as_bin(&self) -> Bin { serialize(self, Bounded(8)).unwrap() }
+} impl AsBin for u32 {
+    fn as_bin(&self) -> Bin { serialize(self, Bounded(4)).unwrap() }
+} impl AsBin for i32 {
+    fn as_bin(&self) -> Bin { serialize(self, Bounded(4)).unwrap() }
+} impl AsBin for u16 {
+    fn as_bin(&self) -> Bin { serialize(self, Bounded(2)).unwrap() }
+} impl AsBin for i16 {
+    fn as_bin(&self) -> Bin { serialize(self, Bounded(2)).unwrap() }
+} impl AsBin for u8 {
+    fn as_bin(&self) -> Bin { serialize(self, Bounded(1)).unwrap() }
+} impl AsBin for i8 {
+    fn as_bin(&self) -> Bin { serialize(self, Bounded(1)).unwrap() }
+}
+
+
 pub struct JBin(Vec<u8>);
 
 impl From<Bin> for JBin {

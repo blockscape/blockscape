@@ -3,12 +3,12 @@ use rocksdb::Error as RocksDBError;
 use std::error::Error as StdErr;
 use std::fmt;
 use std::fmt::Display;
-use record_keeper::database as DB;
+use super::Key as DBKey;
 
 #[derive(Clone, Debug)]
 pub enum Error {
     DB(RocksDBError), // when there is an error working with the database itself
-    NotFound(DB::Key), // when data is not found in the database (prefix, key, postfix).
+    NotFound(DBKey), // when data is not found in the database (prefix, key, postfix).
     Deserialize(String), // when data cannot be deserialized
     Logic(LogicError), // When something is wrong with a block, txn, or mutation
 }

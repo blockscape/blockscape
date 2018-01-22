@@ -95,7 +95,7 @@ impl BlockPackage {
                 txn_indicies.push(index);
                 
                 if index == count { //we need to add the txn itself
-                    let full_txn = db.get_txn(&txn)?;
+                    let full_txn = db.get_txn(txn)?;
                     size += full_txn.calculate_size();
                     new_txns.push(full_txn);
                     count += 1;

@@ -1,4 +1,4 @@
-use bin::Bin;
+use bin::{Bin, AsBin};
 use bincode;
 use hash::hash_pub_key;
 use primitives::{U256, U160, Mutation, Change, Block, BlockHeader, Txn};
@@ -10,39 +10,8 @@ use std::collections::{HashMap, BTreeMap};
 use std::path::PathBuf;
 use super::{PlotEvent, PlotEvents, events, PlotID, NetDiff};
 use super::error::*;
+use super::key::*;
 
-pub const BLOCKCHAIN_POSTFIX: &[u8] = b"b";
-pub const CACHE_POSTFIX: &[u8] = b"c";
-pub const NETWORK_POSTFIX: &[u8] = b"n";
-
-
-//--- CACHE STATE ---//
-/// A plot and all its associated events
-pub const PLOT_PREFIX: &[u8] = b"PLT";
-/// A validator's full public key
-pub const VALIDATOR_PREFIX: &[u8] = b"VAL";
-/// Reputation of a validator (how trustworthy they have proven to be)
-pub const REPUTATION_PREFIX: &[u8] = b"REP";
-
-//--- NETWORK STATE ---//
-/// All blocks of a given height
-pub const BLOCKS_BY_HEIGHT_PREFIX: &[u8] = b"HGT";
-/// The height of a given block
-pub const HEIGHT_BY_BLOCK_PREFIX: &[u8] = b"BHT";
-/// A contra transaction for a block
-pub const CONTRA_PREFIX: &[u8] = b"CMT";
-
-//--- BLOCKCHAIN STATE ---//
-/// A block (header) stored by its hash
-pub const BLOCK_HEADER_PREFIX: &[u8] = b"b";
-/// The list of txns associated with each block stored by merkle_root
-pub const TXN_LIST_PREFIX: &[u8] = b"l";
-/// The transaction objects stored by their hash.
-pub const TXN_PREFIX: &[u8] = b"t";
-
-
-/// Key for the current head block used when initializing.
-pub const CURRENT_BLOCK: &[u8] = b"CURblock";
 
 /// The reward bestowed for backing the correct block
 pub const BLOCK_REWARD: i64 = 10;
@@ -58,41 +27,6 @@ impl Default for HeadRef {
     fn default() -> HeadRef {
         use primitives::u256::U256_ZERO;
         HeadRef{block: U256_ZERO, height: 0}
-    }
-}
-
-/// A database key, comprised of (prefix, key-value, postfix)
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Key(pub Option<&'static [u8]>, pub Bin, pub &'static [u8]);
-impl Key {
-    pub fn bin(&self) -> Bin {
-        if let Some(pre) = self.0 {
-            Self::with_pre_post_fix(pre, &self.1, self.2)
-        } else {
-            Self::with_postfix(&self.1, self.2)
-        }
-    }
-
-    /// Add a prefix to raw data.
-    #[inline]
-    pub fn with_prefix(prefix: &'static [u8], data: &[u8]) -> Vec<u8> {
-        let mut t = Vec::from(prefix);
-        t.extend_from_slice(data); t
-    }
-
-    /// Add a postfix to raw data
-    #[inline]
-    pub fn with_postfix(data: &[u8], postfix: &'static [u8]) -> Vec<u8> {
-        let mut t = Vec::from(data);
-        t.extend_from_slice(postfix); t
-    }
-
-    /// Add a prefix and postfix to raw data.
-    #[inline]
-    pub fn with_pre_post_fix(prefix: &'static [u8], data: &[u8], postfix: &'static [u8]) -> Vec<u8> {
-        let mut t = Vec::from(prefix);
-        t.extend_from_slice(data);
-        t.extend_from_slice(postfix); t
     }
 }
 
@@ -120,7 +54,7 @@ impl Database {
     /// Create a new Database from a RocksDB instance
     pub fn new(db: DB) -> Database {
         let head = //attempt to read the current block
-            if let Ok(value) = Self::get_raw_data_static(&db, Key(Some(CURRENT_BLOCK), Vec::new(), CACHE_POSTFIX)) {
+            if let Ok(value) = Self::get_raw_data_static(&db, CacheEntry::CurrentHead.into()) {
                 bincode::deserialize(&value).unwrap_or(HeadRef::default())
             } else { HeadRef::default() };
 
@@ -154,7 +88,7 @@ impl Database {
     }
 
     fn get_raw_data_static(db: &DB, key: Key) -> Result<Bin, Error> {
-        db.get(&key.bin())?
+        db.get(&key.as_bin())?
             .map(|d| d.to_vec())
             .ok_or(Error::NotFound(key))
     }
@@ -172,7 +106,7 @@ impl Database {
     }
 
     fn put_raw_data_static(db: &DB, key: Key, data: &[u8]) -> Result<(), Error> {
-        Ok(db.put(&key.bin(), &data)?)
+        Ok(db.put(&key.as_bin(), &data)?)
     }
 
     pub fn put<S: Serialize>(&mut self, key: Key, object: &S, size: Option<u64>) -> Result<(), Error> {
@@ -190,12 +124,12 @@ impl Database {
     pub fn add_txn(&mut self, txn: &Txn) -> Result<(), Error> {
         let hash = txn.calculate_hash();
         debug!("Adding txn ({}) to database", &hash);
-        self.put(Key(Some(TXN_PREFIX), hash.to_vec(), BLOCKCHAIN_POSTFIX), txn, None)
+        self.put(BlockchainEntry::Txn(hash).into(), txn, None)
     }
 
     /// Retrieve a block header form the database given a hash.
     pub fn get_block_header(&self, hash: &U256) -> Result<BlockHeader, Error> {
-        self.get(Key(Some(BLOCK_HEADER_PREFIX), hash.to_vec(), BLOCKCHAIN_POSTFIX))
+        self.get(BlockchainEntry::BlockHeader(*hash).into())
     }
 
     /// Adds a block to the database and records it in the height cache.
@@ -207,16 +141,16 @@ impl Database {
         if self.get_block_header(&hash).is_ok() { return Ok(false) }
 
         // put the header in the db
-        self.put(Key(Some(BLOCK_HEADER_PREFIX), hash.to_vec(), BLOCKCHAIN_POSTFIX), &block.header, None)?;
+        self.put(BlockchainEntry::BlockHeader(hash).into(), &block.header, None)?;
         // put txns into db under the merkle root
-        self.put(Key(Some(TXN_LIST_PREFIX), block.merkle_root.to_vec(), BLOCKCHAIN_POSTFIX), &block.txns, None)?;
+        self.put(BlockchainEntry::TxnList(block.merkle_root).into(), &block.txns, None)?;
         
         // add the block to the height cache
-        let height = self.get_block_height(&block.prev)? + 1;
+        let height = self.get_block_height(block.prev)? + 1;
         
         // cache the block
         self.add_block_to_height(height, &hash)?;
-        self.add_height_for_block(height, &hash)?;
+        self.add_height_for_block(height, hash)?;
 
         Ok(true)
     }
@@ -245,57 +179,56 @@ impl Database {
 
     /// Retrieve the transactions for a block to complete a `BlockHeader` as a `Block` object.
     pub fn complete_block(&self, header: BlockHeader) -> Result<Block, Error> {
-        let txns = self.get(Key(Some(TXN_LIST_PREFIX), header.merkle_root.to_vec(), BLOCKCHAIN_POSTFIX))?;
+        let txns = self.get(BlockchainEntry::TxnList(header.merkle_root).into())?;
         Ok(Block{header, txns})
     }
 
     /// Get a transaction that has been recorded in the database. It will only be recorded in the DB
     /// if it was accepted in a block. Said block may be an uncle.
-    pub fn get_txn(&self, hash: &U256) -> Result<Txn, Error> {
-        self.get(Key(Some(TXN_PREFIX), hash.to_vec(), BLOCKCHAIN_POSTFIX))
+    pub fn get_txn(&self, hash: U256) -> Result<Txn, Error> {
+        self.get(BlockchainEntry::Txn(hash).into())
     }
 
     /// Get the public key of a validator given their ID.
     /// TODO: Handle shard-based reputations
-    pub fn get_validator_key(&self, id: &U160) -> Result<Bin, Error> {
-        let key = Key(Some(VALIDATOR_PREFIX), id.to_vec(), NETWORK_POSTFIX);
-        self.get_raw_data(key)
+    pub fn get_validator_key(&self, id: U160) -> Result<Bin, Error> {
+        self.get_raw_data(NetworkEntry::ValidatorKey(id).into())
     }
 
     /// Get the reputation of a validator given their ID.
     /// TODO: Handle shard-based reputations
     #[inline]
-    pub fn get_validator_rep(&self, id: &U160) -> Result<i64, Error> {
-        self.get::<i64>(Key(Some(REPUTATION_PREFIX), id.to_vec(), NETWORK_POSTFIX))
+    pub fn get_validator_rep(&self, id: U160) -> Result<i64, Error> {
+        self.get(NetworkEntry::ValidatorRep(id).into())
     }
 
     /// Return a list of **known** blocks which have a given height. If the block has not been added
     /// to the database, then it will not be included.
     pub fn get_blocks_of_height(&self, height: u64) -> Result<Vec<U256>, Error> {
-        let key = Self::blocks_by_height_key(height);
+        let key = CacheEntry::BlocksByHeight(height).into();
         map_not_found(self.get(key), Vec::new())
     }
 
     /// Retrieve the block which is part of the current chain at a given height.
     pub fn get_current_block_of_height(&self, height: u64) -> Result<U256, Error> {
-        let key = Self::blocks_by_height_key(height);
+        let key = CacheEntry::BlocksByHeight(height).into();
         Ok(self.get::<Vec<U256>>(key)?[0])
     }
 
     /// Check if a block is part of the current chain, that is, check if it is a direct ancestor of
     /// the current block.
-    pub fn is_part_of_current_chain(&self, hash: &U256) -> Result<bool, Error> {
+    pub fn is_part_of_current_chain(&self, hash: U256) -> Result<bool, Error> {
         let height = self.get_block_height(hash)?;  // height of block in question
         let member = self.get_current_block_of_height(height)?;  // member of current chain at that height
-        Ok(*hash == member)  // part of chain iff it is the member at that height
+        Ok(hash == member)  // part of chain iff it is the member at that height
     }
 
 
 
     /// Get the cached height of an existing block.
-    pub fn get_block_height(&self, hash: &U256) -> Result<u64, Error> {
-        if *hash == self.head.block { return Ok(self.head.height); }
-        self.get::<u64>(Key(Some(HEIGHT_BY_BLOCK_PREFIX), hash.to_vec(), CACHE_POSTFIX))
+    pub fn get_block_height(&self, hash: U256) -> Result<u64, Error> {
+        if hash == self.head.block { return Ok(self.head.height); }
+        self.get(CacheEntry::HeightByBlock(hash).into())
     }
 
 
@@ -330,7 +263,7 @@ impl Database {
         // expand this as a loop to allow better error handling.
         let mut blocks: Vec<BlockHeader> = Vec::new();
         while let Some((hash, header)) = iter.next() {
-            let in_cur_chain = self.is_part_of_current_chain(&hash)?;
+            let in_cur_chain = self.is_part_of_current_chain(hash)?;
             if (hash == *start) || (in_cur_chain) { break; }
             blocks.push(header)
         }
@@ -346,7 +279,7 @@ impl Database {
     pub fn get_blocks_after(&self, start: &U256, limit: usize) -> Result<Vec<BlockHeader>, Error> {
         // For efficiency, use a quick check to find if a given block is part of the current chain or not.
         let ancestor = self.latest_common_ancestor_with_current_chain(start)?;
-        let ancestor_height = self.get_block_height(&ancestor)?;
+        let ancestor_height = self.get_block_height(ancestor)?;
         Ok(UpIter(&self, ancestor_height)
             .skip(1) // we know they have must have the LCA
             .take(limit) // hard-coded maximum
@@ -462,7 +395,7 @@ impl Database {
         // go down `a` chain and then go up `b` chain.
         for (h, b) in a_heights.iter().rev() {
             assert!(*h > 0);
-            diff.apply_contra(self.get_contra(&b)?);
+            diff.apply_contra(self.get_contra(*b)?);
         }
         for (h, b) in b_heights {
             assert!(h > 1);
@@ -483,18 +416,18 @@ impl Database {
         for (h, b) in a_heights.iter().rev() {
             assert!(*h > 0);
             let header = self.get_block_header(&b)?;
-            let contra = self.get_contra(&b)?;
+            let contra = self.get_contra(*b)?;
             self.undo_mutate(contra)?;
-            self.update_current_block(&header.prev, Some(h - 1))?;
+            self.update_current_block(header.prev, Some(h - 1))?;
         }
         for (h, b) in b_heights {
             assert!(h > 1);
             let block = self.get_block(&b)?;
             let mutation = self.get_mutation(&block)?;
             let contra = self.mutate(&mutation)?;
-            self.add_contra(&b, &contra)?;
+            self.add_contra(b, &contra)?;
             self.update_current_chain(h, &b)?;
-            self.update_current_block(&b, Some(h))?;
+            self.update_current_block(b, Some(h))?;
         }
         
         Ok(())
@@ -509,7 +442,7 @@ impl Database {
             let block = self.get_block(&blocks[0])?;
             self.get_mutation(&block)?; // don't need contra for the genesis block
             // or to update current chain since there is only one block
-            self.update_current_block(&blocks[0], Some(1))
+            self.update_current_block(blocks[0], Some(1))
         } else { // normal case
             let head = self.find_chain_head()?;
             self.walk(&head)
@@ -518,7 +451,7 @@ impl Database {
 
     /// Add a new event to a plot
     pub fn add_plot_event(&mut self, plot_id: PlotID, tick: u64, event: &PlotEvent) -> Result<(), Error> {
-        let db_key = Key(Some(PLOT_PREFIX), plot_id.bytes(), NETWORK_POSTFIX);
+        let db_key: Key = NetworkEntry::Plot(plot_id).into();
         let mut event_list = map_not_found(self.get(db_key.clone()), PlotEvents::new())?;
         events::add_event(&mut event_list, tick, event.clone());
         self.put(db_key, &event_list, None)
@@ -530,7 +463,7 @@ impl Database {
     /// yet been removed from the cache.
     /// TODO: Store events in tick chunks to prevent the size from becoming too large.
     pub fn get_plot_events(&self, plot_id: PlotID, after_tick: u64) -> Result<PlotEvents, Error> {
-        let db_key = Key(Some(PLOT_PREFIX), plot_id.bytes(), NETWORK_POSTFIX);
+        let db_key = NetworkEntry::Plot(plot_id).into();
         map_not_found(self.get::<PlotEvents>(db_key), PlotEvents::new())
             .map(|mut e| e.split_off(&after_tick))
     }
@@ -539,7 +472,7 @@ impl Database {
     pub fn get_block_mutation(&self, block: &Block) -> Result<Mutation, Error> {
         let mut mutation = Mutation::new();
         for txn_hash in &block.txns {
-            let txn = self.get_txn(&txn_hash)?;
+            let txn = self.get_txn(*txn_hash)?;
             mutation.merge_clone(&txn.mutation);
         }
         Ok(mutation)
@@ -547,8 +480,8 @@ impl Database {
 
     /// Set a value in the network state and return the old value if any. It will delete the key
     /// from the database if value is None.
-    fn set_value(&mut self, key: &Bin, value: &Option<Bin>) -> Result<Option<Bin>, Error> {
-        let db_key = Key::with_postfix(key, NETWORK_POSTFIX);
+    fn set_value(&mut self, key: Bin, value: &Option<Bin>) -> Result<Option<Bin>, Error> {
+        let db_key = Key::Network(NetworkEntry::Generic(key)).as_bin();
         let prior = self.db.get(&db_key)?.map(|v| v.to_vec());
 
         if let Some(ref v) = *value { // set the value if it is some
@@ -559,15 +492,15 @@ impl Database {
     }
 
     /// Change a validator's reputation by the amount indicated.
-    fn change_validator_rep(&mut self, id: &U160, amount: i64) -> Result<(), Error> {
-        let db_key = Key(Some(REPUTATION_PREFIX), id.to_vec(), NETWORK_POSTFIX);
+    fn change_validator_rep(&mut self, id: U160, amount: i64) -> Result<(), Error> {
+        let db_key: Key = NetworkEntry::ValidatorRep(id).into();
         let value = map_not_found(self.get::<i64>(db_key.clone()), 0)? + amount;
         self.put(db_key, &value, Some(8))
     }
 
     /// Remove an event from a plot. Should only be used when undoing a mutation.
     fn remove_event(&mut self, id: PlotID, tick: u64, event: &PlotEvent) -> Result<(), Error> {
-        let db_key = Key(Some(PLOT_PREFIX), id.bytes(), NETWORK_POSTFIX);
+        let db_key: Key = NetworkEntry::Plot(id).into();
         match self.get::<PlotEvents>(db_key.clone()) {
             Ok(mut event_list) => {
                 if !events::remove_event(&mut event_list, tick, event) {
@@ -593,11 +526,11 @@ impl Database {
         // for all changes, make the described change and add a contra change for it
         for change in &mutation.changes {   contra.changes.push( match change {
             &Change::Admin{ref key, ref value} => {
-                let prior = self.set_value(key, value)?;
+                let prior = self.set_value(key.clone(), value)?;
                 Change::Admin{key: key.clone(), value: prior}
             },
             &Change::BlockReward{id, ..} => {
-                self.change_validator_rep(&id, BLOCK_REWARD)?;
+                self.change_validator_rep(id, BLOCK_REWARD)?;
                 Change::BlockReward{id, proof: Bin::new()}
             },
             &Change::Event{id, tick, ref event} => {
@@ -606,12 +539,12 @@ impl Database {
             },
             &Change::NewValidator{ref pub_key, ..} => {
                 let id = hash_pub_key(pub_key);
-                let key = Key(Some(VALIDATOR_PREFIX), id.to_vec(), NETWORK_POSTFIX);
+                let key = NetworkEntry::ValidatorKey(id).into();
                 self.put_raw_data(key, pub_key)?;
                 Change::NewValidator{pub_key: pub_key.clone(), signature: Bin::new()}
             },
             &Change::Slash{id, amount, ..} => {
-                self.change_validator_rep(&id, -(amount as i64))?;
+                self.change_validator_rep(id, -(amount as i64))?;
                 Change::Slash{id, amount, proof: Bin::new()}
             }
         })}
@@ -627,15 +560,15 @@ impl Database {
 
         // For all changes, undo the described action with the data provided
         for change in mutation.changes { match change {
-            Change::Admin{key, value} => { self.set_value(&key, &value)?; },
-            Change::BlockReward{id, ..} => { self.change_validator_rep(&id, -BLOCK_REWARD)?; },
+            Change::Admin{key, value} => { self.set_value(key, &value)?; },
+            Change::BlockReward{id, ..} => { self.change_validator_rep(id, -BLOCK_REWARD)?; },
             Change::Event{id, tick, event} => { self.remove_event(id, tick, &event)?; },
             Change::NewValidator{pub_key, ..} => {
                 let id = hash_pub_key(&pub_key);
-                let key = Key::with_pre_post_fix(VALIDATOR_PREFIX, &id.to_vec(), NETWORK_POSTFIX);
-                self.db.delete(&key)?;
+                let key: Key = NetworkEntry::ValidatorKey(id).into();
+                self.db.delete(&key.as_bin())?;
             },
-            Change::Slash{id, amount, ..} => { self.change_validator_rep(&id, (amount as i64))?; }
+            Change::Slash{id, amount, ..} => { self.change_validator_rep(id, (amount as i64))?; }
         }}
 
         Ok(())
@@ -697,7 +630,7 @@ impl Database {
         while let Some(r) = iter.next() {
             // check if r is part of the main chain, if it is, we are done
             let h: U256 = r?.0;
-            if self.is_part_of_current_chain(&h)? {
+            if self.is_part_of_current_chain(h)? {
                 return Ok(h);
             }
         }
@@ -711,26 +644,26 @@ impl Database {
         if height_vals.contains(hash) { return Ok(()); }
         height_vals.push(*hash);
 
-        self.put(Self::blocks_by_height_key(height), &height_vals, None)
+        self.put(CacheEntry::BlocksByHeight(height).into(), &height_vals, None)
     }
 
     /// Update the head reference and save it to the database. This should be used when the network
     /// state is changed to represent the current block the state is at.
-    fn update_current_block(&mut self, hash: &U256, height: Option<u64>) -> Result<(), Error> {
+    fn update_current_block(&mut self, hash: U256, height: Option<u64>) -> Result<(), Error> {
         let h = { // set the height value if it does not exist
             if let Some(h) = height { h }
-            else { self.get_block_height(&hash)? }
+            else { self.get_block_height(hash)? }
         };
 
-        let href = HeadRef{height: h, block: *hash};
+        let href = HeadRef{height: h, block: hash};
         self.head = href.clone();
-        self.put(Key(Some(CURRENT_BLOCK), Vec::new(), CACHE_POSTFIX), &href, Some(40))
+        self.put(CacheEntry::CurrentHead.into(), &href, Some(40))
     }
 
     /// Used when walking, this moves a given block the front of the list of blocks for the height
     /// which indicates that it is part of the current chain.
     fn update_current_chain(&mut self, height: u64, hash: &U256) -> Result<(), Error> {
-        let key = Self::blocks_by_height_key(height);
+        let key: Key = CacheEntry::BlocksByHeight(height).into();
         let mut height_values: Vec<U256> = self.get(key.clone())?;
 
         if let Some(index) =
@@ -746,11 +679,8 @@ impl Database {
     }
 
     /// Cache the height of a block so it can be easily looked up later on.
-    fn add_height_for_block(&mut self, height: u64, block: &U256) -> Result<(), Error> {
-        self.put(
-            Key( Some(HEIGHT_BY_BLOCK_PREFIX), block.to_vec(), CACHE_POSTFIX ),
-            &height, Some(8)
-        )
+    fn add_height_for_block(&mut self, height: u64, block: U256) -> Result<(), Error> {
+        self.put(CacheEntry::HeightByBlock(block).into(), &height, Some(8))
     }
 
     /// Construct a mutation given a block and its transactions by querying the DB for the txns and
@@ -758,20 +688,20 @@ impl Database {
     fn get_mutation(&self, block: &Block) -> Result<Mutation, Error> {
         let mut mutation = Mutation::new();
         for txn_h in &block.txns {
-            let txn = self.get_txn(txn_h)?;
+            let txn = self.get_txn(*txn_h)?;
             mutation.merge(txn.mutation);
         }
         Ok(mutation)
     }
 
     /// Retrieve the contra from the db to undo the given block
-    fn get_contra(&self, hash: &U256) -> Result<Mutation, Error> {
-        self.get(Key(Some(CONTRA_PREFIX), hash.to_vec(), CACHE_POSTFIX))
+    fn get_contra(&self, hash: U256) -> Result<Mutation, Error> {
+        self.get(CacheEntry::ContraMut(hash).into())
     }
 
     /// Add a contra for a given block
-    fn add_contra(&mut self, hash: &U256, contra: &Mutation) -> Result<(), Error> {
-        self.put(Key(Some(CONTRA_PREFIX), hash.to_vec(), CACHE_POSTFIX), contra, None)
+    fn add_contra(&mut self, hash: U256, contra: &Mutation) -> Result<(), Error> {
+        self.put(CacheEntry::ContraMut(hash).into(), contra, None)
     }
 
     /// Get the distance of the inrsection for the LCA on both paths. Returns
@@ -785,15 +715,6 @@ impl Database {
             if let Some(&d) = b.get(&last_a) { d }  // a collided with b
             else { *b.get(&last_b).unwrap() }  // last added block was collision
         })
-    }
-
-    /// Get the database key for the Blocks by Height queries.
-    fn blocks_by_height_key(height: u64) -> Key {
-        Key(
-            Some(BLOCKS_BY_HEIGHT_PREFIX),
-            bincode::serialize(&height, bincode::Bounded(8)).unwrap(),
-            CACHE_POSTFIX
-        )
     }
 }
 

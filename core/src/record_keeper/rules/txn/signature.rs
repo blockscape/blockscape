@@ -8,7 +8,7 @@ use std::error::Error as StdErr;
 pub struct Signature;
 impl TxnRule for Signature {
     fn is_valid(&self, state: &NetState, txn: &Txn) -> Result<(), Error> {
-        let der = match state.get_validator_key(&txn.creator) {
+        let der = match state.get_validator_key(txn.creator) {
             Ok(k) => k,
             Err(Error::NotFound(..)) => return Err(LogicError::UnrecognizedCreator.into()),
             Err(e) => return Err(e)

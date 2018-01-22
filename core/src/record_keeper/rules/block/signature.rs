@@ -9,7 +9,7 @@ use std::error::Error as StdErr;
 pub struct Signature;
 impl BlockRule for Signature {
     fn is_valid(&self, state: &NetState, _db: &Database, block: &Block) -> Result<(), Error> {
-        let der = match state.get_validator_key(&block.creator) {
+        let der = match state.get_validator_key(block.creator) {
             Ok(k) => k,
             Err(Error::NotFound(..)) => return Err(LogicError::UnrecognizedCreator.into()),
             Err(e) => return Err(e)

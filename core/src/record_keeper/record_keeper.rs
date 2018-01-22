@@ -173,12 +173,12 @@ impl RecordKeeper {
 
         // we know it is a valid block, so go ahead and add it's transactions, and then it.
         for txn_hash in block.txns.iter() {
-            if let Some(txn) = pending_txns.remove(&txn_hash) { // we will need to add it 
+            if let Some(txn) = pending_txns.remove(txn_hash) { // we will need to add it 
                 db.add_txn(&txn)?;
             } else {
                 // should already be in the DB then because otherwise is_valid_block should give an
                 // error, so use an assert check
-                assert!(db.get_txn(&txn_hash).is_ok())
+                assert!(db.get_txn(*txn_hash).is_ok())
             }
         }
         // add txns first, so that we make sure all blocks in the system have all their information,
@@ -209,7 +209,7 @@ impl RecordKeeper {
         }
 
         // check if it is already in the database
-        match db.get_txn(&hash) {
+        match db.get_txn(hash) {
             Ok(_) => return Ok(false),
             Err(Error::NotFound(..)) => {},
             Err(e) => return Err(e)
@@ -245,14 +245,14 @@ impl RecordKeeper {
     /// TODO: Handle shard-based reputations
     pub fn get_validator_key(&self, id: &U160) -> Result<Bin, Error> {
         self.db.read().unwrap()
-            .get_validator_key(id)
+            .get_validator_key(*id)
     }
 
     /// Get the reputation of a validator given their ID.
     /// TODO: Handle shard-based reputations
     pub fn get_validator_rep(&self, id: &U160) -> Result<i64, Error> {
         self.db.read().unwrap()
-            .get_validator_rep(id)
+            .get_validator_rep(*id)
     }
 
     /// Retrieve the current block hash which the network state represents.
@@ -278,7 +278,7 @@ impl RecordKeeper {
     /// block which is denoted by having a previous block reference of 0.
     pub fn get_block_height(&self, hash: &U256) -> Result<u64, Error> {
         let db = self.db.read().unwrap();
-        db.get_block_height(hash)
+        db.get_block_height(*hash)
     }
 
     /// Return a list of **known** blocks which have a given height. If the block has not been added
@@ -400,7 +400,7 @@ impl RecordKeeper {
         let db = self.db.read().unwrap();
         match pending.get(&hash) {
             Some(txn) => Ok(txn.clone()),
-            None => db.get_txn(hash)
+            None => db.get_txn(*hash)
         }
     }
 
@@ -441,7 +441,7 @@ impl RecordKeeper {
         if let Some(txn) = self.pending_txns.read().unwrap().get(hash) {
             Ok(txn.clone())
         } else {
-            db.get_txn(hash)
+            db.get_txn(*hash)
         }
     }
 }

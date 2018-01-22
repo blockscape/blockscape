@@ -7,14 +7,13 @@ use primitives::{Block, Txn, U256};
 use super::node::Node;
 use time::Time;
 
-use bincode;
-
 use signer::RSA_KEY_SIZE;
 
 use network::context::*;
 use network::client::{NetworkActions, MAX_PACKET_SIZE};
 
-use record_keeper::{BlockPackage,Error,DBKey};
+use record_keeper::{BlockPackage,Error};
+use record_keeper::key::*;
 
 use futures::prelude::*;
 use futures::future;
@@ -394,19 +393,25 @@ impl Session {
                     }).map(|_| ()).or_else(move |err| {
                         // react for this node's records here if they are bad
                         match err {
-                            Error::NotFound(DBKey(_, hash, _)) => {
-                                // submit a new job
-                                if let Ok(h) = bincode::deserialize(&hash) {
-                                    if let Err(e) = lcontext.job_targets.unbounded_send(
-                                        (NetworkJob::new(network_id, h, lcontext.rk.get_current_block_hash(), None), Some(prev))
-                                    ) {
-                                        // should never happen
-                                        warn!("Could not buffer new network job: {}", e);
-                                    };
+                            Error::NotFound(Key::Blockchain(missing_obj)) => {
+                                match missing_obj {
+                                    BlockchainEntry::BlockHeader(hash) => { unimplemented!() },
+                                    BlockchainEntry::Txn(hash) => { unimplemented!() },
+                                    BlockchainEntry::TxnList(hash) => { unimplemented!() }
                                 }
-                                else {
-                                    // TODO: no idea what the problem is
-                                }
+                                
+                                // // submit a new job
+                                // if let Ok(h) = bincode::deserialize(&hash) {
+                                //     if let Err(e) = lcontext.job_targets.unbounded_send(
+                                //         (NetworkJob::new(network_id, h, lcontext.rk.get_current_block_hash(), None), Some(prev))
+                                //     ) {
+                                //         // should never happen
+                                //         warn!("Could not buffer new network job: {}", e);
+                                //     };
+                                // }
+                                // else {
+                                //     // TODO: no idea what the problem is
+                                // }
                             },
                             Error::Logic(_e) => {
                                 // TODO: Mark on node record and kick
@@ -447,25 +452,30 @@ impl Session {
                         }
                         else {
                             match r.unwrap_err() {
-                                Error::NotFound(DBKey(_, hash, _)) => {
-                                    if let Ok(h) = bincode::deserialize(&hash) {
-                                        // send back a data error
-                                        lcontext.send_packets(vec![SocketPacket(r_addr.clone(), RawPacket {
-                                            port: r_port,
-                                            payload: Packet {
-                                                seq: seq,
-                                                msg: Message::DataError(DataRequestError::HashesNotFound(vec![h]))
-                                        }})]);
+                                Error::NotFound(Key::Blockchain(missing_obj)) => {
+                                    match missing_obj {
+                                        BlockchainEntry::BlockHeader(hash) => { unimplemented!() },
+                                        BlockchainEntry::Txn(hash) => { unimplemented!() },
+                                        BlockchainEntry::TxnList(hash) => { unimplemented!() }
                                     }
-                                    else {
-                                        // no idea what happened
-                                        lcontext.send_packets(vec![SocketPacket(r_addr.clone(), RawPacket {
-                                            port: r_port,
-                                            payload: Packet {
-                                                seq: seq,
-                                                msg: Message::DataError(DataRequestError::InternalError)
-                                        }})]);
-                                    }
+                                    // if let Ok(h) = bincode::deserialize(&hash) {
+                                    //     // send back a data error
+                                    //     lcontext.send_packets(vec![SocketPacket(r_addr.clone(), RawPacket {
+                                    //         port: r_port,
+                                    //         payload: Packet {
+                                    //             seq: seq,
+                                    //             msg: Message::DataError(DataRequestError::HashesNotFound(vec![h]))
+                                    //     }})]);
+                                    // }
+                                    // else {
+                                    //     // no idea what happened
+                                    //     lcontext.send_packets(vec![SocketPacket(r_addr.clone(), RawPacket {
+                                    //         port: r_port,
+                                    //         payload: Packet {
+                                    //             seq: seq,
+                                    //             msg: Message::DataError(DataRequestError::InternalError)
+                                    //     }})]);
+                                    // }
                                 },
 
                                 _ => {
