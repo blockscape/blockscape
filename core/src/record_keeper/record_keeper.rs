@@ -166,10 +166,10 @@ impl RecordKeeper {
     /// it is valid. Also move the network state to be at the new end of the chain.
     /// Returns true if the block was added, false if it was already in the system.
     pub fn add_block(&self, block: &Block) -> Result<bool, Error> {
+        self.is_valid_block(block)?;
+
         let mut pending_txns = self.pending_txns.write().unwrap();
         let mut db = self.db.write().unwrap();
-
-        self.is_valid_block(block)?;
 
         // we know it is a valid block, so go ahead and add it's transactions, and then it.
         for txn_hash in block.txns.iter() {
