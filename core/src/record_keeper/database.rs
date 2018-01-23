@@ -332,53 +332,18 @@ impl Database {
         
         // create lists of the `a` and `b` chains sorted by height
         let a_heights: BTreeMap<u64, U256> = a_hashes.into_iter()
-            .filter(|&(_, d)| d <= a_dist)  // keep only values before intersection
+            .filter(|&(_, d)| d < a_dist)  // keep only values before intersection
             .map(|(k, d)| {
                 assert!(a_height >= d);
                 (a_height - d, k)
         }).collect();
 
         let b_heights: BTreeMap<u64, U256> = b_hashes.into_iter()
-            .filter(|&(_, d)| d <= b_dist)  // keep only values before intersection
+            .filter(|&(_, d)| d < b_dist)  // keep only values before intersection
             .map(|(k, d)| {
                 assert!(b_height >= d);
                 (b_height - d, k)
         }).collect();
-
-
-        { // verify validity; remove this check later on
-            let mut collision = None;
-            let mut last = None; // (height, block_hash)
-
-            for (&h, &b) in &a_heights {
-                if let Some((lh, _)) = last {
-                    assert_eq!(h, lh - 1);
-                } else { //check first element
-                    collision = Some(b);
-                    assert_eq!(h, a_height - a_dist);  // collision should be the first
-                }
-                last = Some((h, b));
-            }{ // check last element
-                let (h, b) = last.unwrap();
-                assert_eq!(*a_block, b);
-                assert_eq!(a_height, h);
-            }
-
-            last = None;
-            for (&h, &b) in &b_heights {
-                if let Some((lh, _)) = last {
-                    assert_eq!(h, lh - 1);
-                } else { //check first element
-                    assert_eq!(collision.unwrap(), b);
-                    assert_eq!(h, a_height - a_dist);  // collision should be the first
-                }
-                last = Some((h, b));
-            }{ // check last element
-                let (h, b) = last.unwrap();
-                assert_eq!(*b_block, b);
-                assert_eq!(b_height, h);
-            }
-        }
 
         Ok((a_heights, b_heights))
     }
@@ -704,7 +669,7 @@ impl Database {
         self.put(CacheEntry::ContraMut(hash).into(), contra, None)
     }
 
-    /// Get the distance of the inrsection for the LCA on both paths. Returns
+    /// Get the distance of the intersection for the LCA on both paths. Returns
     /// (distance on path a, distance on path b)
     /// Note, this assumes there is a single element which is a member of both `a` and `b`.
     fn intersect_dist(a: &HashMap<U256, u64>, b: &HashMap<U256, u64>, last_a: &U256, last_b: &U256) -> (u64, u64) {
