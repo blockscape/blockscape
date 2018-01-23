@@ -9,7 +9,7 @@ use serde_json;
 
 use bincode;
 
-use blockscape_core::bin::Bin;
+use blockscape_core::bin::{Bin, AsBin};
 use blockscape_core::env::*;
 use blockscape_core::network::client::ClientConfig;
 use blockscape_core::network::node::NodeEndpoint;
@@ -17,12 +17,12 @@ use blockscape_core::primitives::*;
 use blockscape_core::signer::generate_private_key;
 use blockscape_core::time::Time;
 use blockscape_core::hash::hash_pub_key;
+use blockscape_core::record_keeper::key::NetworkEntry;
 
 use rpc::RPC;
 
 use context::Context;
 
-const ADMIN_KEY_PREFIX: &[u8] = b"ADMIN";
 const ADMIN_KEY: &[u8] = 
 b"-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyUpw2CKdIHwdHl4eTccx
@@ -132,9 +132,11 @@ pub fn make_genesis() -> (Block, Vec<Txn>) {
     let adm_key_hash = hash_pub_key(&admkey);
 
     m.changes.push(Change::Admin {
-        key: Vec::from(ADMIN_KEY_PREFIX).into(),
-        value: Some(admkey)
+        key: NetworkEntry::AdminKeyID.as_bin(),
+        value: Some(adm_key_hash.as_bin())
     });
+    m.changes.push(Change::NewValidator{pub_key: admkey});
+    m.changes.push(Change::NewValidator{pub_key: /* TODO: Put Public Key Here for THIS validator*/})
 
     let txn = Txn {
         timestamp: Time::from_seconds(1508009036),

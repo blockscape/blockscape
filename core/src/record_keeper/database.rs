@@ -506,7 +506,7 @@ impl Database {
                 let id = hash_pub_key(pub_key);
                 let key = NetworkEntry::ValidatorKey(id).into();
                 self.put_raw_data(key, pub_key)?;
-                Change::NewValidator{pub_key: pub_key.clone(), signature: Bin::new()}
+                Change::NewValidator{pub_key: pub_key.clone()}
             },
             &Change::Slash{id, amount, ..} => {
                 self.change_validator_rep(id, -(amount as i64))?;
