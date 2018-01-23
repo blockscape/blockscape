@@ -181,7 +181,7 @@ pub struct JBlockHeader {
 
 #[derive(Serialize, Deserialize)]
 pub struct JBlock {
-    header: BlockHeader,
+    header: JBlockHeader,
     txns: BTreeSet<JU256>
 }
 
@@ -218,7 +218,7 @@ impl Into<BlockHeader> for JBlockHeader {
 impl From<Block> for JBlock {
     fn from(h: Block) -> JBlock {
         JBlock {
-            header: h.header,
+            header: h.header.into(),
             txns: h.txns.into_iter().map(|h| h.into()).collect()
         }
     }
@@ -227,7 +227,7 @@ impl From<Block> for JBlock {
 impl Into<Block> for JBlock {
     fn into(self) -> Block {
         Block {
-            header: self.header,
+            header: self.header.into(),
             txns: self.txns.into_iter().map(|h| h.into()).collect()
         }
     }

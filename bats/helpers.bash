@@ -15,7 +15,7 @@ stop_blockscape_server() {
 
 # Returns the blockscape executable
 blockscape() {
-    "$(test_dir)/../target/release/blockscape" "$@"
+    "$(test_dir)/../target/debug/blockscape" "$@"
 
     return $!
 }
