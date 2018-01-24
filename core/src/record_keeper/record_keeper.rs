@@ -1,6 +1,5 @@
 use bin::Bin;
-use openssl::pkey::PKey;
-use primitives::{U256, U160, Txn, Block, BlockHeader, Mutation, Change, ListenerPool};
+use primitives::{U256, U160, U160_ZERO, Txn, Block, BlockHeader, Mutation, Change, ListenerPool};
 use std::collections::{HashMap, BTreeSet, BTreeMap};
 use std::path::PathBuf;
 use std::sync::RwLock;
@@ -10,7 +9,6 @@ use super::{rules, BlockRule, TxnRule, MutationRule, MutationRules};
 use super::BlockPackage;
 use super::database::*;
 use time::Time;
-use hash::hash_pub_key;
 
 use futures::sync::mpsc::Sender;
 use futures_cpupool;
@@ -30,11 +28,6 @@ pub struct RecordKeeper {
     record_listeners: RwLock<ListenerPool<RecordEvent>>,
     game_listeners: RwLock<ListenerPool<PlotEvent>>,
 
-    /// The hash of this users public key
-    key_hash: U160,
-    /// This user's private key
-    key: PKey,
-
     /// A CPU pool of a single thread dedicated to processing work related to RecordKeeper. Work can be passed to it. Future compatible.
     /// It is reccomended to spawn major work for the DB on this thread; one can also spawn their own thread for smaller, higher priority jobs.
     worker: futures_cpupool::CpuPool,
@@ -46,15 +39,13 @@ pub struct RecordKeeper {
 impl RecordKeeper {
     /// Construct a new RecordKeeper from an already opened database and possibly an existing set of
     /// rules.
-    fn new(db: Database, rules: Option<MutationRules>, key: PKey) -> RecordKeeper {
+    fn new(db: Database, rules: Option<MutationRules>) -> RecordKeeper {
         RecordKeeper {
             db: RwLock::new(db),
             rules: RwLock::new(rules.unwrap_or(MutationRules::new())),
             pending_txns: RwLock::new(HashMap::new()),
             record_listeners: RwLock::new(ListenerPool::new()),
             game_listeners: RwLock::new(ListenerPool::new()),
-            key_hash: hash_pub_key(&key.public_key_to_der().unwrap()),
-            key,
             worker: futures_cpupool::Builder::new().pool_size(1).create(),
             priority_worker: futures_cpupool::Builder::new().pool_size(3).create()
         }
@@ -65,10 +56,10 @@ impl RecordKeeper {
     /// # Warning
     /// Any database which is opened, is assumed to contain data in a certain way, any outside
     /// modifications can cause undefined behavior.
-    pub fn open(key: PKey, path: PathBuf, rules: Option<MutationRules>, genesis: (Block, Vec<Txn>)) -> Result<RecordKeeper, Error> {
+    pub fn open(path: PathBuf, rules: Option<MutationRules>, genesis: (Block, Vec<Txn>)) -> Result<RecordKeeper, Error> {
         info!("Opening a RecordKeeper object with path '{:?}'", path);
         let db = Database::open(path)?;
-        let rk: RecordKeeper = Self::new(db, rules, key);
+        let rk: RecordKeeper = Self::new(db, rules);
         
         { // Handle Genesis
             println!("Handle genesis...");
@@ -97,6 +88,9 @@ impl RecordKeeper {
     }
 
     /// Use pending transactions to create a new block which can then be added to the network.
+    /// The block provided is complete except:
+    /// 1. The proof of work/proof of stake mechanism has not been completed
+    /// 2. The signature has not been applied to the block
     pub fn create_block(&self) -> Result<Block, Error> {
         let pending_txns = self.pending_txns.read().unwrap();
         let db = self.db.read().unwrap();
@@ -113,9 +107,9 @@ impl RecordKeeper {
                     prev: cbh_h,
                     merkle_root: Block::calculate_merkle_root(&BTreeSet::new()),
                     blob: Bin::new(),
-                    creator: self.key_hash,
+                    creator: U160_ZERO,
                     signature: Bin::new()
-                }.sign(&self.key),
+                },
                 txns: BTreeSet::new()
             })
         }
@@ -138,9 +132,9 @@ impl RecordKeeper {
                     prev: cbh_h,
                     merkle_root: Block::calculate_merkle_root(&accepted_txns),
                     blob: Bin::new(),
-                    creator: self.key_hash,
+                    creator: U160_ZERO,
                     signature: Bin::new()
-                }.sign(&self.key),
+                },
                 txns: {
                     let mut t = accepted_txns.clone();
                     t.insert(*txn); t
