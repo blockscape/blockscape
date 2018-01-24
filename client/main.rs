@@ -48,6 +48,8 @@ use futures::sync::oneshot::channel;
 
 use tokio_core::reactor::*;
 
+use openssl::pkey::PKey;
+
 use blockscape_core::env;
 use blockscape_core::network::client::*;
 use blockscape_core::record_keeper::RecordKeeper;
@@ -97,7 +99,6 @@ fn main() {
 
     let rk = Arc::new(
         RecordKeeper::open(
-            load_or_generate_key("user"),
             {let mut p = env::get_storage_dir().unwrap(); p.push("db"); p},
             Some(rules::build_rules()),
             genesis
@@ -128,7 +129,9 @@ fn main() {
         rk: rk.clone(),
         network: net_client.clone(),
         // this block forger will be callibrated to mine a block every 10 seconds, with 6 hours before each recalculate
-        forge_algo: Box::new(FlowerPicking::new(rk.clone(), core.handle(), 10 * 1000, 2160))
+        forge_algo: Box::new(FlowerPicking::new(rk.clone(), core.handle(), 10 * 1000, 2160)),
+
+        forge_key: PKey::private_key_from_pem(boot::TESTING_PRIVATE).unwrap()
     });
 
     // Open RPC interface

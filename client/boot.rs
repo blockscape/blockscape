@@ -15,8 +15,8 @@ use blockscape_core::network::client::ClientConfig;
 use blockscape_core::network::node::NodeEndpoint;
 use blockscape_core::primitives::*;
 use blockscape_core::signer::generate_private_key;
-use blockscape_core::time::Time;
 use blockscape_core::hash::hash_pub_key;
+use blockscape_core::time::Time;
 use blockscape_core::record_keeper::key::NetworkEntry;
 
 use rpc::RPC;
@@ -33,6 +33,37 @@ DI9tcmJxDz4RxyBsluzd4RQMUozk7X+/mwrGYaDILqNJNWV6eCWoGzmQ5qtZXx1f
 vBBOiLZ1XnWuFgpL4Od8C9c2SF3IsWgrCCB2zoGxlB11hY7lDcMpPGFqZAjZne54
 nQIDAQAB
 -----END PUBLIC KEY-----";
+
+/// TEMP testing key used for signing blocks into the network; right now everyone has the same one until we have a dedicated validator key infrastructure
+/// TODO: Remove me
+pub const TESTING_PRIVATE: &[u8] =
+b"-----BEGIN RSA PRIVATE KEY-----
+MIIEpAIBAAKCAQEAqsph1xGRJ2d2PxyVe9do0UNe4lcVEPi9Alb+kr+wZcbxU3uY
+Kpny35eGzVVR8MJIIye5hk0lZqW0Mg6ksUa3upflGPeDzPS8Jd9PzU1XTbI1fGvH
+4ExNID/hJaPzzjZ3HnfNOL1zGLecoaJHSTbXKvCw/bQQWidstGbTwc+OUwnFWveA
+tvaDoTxCQVXM+Wg+7/aeASQgy5Hc/OPvsLXf8TdUayPyjNzKAbQNhf9kPnkmcokZ
+FT1k+30l9g5Ff2xMHEx1rr3DfSMlHch3iG2pdCQqgE9JFo6R4Dh09kkK1ak0Crwx
+LvPa22579+HQZuVD0AnDHx+jJW5JVs771z25qwIDAQABAoIBAHEn540T8YUW8mw8
+JvpHLQZAybPSmH2HH8tWEhLueBPmrGtwXtAS8ayce0698a0/O4Y3Qp8tq9MHhI0J
+0Ko3vXEeREa3bxazK5k4DGpsjKRIp1FJI8ODKjJswGIs71K4GVIRc+Hc+03sERWy
+K+LhN8wWbl2ZGKBysH4SBsjJGHYA1SSihL2fpH3mNli4WJSTos43PMHdV7EEvxZF
+Akm0tfhbD4JMYb+YzH0UCNPfDdf0sCl2E6bak+TGzpADu8OV4+TLL1GMwLlTkGsw
+SL5QzGdsZe+s2/0535inLqBcuQEH3OdXW8Kx8K2Uyk7IF0nw+Al29wKw2+NySsNz
+UhNCuJkCgYEA1T99KQ7bbaPEzp0XnuQ9UVTWFJ5/fzKv1klkbDQS+fdVMHizTjOq
+top2jSk5c6tOaNQ0jT1vsbO2jAJDDgvX59TeHdP1bEHPjEKRPMagxML90ymSx+DP
+rOaVPAjZjC/1twNO8bl2eK85H+domS/D/vJmhLt/F3FB96XurCE3weUCgYEAzQfa
+V0dLiuHaQ2cfkUL+g1p2S+7kFYYDjgVKG0Nh71CKBGiRdSEeJdl47mhLUkF+5Wn8
+ewXUlQhzfiAXxL3Zw6yjI5ugcUddL2Nwazj65Mv7iSnaZHAn5KXUohTFH2WRWjCS
+XfUZdzw074+sGgNwtWtUoHSYjbThKiA/KMonFE8CgYEAx8lroYPh4J6GTGyxLJP5
+PrGUwEyedrUuOD0acKV5AefPUFJE6wdM8ShYWXg98ziThXMKqSjd9EbCx/l2iTpf
+VTwBvUBPttURdf8Hw0D0bmOhGqzgb5MX/o0pU82Ww9hLBON8mst/SyIfCtzrClnN
+7pV7pu9i6ruZakNzkKCudGECgYEAq2mAUm2pq3/tIWLq0mAnNpv/wLYFfDUhba/g
+Z/CqxRAZg1wFF97LPKuXXgJVznwxYg1850FVnA+Htw+Pr41lrSD89z0aIvqd3ouN
+JidqIrSjI+aYzlWyFIfLwIIK15frsHJhPCo40yXDv/Dm2oy7wwDrrIYuMHLjuHtj
+Mm/nwiMCgYAXyLfA3yQMIom5kv7fsA20UiEDeA+d5Gjdpwy5ILHDDjtDMt1LdkCm
+JoOyAYZ1e7ZoN9ydJO9c5vPtrUelVaS1PCrb9c9s04980FfdCNMo9ZXyVQt9C1H4
+OsByU0oHDhWmPAlcVQbgqLzOTKaWYn4mle2iqgC0pR8kDBWcQJ/55Q==
+-----END RSA PRIVATE KEY-----";
 
 /// Loads command line arguments, and returns them as a clap ArgMatches obj
 pub fn parse_cmdline<'a>() -> ArgMatches<'a> {
@@ -127,6 +158,10 @@ pub fn make_genesis() -> (Block, Vec<Txn>) {
         .public_key_to_der().unwrap()
         .into();
 
+    let testkey: Bin = PKey::private_key_from_pem(TESTING_PRIVATE).unwrap()
+        .public_key_to_der().unwrap()
+        .into();
+
     let mut m = Mutation::new();
 
     let adm_key_hash = hash_pub_key(&admkey);
@@ -136,7 +171,7 @@ pub fn make_genesis() -> (Block, Vec<Txn>) {
         value: Some(adm_key_hash.as_bin())
     });
     m.changes.push(Change::NewValidator{pub_key: admkey});
-    m.changes.push(Change::NewValidator{pub_key: /* TODO: Put Public Key Here for THIS validator*/})
+    m.changes.push(Change::NewValidator{pub_key: testkey});
 
     let txn = Txn {
         timestamp: Time::from_seconds(1508009036),

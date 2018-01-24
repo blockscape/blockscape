@@ -54,6 +54,9 @@ pub fn start_forging(context: &Rc<Context>, handler: &Handle, _network_id: U256)
                             // did we get a block? submit if we did
                             match r {
                                 Ok(Either::B((block, _))) => {
+
+                                    let block = block.sign(&ctx2.forge_key);
+
                                     let rk = Arc::clone(&ctx2.rk);
                                     h2.spawn(ctx2.rk.get_priority_worker().spawn_fn(move || {
                                         let r = rk.add_block(&block);
