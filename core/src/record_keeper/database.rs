@@ -88,10 +88,14 @@ impl Database {
     }
 
     fn get_raw_data_static(db: &DB, key: Key) -> Result<Bin, Error> {
-        let res = db.get(&key.as_bin())?
+        // let res = db.get(&key.as_bin())?
+        //     .map(|d| d.to_vec())
+        //     .ok_or(Error::NotFound(key.clone()));
+        // println!("GET {:?}: {:?}", key, res); res
+
+        db.get(&key.as_bin())?
             .map(|d| d.to_vec())
-            .ok_or(Error::NotFound(key.clone()));
-        println!("GET {:?}: {:?}", key, res); res
+            .ok_or(Error::NotFound(key));
     }
 
     pub fn get<S: DeserializeOwned>(&self, key: Key) -> Result<S, Error> {
@@ -106,7 +110,7 @@ impl Database {
     }
 
     fn put_raw_data_static(db: &DB, key: Key, data: &[u8]) -> Result<(), Error> {
-        println!("PUT {:?}: {:?}", key, data);
+        // println!("PUT {:?}: {:?}", key, data);
         Ok(db.put(&key.as_bin(), &data)?)
     }
 
@@ -297,17 +301,13 @@ impl Database {
     pub fn find_chain_head(&self) -> Result<U256, Error> {
         let mut height = self.head.height;
         let mut choice = self.head.block;
-    
+
         loop {
-            let result = self.get_blocks_of_height(height + 1);
-            match result {
-                Ok(blocks) => {
-                    choice = *blocks.iter().nth(0).expect("Empty height in database!")
-                },
-                Err(Error::NotFound(..)) => return Ok(choice), // End loop when we reach a beyond what we know
-                Err(e) => return Err(e)
-            }
             height += 1;
+
+            let blocks = self.get_blocks_of_height(height)?;
+            if blocks.is_empty() { return Ok(choice); }  // End when we reach beyond what we know
+            choice = blocks[0];
         }
     }
 
@@ -620,6 +620,8 @@ impl Database {
             if let Some(h) = height { h }
             else { self.get_block_height(hash)? }
         };
+
+        debug!("Updating Current Head to ({}) of height {}.", hash, h);
 
         let href = HeadRef{height: h, block: hash};
         self.head = href.clone();
