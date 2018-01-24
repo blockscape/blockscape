@@ -199,7 +199,7 @@ impl RecordKeeper {
                     after_height: initial_height - invalidated
                 });
             }
-            (&RecordEvent::NewBlock{uncled, hash});
+            record_listeners.notify(&RecordEvent::NewBlock{uncled, hash});
 
             Ok(true)
         } else { // we already knew about this block, do nothing
