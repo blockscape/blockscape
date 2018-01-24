@@ -88,14 +88,14 @@ impl Database {
     }
 
     fn get_raw_data_static(db: &DB, key: Key) -> Result<Bin, Error> {
-        db.get(&key.as_bin())?
+        let res = db.get(&key.as_bin())?
             .map(|d| d.to_vec())
-            .ok_or(Error::NotFound(key))
+            .ok_or(Error::NotFound(key.clone()));
+        println!("GET {:?}: {:?}", key, res); res
     }
 
     pub fn get<S: DeserializeOwned>(&self, key: Key) -> Result<S, Error> {
         let raw = self.get_raw_data(key)?;
-        // println!("GET {:?}: {:?}", key.bin(), &raw);
         Ok(bincode::deserialize(&raw)?)
     }
 
@@ -106,6 +106,7 @@ impl Database {
     }
 
     fn put_raw_data_static(db: &DB, key: Key, data: &[u8]) -> Result<(), Error> {
+        println!("PUT {:?}: {:?}", key, data);
         Ok(db.put(&key.as_bin(), &data)?)
     }
 
@@ -115,7 +116,6 @@ impl Database {
             None => bincode::serialize(object, bincode::Infinite).unwrap()
         };
 
-        // println!("PUT {:?}: {:?}", key.bin(), &raw);
         self.put_raw_data(key, &raw)
     }
 
@@ -405,7 +405,8 @@ impl Database {
             let blocks = self.get_blocks_of_height(1)?;
             assert_eq!(blocks.len(), 1); // should have exactly one entry if in genesis case
             let block = self.get_block(&blocks[0])?;
-            self.get_mutation(&block)?; // don't need contra for the genesis block
+            let mutation = self.get_mutation(&block)?;
+            self.mutate(&mutation)?; // don't need contra for the genesis block
             // or to update current chain since there is only one block
             self.update_current_block(blocks[0], Some(1))
         } else { // normal case

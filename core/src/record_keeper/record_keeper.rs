@@ -62,7 +62,6 @@ impl RecordKeeper {
         let rk: RecordKeeper = Self::new(db, rules);
         
         { // Handle Genesis
-            println!("Handle genesis...");
             let mut db = rk.db.write().unwrap();
             if db.is_empty() { // add genesis
                 debug!("Loaded DB is empty, adding genesis block...");

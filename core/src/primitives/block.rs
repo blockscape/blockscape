@@ -45,10 +45,9 @@ impl BlockHeader {
 
     /// Sign the data within the block header except the signature itself.
     pub fn sign(mut self, key: &PKey) -> BlockHeader {
-
         self.creator = hash_pub_key(&key.public_key_to_der().unwrap());
-
         let bytes = self.get_signing_bytes();
+
         BlockHeader {
             version: self.version,
             timestamp: self.timestamp,
@@ -169,9 +168,7 @@ impl Block {
 
     /// Sign the data within the block header except the signature itself.
     pub fn sign(mut self, key: &PKey) -> Block {
-        self.header = self.header.sign(key);
-
-        self
+        self.header = self.header.sign(key); self
     }
 }
 
