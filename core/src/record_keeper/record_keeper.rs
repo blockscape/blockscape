@@ -2,7 +2,7 @@ use bin::Bin;
 use primitives::{U256, U160, U160_ZERO, Txn, Block, BlockHeader, Mutation, Change, ListenerPool};
 use std::collections::{HashMap, BTreeSet, BTreeMap};
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::{RwLock, Mutex};
 use super::{Error, RecordEvent, PlotID};
 use super::{PlotEvent, PlotEvents, events, NetState, NetDiff};
 use super::{rules, BlockRule, TxnRule, MutationRule, MutationRules};
@@ -25,8 +25,8 @@ pub struct RecordKeeper {
     rules: RwLock<MutationRules>,
     pending_txns: RwLock<HashMap<U256, Txn>>,
 
-    record_listeners: RwLock<ListenerPool<RecordEvent>>,
-    game_listeners: RwLock<ListenerPool<PlotEvent>>,
+    record_listeners: Mutex<ListenerPool<RecordEvent>>,
+    game_listeners: Mutex<ListenerPool<PlotEvent>>,
 
     /// A CPU pool of a single thread dedicated to processing work related to RecordKeeper. Work can be passed to it. Future compatible.
     /// It is reccomended to spawn major work for the DB on this thread; one can also spawn their own thread for smaller, higher priority jobs.
@@ -44,8 +44,8 @@ impl RecordKeeper {
             db: RwLock::new(db),
             rules: RwLock::new(rules.unwrap_or(MutationRules::new())),
             pending_txns: RwLock::new(HashMap::new()),
-            record_listeners: RwLock::new(ListenerPool::new()),
-            game_listeners: RwLock::new(ListenerPool::new()),
+            record_listeners: Mutex::new(ListenerPool::new()),
+            game_listeners: Mutex::new(ListenerPool::new()),
             worker: futures_cpupool::Builder::new().pool_size(1).create(),
             priority_worker: futures_cpupool::Builder::new().pool_size(3).create()
         }
@@ -180,9 +180,29 @@ impl RecordKeeper {
 
         // record the block
         if db.add_block(block)? {
-            db.walk_to_head()?;
+            let hash = block.calculate_hash();
+
+            // move the network state
+            let initial_height = db.get_current_block_height();
+            let invalidated = db.walk_to_head()?;
+            let uncled = hash != db.get_current_block_hash();
+            
+            // couple of quick checks
+            debug_assert!(initial_height > invalidated);
+            debug_assert!(initial_height < db.get_current_block_height());
+
+            // send out events as needed
+            let mut record_listeners = self.record_listeners.lock().unwrap();
+            if invalidated > 0 {
+                record_listeners.notify(&RecordEvent::StateInvalidated{
+                    new_height: db.get_current_block_height(),
+                    after_height: initial_height - invalidated
+                });
+            }
+            (&RecordEvent::NewBlock{uncled, hash});
+
             Ok(true)
-        } else {
+        } else { // we already knew about this block, do nothing
             Ok(false)
         }
     }
@@ -208,8 +228,20 @@ impl RecordKeeper {
             Err(e) => return Err(e)
         }
 
+        // add the event
         self.is_valid_txn(txn)?;
         txns.insert(hash, txn.clone());
+
+        // notify listeners
+        self.record_listeners.lock().unwrap().notify(&RecordEvent::NewTxn{hash});
+        let mut game_listeners = self.game_listeners.lock().unwrap();
+        for change in txn.mutation.changes.iter() {  match change {
+            &Change::Event{ref event, ..} => {
+                game_listeners.notify(event);
+            }
+            _ => (),
+        }}
+        
         Ok(true)
     }
 
@@ -336,13 +368,13 @@ impl RecordKeeper {
     /// Add a new listener for events such as new blocks. This will also take a moment to remove any
     /// listeners which no longer exist.
     pub fn register_record_listener(&self, listener: Sender<RecordEvent>) {
-        self.record_listeners.write().unwrap().register(listener);
+        self.record_listeners.lock().unwrap().register(listener);
     }
 
     /// Add a new listener for plot events. This will also take a moment to remove any listeners
     /// which no longer exist.
     pub fn register_game_listener(&self, listener: Sender<PlotEvent>) {
-        self.game_listeners.write().unwrap().register(listener);
+        self.game_listeners.lock().unwrap().register(listener);
     }
 
     /// Add a new rule to the database regarding what network mutations are valid. This will only

@@ -95,7 +95,7 @@ impl Database {
 
         db.get(&key.as_bin())?
             .map(|d| d.to_vec())
-            .ok_or(Error::NotFound(key));
+            .ok_or(Error::NotFound(key))
     }
 
     pub fn get<S: DeserializeOwned>(&self, key: Key) -> Result<S, Error> {
@@ -179,6 +179,12 @@ impl Database {
     #[inline]
     pub fn get_current_block_header(&self) -> Result<BlockHeader, Error> {
         self.get_block_header(&self.head.block)
+    }
+
+    /// Get the height of the current head of the blockchain.
+    #[inline]
+    pub fn get_current_block_height(&self) -> u64 {
+        self.head.height
     }
 
     /// Retrieve the transactions for a block to complete a `BlockHeader` as a `Block` object.
@@ -358,36 +364,45 @@ impl Database {
         // construct the diff
         let mut diff = NetDiff::new(*a_block, *b_block);
         // go down `a` chain and then go up `b` chain.
-        for (h, b) in a_heights.iter().rev() {
-            assert!(*h > 0);
-            diff.apply_contra(self.get_contra(*b)?);
+        for (h, b) in a_heights.into_iter().rev() {
+            debug_assert!(h > 1);
+            diff.apply_contra(self.get_contra(b)?);
         }
         for (h, b) in b_heights {
-            assert!(h > 1);
+            debug_assert!(h > 1);
             let block = self.get_block(&b)?;
             diff.apply_mutation(self.get_mutation(&block)?);
         } Ok(diff)
     }
 
-    /// Walk the network state to a given block in the block chain
-    pub fn walk(&mut self, b_block: &U256) -> Result<(), Error> {
+    /// Walk the network state to a given block in the block chain. Returns the number of blocks
+    /// which were invalidated in the walking process (if any). E.g., if it returns 5, then the 5
+    /// latest blocks were undone and are no longer part of the network state.
+    pub fn walk(&mut self, b_block: &U256) -> Result<u64, Error> {
         let a_block = self.head.block;
         debug!("Walking the network state from {} to {}.", a_block, b_block);
         assert!(!b_block.is_zero(), "Cannot walk to nothing");
 
+        // TODO: We may only need to have a count of the number of blocks to undo when walking backwards
         let (a_heights, b_heights) = self.calculate_block_path(&a_block, b_block)?;
+        debug_assert!(a_heights.len() < b_heights.len());
+        
+        // the number of blocks invalidated is equal to the number of blocks we are going to undo.
+        let invalidated_blocks = a_heights.len() as u64;
 
         // go down `a` chain and then go up `b` chain.
-        for (h, b) in a_heights.iter().rev() {
-            assert!(*h > 0);
+        for (h, b) in a_heights.into_iter().rev() {
+            debug_assert!(h > 1);
+            debug_assert!(self.head.block == b);
             let header = self.get_block_header(&b)?;
-            let contra = self.get_contra(*b)?;
+            let contra = self.get_contra(b)?;
             self.undo_mutate(contra)?;
             self.update_current_block(header.prev, Some(h - 1))?;
         }
         for (h, b) in b_heights {
-            assert!(h > 1);
+            debug_assert!(h > 1);
             let block = self.get_block(&b)?;
+            debug_assert!(block.prev == self.head.block);
             let mutation = self.get_mutation(&block)?;
             let contra = self.mutate(&mutation)?;
             self.add_contra(b, &contra)?;
@@ -395,20 +410,24 @@ impl Database {
             self.update_current_block(b, Some(h))?;
         }
         
-        Ok(())
+        Ok(invalidated_blocks)
     }
 
-    /// Find the current head of the block chain and then walk to it.
+    /// Find the current head of the block chain and then walk to it. Returns the number of blocks
+    /// which were invalidated in the walking process (if any). E.g., if it returns 5, then the 5
+    /// latest blocks were undone and are no longer part of the network state.
     #[inline]
-    pub fn walk_to_head(&mut self) -> Result<(), Error> {
+    pub fn walk_to_head(&mut self) -> Result<u64, Error> {
         if self.head.block.is_zero() { // walk from nothingness to genesis block
             let blocks = self.get_blocks_of_height(1)?;
             assert_eq!(blocks.len(), 1); // should have exactly one entry if in genesis case
-            let block = self.get_block(&blocks[0])?;
+            let genesis = blocks[0];
+            let block = self.get_block(&genesis)?;
             let mutation = self.get_mutation(&block)?;
             self.mutate(&mutation)?; // don't need contra for the genesis block
             // or to update current chain since there is only one block
-            self.update_current_block(blocks[0], Some(1))
+            self.update_current_block(genesis, Some(1))?;
+            Ok(0)
         } else { // normal case
             let head = self.find_chain_head()?;
             self.walk(&head)
