@@ -423,7 +423,9 @@ impl RecordKeeper {
 
     /// Internal use function, check if a txn is valid.
     fn is_valid_txn_given_lock(&self, state: &NetState, txn: &Txn) -> Result<(), Error> {
-        rules::txn::Signature.is_valid(state, txn)
+        rules::txn::Signature.is_valid(state, txn)?;
+        rules::txn::AdminCheck.is_valid(state, txn)?;
+        rules::txn::NewValidator.is_valid(state, txn)
     }
 
     /// Internal use function to check if a mutation is valid.

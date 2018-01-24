@@ -4,6 +4,7 @@ use primitives::{U160};
 use super::database::Database;
 use super::{Error, NetDiff, PlotID, PlotEvents, events};
 use super::key::*;
+use serde::de::DeserializeOwned;
 
 /// A snapshot of the network state at a given point in time. This builds on a reference to the
 /// database with a diff to allow being at a point in time without modifying the DB. This will hold
@@ -30,6 +31,11 @@ impl<'a> NetState<'a> {
         } else {
             self.db.get_raw_data(key)
         }
+    }
+
+    pub fn get_obj<T: DeserializeOwned>(&self, key: Key) -> Result<T, Error> {
+        let raw = self.get_value(key)?;
+        Ok(bincode::deserialize(&raw)?)
     }
 
     /// Get the public key of a validator given their ID.
