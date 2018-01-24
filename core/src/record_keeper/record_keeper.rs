@@ -450,13 +450,19 @@ impl RecordKeeper {
     fn is_valid_txn_given_lock(&self, state: &NetState, txn: &Txn) -> Result<(), Error> {
         rules::txn::Signature.is_valid(state, txn)?;
         rules::txn::AdminCheck.is_valid(state, txn)?;
-        rules::txn::NewValidator.is_valid(state, txn)
+        rules::txn::NewValidator.is_valid(state, txn)?;
+        rules::txn::Duplicates.is_valid(state, txn)
     }
 
     /// Internal use function to check if a mutation is valid.
     fn is_valid_mutation_given_lock(&self, state: &NetState, mutation: &Mutation) -> Result<(), Error> {
-        let rules = self.rules.read().unwrap();
         let mut cache = Bin::new();
+        // base rules
+        rules::mutation::Duplicates.is_valid(state, mutation, &mut cache)?;
+        
+        // user-added rules
+        cache = Bin::new();
+        let rules = self.rules.read().unwrap();
         for rule in &*rules {
             // verify all rules are satisfied and return, propagate error if not
             rule.is_valid(state, mutation, &mut cache)?;

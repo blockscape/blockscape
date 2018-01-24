@@ -1,13 +1,19 @@
 {
     "cSpell.words": [
         "blockchain",
+        "blockchain's",
+        "cachestate",
+        "chainstate",
         "deserialization",
         "deserialize",
         "deserialized",
         "desynchronized",
         "merkle",
         "mutex",
-        "struct"
+        "networkstate",
+        "struct",
+        "txns",
+        "validators"
     ],
     "files.associations": {
         "*.bats": "shellscript"
