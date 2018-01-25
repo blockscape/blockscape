@@ -17,7 +17,7 @@ pub enum RecordEvent {
     /// A new transaction that has come into the system and is now pending
     NewTxn { hash: U256 },
     /// The state needs to be transitioned backwards, probably onto a new branch
-    StateInvalidated { new_height: u64, after_height: u64, after_tick: u64 },
+    StateInvalidated { new_height: u64, after_height: u64 },
 }
 impl Event for RecordEvent {}
 
@@ -82,7 +82,7 @@ pub fn remove_event(events: &mut PlotEvents, tick: u64, event: &PlotEvent) -> bo
 pub enum JRecordEvent {
     NewBlock { uncled: bool, hash: JU256 },
     NewTxn { hash: JU256 },
-    StateInvalidated { new_height: u64, after_height: u64, after_tick: u64}
+    StateInvalidated { new_height: u64, after_height: u64}
 }
 
 impl From<RecordEvent> for JRecordEvent {
@@ -90,7 +90,7 @@ impl From<RecordEvent> for JRecordEvent {
         match e {
             RecordEvent::NewBlock{uncled, hash} => JRecordEvent::NewBlock{uncled, hash: hash.into()},
             RecordEvent::NewTxn{hash} => JRecordEvent::NewTxn{hash: hash.into()},
-            RecordEvent::StateInvalidated{new_height, after_height, after_tick} => JRecordEvent::StateInvalidated{new_height, after_height, after_tick}
+            RecordEvent::StateInvalidated{new_height, after_height} => JRecordEvent::StateInvalidated{new_height, after_height}
         }
     }
 }
@@ -100,7 +100,7 @@ impl Into<RecordEvent> for JRecordEvent {
         match self {
             JRecordEvent::NewBlock{uncled, hash} => RecordEvent::NewBlock{uncled, hash: hash.into()},
             JRecordEvent::NewTxn{hash} => RecordEvent::NewTxn{hash: hash.into()},
-            JRecordEvent::StateInvalidated{new_height, after_height, after_tick} => RecordEvent::StateInvalidated{new_height, after_height, after_tick}
+            JRecordEvent::StateInvalidated{new_height, after_height} => RecordEvent::StateInvalidated{new_height, after_height}
         }
     }
 }

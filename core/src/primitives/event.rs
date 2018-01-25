@@ -39,7 +39,8 @@ impl<E: Event> ListenerPool<E> {
         self.0.push(listener);
     }
 
-    /// Notify all listeners, and return a future that resolves when the messages have all been sent, including the number of listeners we successfully sent messages to.
+    /// Notify all listeners, and return a future that resolves when the messages have all been
+    /// sent, including the number of listeners we successfully sent messages to.
     pub fn notify(&mut self, event: &E) -> u32 {
 
         let drn: Vec<Sender<E>> = self.0.drain(..).collect();

@@ -1,0 +1,11 @@
+load 'helpers'
+run_test_cluster
+start_blockscape_server
+wait_for_rpc
+
+blockscape get_current_block_hash
+blockscape get_current_block_header
+blockscape get_current_block
+
+stop_blockscape_server
+clean_test_cluster

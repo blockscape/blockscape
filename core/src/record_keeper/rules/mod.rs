@@ -2,6 +2,8 @@
 pub mod block;
 /// All defined txn rules
 pub mod txn;
+/// Some pre-defined mutation rules independent of game logic
+pub mod mutation;
 
 
 use primitives::{Mutation, Block, Txn};
