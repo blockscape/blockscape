@@ -11,7 +11,7 @@ pub enum Change {
     Admin { key: Bin, value: Option<Bin> },
     BlockReward { id: U160, proof: Bin },
     Event { id: PlotID, tick: u64, event: PlotEvent },
-    NewValidator { pub_key: Bin, signature: Bin },
+    NewValidator { pub_key: Bin },
     Slash { id: U160, amount: u64, proof: Bin }
 }
 
@@ -25,7 +25,7 @@ impl Change {
             },
             &Change::BlockReward{ref proof, ..} => 20 + proof.len() + 1,
             &Change::Event{ref event, ..} => size_of::<PlotID>() + 8 + event.calculate_size(),
-            &Change::NewValidator{ref pub_key, ref signature} => pub_key.len() + signature.len() + 2,
+            &Change::NewValidator{ref pub_key} => pub_key.len() + 1,
             &Change::Slash{ref proof, ..} => 20 + 8 + proof.len() + 1
         }
     }
@@ -96,7 +96,7 @@ pub enum JChange {
     Admin { key: JBin, value: Option<JBin> },
     BlockReward { id: JU160, proof: JBin },
     Event { id: PlotID, tick: u64, event: JPlotEvent },
-    NewValidator { pub_key: JBin, signature: JBin },
+    NewValidator { pub_key: JBin },
     Slash { id: JU160, amount: u64, proof: JBin }
 }
 
@@ -106,7 +106,7 @@ impl From<Change> for JChange {
             Change::Admin{key, value} => JChange::Admin{key: key.into(), value: value.map(Into::into)},
             Change::BlockReward{id, proof} => JChange::BlockReward{id: id.into(), proof: proof.into()},
             Change::Event{id, tick, event} => JChange::Event{id, tick, event: event.into()},
-            Change::NewValidator{pub_key, signature} => JChange::NewValidator{pub_key: pub_key.into(), signature: signature.into()},
+            Change::NewValidator{pub_key} => JChange::NewValidator{pub_key: pub_key.into()},
             Change::Slash{id, amount, proof} => JChange::Slash{id: id.into(), amount, proof: proof.into()}
         }
     }
@@ -118,7 +118,7 @@ impl Into<Change> for JChange {
             JChange::Admin{key, value} => Change::Admin{key: key.into(), value: value.map(Into::into)},
             JChange::BlockReward{id, proof} => Change::BlockReward{id: id.into(), proof: proof.into()},
             JChange::Event{id, tick, event} => Change::Event{id, tick, event: event.into()},
-            JChange::NewValidator{pub_key, signature} => Change::NewValidator{pub_key: pub_key.into(), signature: signature.into()},
+            JChange::NewValidator{pub_key} => Change::NewValidator{pub_key: pub_key.into()},
             JChange::Slash{id, amount, proof} => Change::Slash{id: id.into(), amount, proof: proof.into()}
         }
     }

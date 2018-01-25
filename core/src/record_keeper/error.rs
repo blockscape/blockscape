@@ -65,6 +65,7 @@ pub fn map_not_found<T>(res: Result<T, Error>, val: T) -> Result<T, Error> {
 #[derive(Clone, Debug)]
 pub enum LogicError {
     Duplicate,
+    ExpectedAdmin,
     InvalidMerkleRoot,
     InvalidMutation(String),
     InvalidSignature,
@@ -77,7 +78,8 @@ pub enum LogicError {
 impl StdErr for LogicError {
     fn description(&self) -> &str {
         match *self {
-            LogicError::Duplicate => "This has already been accepted into the blockchain.",
+            LogicError::Duplicate => "This has already been accepted into the blockchain or contains multiple copies of non-stacking changes.",
+            LogicError::ExpectedAdmin => "This needs to be signed off by the Admin.",
             LogicError::InvalidMerkleRoot => "The merkle_root does not match the txn list.",
             LogicError::InvalidMutation(_) => "The mutation breaks a rule.",
             LogicError::InvalidSignature => "The data does not match the signature.",

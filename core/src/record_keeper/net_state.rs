@@ -3,7 +3,9 @@ use bincode;
 use primitives::{U160};
 use super::database::Database;
 use super::{Error, NetDiff, PlotID, PlotEvents, events};
+use super::error::map_not_found;
 use super::key::*;
+use serde::de::DeserializeOwned;
 
 /// A snapshot of the network state at a given point in time. This builds on a reference to the
 /// database with a diff to allow being at a point in time without modifying the DB. This will hold
@@ -32,6 +34,11 @@ impl<'a> NetState<'a> {
         }
     }
 
+    pub fn get_obj<T: DeserializeOwned>(&self, key: Key) -> Result<T, Error> {
+        let raw = self.get_value(key)?;
+        Ok(bincode::deserialize(&raw)?)
+    }
+
     /// Get the public key of a validator given their ID.
     /// See `get_validator_key` in `Database`
     pub fn get_validator_key(&self, id: U160) -> Result<Bin, Error> {
@@ -51,11 +58,10 @@ impl<'a> NetState<'a> {
         let removed_events = self.diff.get_removed_events(plot_id);
         
         // get the base events from the DB
-        let mut plot_events = match self.db.get_plot_events(plot_id, after_tick) {
-            Ok(pe) => pe,
-            Err(Error::NotFound(..)) => PlotEvents::new(),
-            Err(e) => return Err(e)
-        };
+        let mut plot_events = map_not_found(
+            self.db.get_plot_events(plot_id, after_tick),
+            PlotEvents::new()
+        )?;
 
         // remove the removed events
         if let Some(removed_e) = removed_events {

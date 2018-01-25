@@ -1,6 +1,6 @@
 use bin::{Bin, JBin};
 use bincode;
-use hash::{hash_obj, merge_hashes};
+use hash::{hash_obj, hash_pub_key, merge_hashes};
 use openssl::pkey::PKey;
 use primitives::{U256, U160, JU160, JU256, U256_ZERO};
 use range::Range;
@@ -44,8 +44,10 @@ impl BlockHeader {
     }
 
     /// Sign the data within the block header except the signature itself.
-    pub fn sign(self, key: &PKey) -> BlockHeader {
+    pub fn sign(mut self, key: &PKey) -> BlockHeader {
+        self.creator = hash_pub_key(&key.public_key_to_der().unwrap());
         let bytes = self.get_signing_bytes();
+
         BlockHeader {
             version: self.version,
             timestamp: self.timestamp,
@@ -163,6 +165,11 @@ impl Block {
         if len == 1 { hashes[0] }
         else { U256_ZERO }
     }
+
+    /// Sign the data within the block header except the signature itself.
+    pub fn sign(mut self, key: &PKey) -> Block {
+        self.header = self.header.sign(key); self
+    }
 }
 
 
@@ -181,7 +188,7 @@ pub struct JBlockHeader {
 
 #[derive(Serialize, Deserialize)]
 pub struct JBlock {
-    header: BlockHeader,
+    header: JBlockHeader,
     txns: BTreeSet<JU256>
 }
 
@@ -218,7 +225,7 @@ impl Into<BlockHeader> for JBlockHeader {
 impl From<Block> for JBlock {
     fn from(h: Block) -> JBlock {
         JBlock {
-            header: h.header,
+            header: h.header.into(),
             txns: h.txns.into_iter().map(|h| h.into()).collect()
         }
     }
@@ -227,7 +234,7 @@ impl From<Block> for JBlock {
 impl Into<Block> for JBlock {
     fn into(self) -> Block {
         Block {
-            header: self.header,
+            header: self.header.into(),
             txns: self.txns.into_iter().map(|h| h.into()).collect()
         }
     }

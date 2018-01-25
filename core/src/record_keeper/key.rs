@@ -69,6 +69,7 @@ pub enum NetworkEntry {
     Plot(PlotID),
     ValidatorKey(U160),
     ValidatorRep(U160),
+    AdminKeyID,
     Generic(Bin)
 }
 
@@ -79,6 +80,7 @@ impl AsBin for NetworkEntry {
             &Plot(ref id) => prefix(b"PLT", id),
             &ValidatorKey(ref k) => prefix(b"VKY", k),
             &ValidatorRep(ref k) => prefix(b"VRP", k),
+            &AdminKeyID => Bin::from(b"ADMIN" as &[u8]),
             &Generic(ref b) => b.clone()
         }
     }

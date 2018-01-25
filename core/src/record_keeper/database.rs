@@ -88,6 +88,11 @@ impl Database {
     }
 
     fn get_raw_data_static(db: &DB, key: Key) -> Result<Bin, Error> {
+        // let res = db.get(&key.as_bin())?
+        //     .map(|d| d.to_vec())
+        //     .ok_or(Error::NotFound(key.clone()));
+        // println!("GET {:?}: {:?}", key, res); res
+
         db.get(&key.as_bin())?
             .map(|d| d.to_vec())
             .ok_or(Error::NotFound(key))
@@ -95,7 +100,6 @@ impl Database {
 
     pub fn get<S: DeserializeOwned>(&self, key: Key) -> Result<S, Error> {
         let raw = self.get_raw_data(key)?;
-        // println!("GET {:?}: {:?}", key.bin(), &raw);
         Ok(bincode::deserialize(&raw)?)
     }
 
@@ -106,6 +110,7 @@ impl Database {
     }
 
     fn put_raw_data_static(db: &DB, key: Key, data: &[u8]) -> Result<(), Error> {
+        // println!("PUT {:?}: {:?}", key, data);
         Ok(db.put(&key.as_bin(), &data)?)
     }
 
@@ -115,7 +120,6 @@ impl Database {
             None => bincode::serialize(object, bincode::Infinite).unwrap()
         };
 
-        // println!("PUT {:?}: {:?}", key.bin(), &raw);
         self.put_raw_data(key, &raw)
     }
 
@@ -175,6 +179,12 @@ impl Database {
     #[inline]
     pub fn get_current_block_header(&self) -> Result<BlockHeader, Error> {
         self.get_block_header(&self.head.block)
+    }
+
+    /// Get the height of the current head of the blockchain.
+    #[inline]
+    pub fn get_current_block_height(&self) -> u64 {
+        self.head.height
     }
 
     /// Retrieve the transactions for a block to complete a `BlockHeader` as a `Block` object.
@@ -297,17 +307,13 @@ impl Database {
     pub fn find_chain_head(&self) -> Result<U256, Error> {
         let mut height = self.head.height;
         let mut choice = self.head.block;
-    
+
         loop {
-            let result = self.get_blocks_of_height(height + 1);
-            match result {
-                Ok(blocks) => {
-                    choice = *blocks.iter().nth(0).expect("Empty height in database!")
-                },
-                Err(Error::NotFound(..)) => return Ok(choice), // End loop when we reach a beyond what we know
-                Err(e) => return Err(e)
-            }
             height += 1;
+
+            let blocks = self.get_blocks_of_height(height)?;
+            if blocks.is_empty() { return Ok(choice); }  // End when we reach beyond what we know
+            choice = blocks[0];
         }
     }
 
@@ -332,53 +338,18 @@ impl Database {
         
         // create lists of the `a` and `b` chains sorted by height
         let a_heights: BTreeMap<u64, U256> = a_hashes.into_iter()
-            .filter(|&(_, d)| d <= a_dist)  // keep only values before intersection
+            .filter(|&(_, d)| d < a_dist)  // keep only values before intersection
             .map(|(k, d)| {
                 assert!(a_height >= d);
                 (a_height - d, k)
         }).collect();
 
         let b_heights: BTreeMap<u64, U256> = b_hashes.into_iter()
-            .filter(|&(_, d)| d <= b_dist)  // keep only values before intersection
+            .filter(|&(_, d)| d < b_dist)  // keep only values before intersection
             .map(|(k, d)| {
                 assert!(b_height >= d);
                 (b_height - d, k)
         }).collect();
-
-
-        { // verify validity; remove this check later on
-            let mut collision = None;
-            let mut last = None; // (height, block_hash)
-
-            for (&h, &b) in &a_heights {
-                if let Some((lh, _)) = last {
-                    assert_eq!(h, lh - 1);
-                } else { //check first element
-                    collision = Some(b);
-                    assert_eq!(h, a_height - a_dist);  // collision should be the first
-                }
-                last = Some((h, b));
-            }{ // check last element
-                let (h, b) = last.unwrap();
-                assert_eq!(*a_block, b);
-                assert_eq!(a_height, h);
-            }
-
-            last = None;
-            for (&h, &b) in &b_heights {
-                if let Some((lh, _)) = last {
-                    assert_eq!(h, lh - 1);
-                } else { //check first element
-                    assert_eq!(collision.unwrap(), b);
-                    assert_eq!(h, a_height - a_dist);  // collision should be the first
-                }
-                last = Some((h, b));
-            }{ // check last element
-                let (h, b) = last.unwrap();
-                assert_eq!(*b_block, b);
-                assert_eq!(b_height, h);
-            }
-        }
 
         Ok((a_heights, b_heights))
     }
@@ -393,36 +364,45 @@ impl Database {
         // construct the diff
         let mut diff = NetDiff::new(*a_block, *b_block);
         // go down `a` chain and then go up `b` chain.
-        for (h, b) in a_heights.iter().rev() {
-            assert!(*h > 0);
-            diff.apply_contra(self.get_contra(*b)?);
+        for (h, b) in a_heights.into_iter().rev() {
+            debug_assert!(h > 1);
+            diff.apply_contra(self.get_contra(b)?);
         }
         for (h, b) in b_heights {
-            assert!(h > 1);
+            debug_assert!(h > 1);
             let block = self.get_block(&b)?;
             diff.apply_mutation(self.get_mutation(&block)?);
         } Ok(diff)
     }
 
-    /// Walk the network state to a given block in the block chain
-    pub fn walk(&mut self, b_block: &U256) -> Result<(), Error> {
+    /// Walk the network state to a given block in the block chain. Returns the number of blocks
+    /// which were invalidated in the walking process (if any). E.g., if it returns 5, then the 5
+    /// latest blocks were undone and are no longer part of the network state.
+    pub fn walk(&mut self, b_block: &U256) -> Result<u64, Error> {
         let a_block = self.head.block;
         debug!("Walking the network state from {} to {}.", a_block, b_block);
         assert!(!b_block.is_zero(), "Cannot walk to nothing");
 
+        // TODO: We may only need to have a count of the number of blocks to undo when walking backwards
         let (a_heights, b_heights) = self.calculate_block_path(&a_block, b_block)?;
+        debug_assert!(a_heights.len() < b_heights.len());
+        
+        // the number of blocks invalidated is equal to the number of blocks we are going to undo.
+        let invalidated_blocks = a_heights.len() as u64;
 
         // go down `a` chain and then go up `b` chain.
-        for (h, b) in a_heights.iter().rev() {
-            assert!(*h > 0);
+        for (h, b) in a_heights.into_iter().rev() {
+            debug_assert!(h > 1);
+            debug_assert!(self.head.block == b);
             let header = self.get_block_header(&b)?;
-            let contra = self.get_contra(*b)?;
+            let contra = self.get_contra(b)?;
             self.undo_mutate(contra)?;
             self.update_current_block(header.prev, Some(h - 1))?;
         }
         for (h, b) in b_heights {
-            assert!(h > 1);
+            debug_assert!(h > 1);
             let block = self.get_block(&b)?;
+            debug_assert!(block.prev == self.head.block);
             let mutation = self.get_mutation(&block)?;
             let contra = self.mutate(&mutation)?;
             self.add_contra(b, &contra)?;
@@ -430,19 +410,24 @@ impl Database {
             self.update_current_block(b, Some(h))?;
         }
         
-        Ok(())
+        Ok(invalidated_blocks)
     }
 
-    /// Find the current head of the block chain and then walk to it.
+    /// Find the current head of the block chain and then walk to it. Returns the number of blocks
+    /// which were invalidated in the walking process (if any). E.g., if it returns 5, then the 5
+    /// latest blocks were undone and are no longer part of the network state.
     #[inline]
-    pub fn walk_to_head(&mut self) -> Result<(), Error> {
+    pub fn walk_to_head(&mut self) -> Result<u64, Error> {
         if self.head.block.is_zero() { // walk from nothingness to genesis block
             let blocks = self.get_blocks_of_height(1)?;
             assert_eq!(blocks.len(), 1); // should have exactly one entry if in genesis case
-            let block = self.get_block(&blocks[0])?;
-            self.get_mutation(&block)?; // don't need contra for the genesis block
+            let genesis = blocks[0];
+            let block = self.get_block(&genesis)?;
+            let mutation = self.get_mutation(&block)?;
+            self.mutate(&mutation)?; // don't need contra for the genesis block
             // or to update current chain since there is only one block
-            self.update_current_block(blocks[0], Some(1))
+            self.update_current_block(genesis, Some(1))?;
+            Ok(0)
         } else { // normal case
             let head = self.find_chain_head()?;
             self.walk(&head)
@@ -541,7 +526,7 @@ impl Database {
                 let id = hash_pub_key(pub_key);
                 let key = NetworkEntry::ValidatorKey(id).into();
                 self.put_raw_data(key, pub_key)?;
-                Change::NewValidator{pub_key: pub_key.clone(), signature: Bin::new()}
+                Change::NewValidator{pub_key: pub_key.clone()}
             },
             &Change::Slash{id, amount, ..} => {
                 self.change_validator_rep(id, -(amount as i64))?;
@@ -655,6 +640,8 @@ impl Database {
             else { self.get_block_height(hash)? }
         };
 
+        debug!("Updating Current Head to ({}) of height {}.", hash, h);
+
         let href = HeadRef{height: h, block: hash};
         self.head = href.clone();
         self.put(CacheEntry::CurrentHead.into(), &href, Some(40))
@@ -704,7 +691,7 @@ impl Database {
         self.put(CacheEntry::ContraMut(hash).into(), contra, None)
     }
 
-    /// Get the distance of the inrsection for the LCA on both paths. Returns
+    /// Get the distance of the intersection for the LCA on both paths. Returns
     /// (distance on path a, distance on path b)
     /// Note, this assumes there is a single element which is a member of both `a` and `b`.
     fn intersect_dist(a: &HashMap<U256, u64>, b: &HashMap<U256, u64>, last_a: &U256, last_b: &U256) -> (u64, u64) {

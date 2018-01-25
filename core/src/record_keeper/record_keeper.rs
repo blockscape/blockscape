@@ -1,16 +1,14 @@
 use bin::Bin;
-use openssl::pkey::PKey;
-use primitives::{U256, U160, Txn, Block, BlockHeader, Mutation, Change, ListenerPool};
+use primitives::{U256, U160, U160_ZERO, Txn, Block, BlockHeader, Mutation, Change, ListenerPool};
 use std::collections::{HashMap, BTreeSet, BTreeMap};
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::{RwLock, Mutex};
 use super::{Error, RecordEvent, PlotID};
 use super::{PlotEvent, PlotEvents, events, NetState, NetDiff};
 use super::{rules, BlockRule, TxnRule, MutationRule, MutationRules};
 use super::BlockPackage;
 use super::database::*;
 use time::Time;
-use hash::hash_pub_key;
 
 use futures::sync::mpsc::Sender;
 use futures_cpupool;
@@ -27,13 +25,8 @@ pub struct RecordKeeper {
     rules: RwLock<MutationRules>,
     pending_txns: RwLock<HashMap<U256, Txn>>,
 
-    record_listeners: RwLock<ListenerPool<RecordEvent>>,
-    game_listeners: RwLock<ListenerPool<PlotEvent>>,
-
-    /// The hash of this users public key
-    key_hash: U160,
-    /// This user's private key
-    key: PKey,
+    record_listeners: Mutex<ListenerPool<RecordEvent>>,
+    game_listeners: Mutex<ListenerPool<PlotEvent>>,
 
     /// A CPU pool of a single thread dedicated to processing work related to RecordKeeper. Work can be passed to it. Future compatible.
     /// It is reccomended to spawn major work for the DB on this thread; one can also spawn their own thread for smaller, higher priority jobs.
@@ -46,15 +39,13 @@ pub struct RecordKeeper {
 impl RecordKeeper {
     /// Construct a new RecordKeeper from an already opened database and possibly an existing set of
     /// rules.
-    fn new(db: Database, rules: Option<MutationRules>, key: PKey) -> RecordKeeper {
+    fn new(db: Database, rules: Option<MutationRules>) -> RecordKeeper {
         RecordKeeper {
             db: RwLock::new(db),
             rules: RwLock::new(rules.unwrap_or(MutationRules::new())),
             pending_txns: RwLock::new(HashMap::new()),
-            record_listeners: RwLock::new(ListenerPool::new()),
-            game_listeners: RwLock::new(ListenerPool::new()),
-            key_hash: hash_pub_key(&key.public_key_to_der().unwrap()),
-            key,
+            record_listeners: Mutex::new(ListenerPool::new()),
+            game_listeners: Mutex::new(ListenerPool::new()),
             worker: futures_cpupool::Builder::new().pool_size(1).create(),
             priority_worker: futures_cpupool::Builder::new().pool_size(3).create()
         }
@@ -65,13 +56,12 @@ impl RecordKeeper {
     /// # Warning
     /// Any database which is opened, is assumed to contain data in a certain way, any outside
     /// modifications can cause undefined behavior.
-    pub fn open(key: PKey, path: PathBuf, rules: Option<MutationRules>, genesis: (Block, Vec<Txn>)) -> Result<RecordKeeper, Error> {
+    pub fn open(path: PathBuf, rules: Option<MutationRules>, genesis: (Block, Vec<Txn>)) -> Result<RecordKeeper, Error> {
         info!("Opening a RecordKeeper object with path '{:?}'", path);
         let db = Database::open(path)?;
-        let rk: RecordKeeper = Self::new(db, rules, key);
+        let rk: RecordKeeper = Self::new(db, rules);
         
         { // Handle Genesis
-            println!("Handle genesis...");
             let mut db = rk.db.write().unwrap();
             if db.is_empty() { // add genesis
                 debug!("Loaded DB is empty, adding genesis block...");
@@ -97,6 +87,9 @@ impl RecordKeeper {
     }
 
     /// Use pending transactions to create a new block which can then be added to the network.
+    /// The block provided is complete except:
+    /// 1. The proof of work/proof of stake mechanism has not been completed
+    /// 2. The signature has not been applied to the block
     pub fn create_block(&self) -> Result<Block, Error> {
         let pending_txns = self.pending_txns.read().unwrap();
         let db = self.db.read().unwrap();
@@ -113,9 +106,9 @@ impl RecordKeeper {
                     prev: cbh_h,
                     merkle_root: Block::calculate_merkle_root(&BTreeSet::new()),
                     blob: Bin::new(),
-                    creator: self.key_hash,
+                    creator: U160_ZERO,
                     signature: Bin::new()
-                }.sign(&self.key),
+                },
                 txns: BTreeSet::new()
             })
         }
@@ -138,9 +131,9 @@ impl RecordKeeper {
                     prev: cbh_h,
                     merkle_root: Block::calculate_merkle_root(&accepted_txns),
                     blob: Bin::new(),
-                    creator: self.key_hash,
+                    creator: U160_ZERO,
                     signature: Bin::new()
-                }.sign(&self.key),
+                },
                 txns: {
                     let mut t = accepted_txns.clone();
                     t.insert(*txn); t
@@ -187,9 +180,37 @@ impl RecordKeeper {
 
         // record the block
         if db.add_block(block)? {
-            db.walk_to_head()?;
+            let hash = block.calculate_hash();
+
+            // move the network state
+            let initial_height = db.get_current_block_height();
+            let invalidated = db.walk_to_head()?;
+            let uncled = hash != db.get_current_block_hash();
+            
+            // couple of quick checks...
+            // if uncled, basic verification that we have not moved
+            debug_assert!(!uncled || (
+                invalidated == 0 &&
+                initial_height == db.get_current_block_height()
+            ));
+            // if not uncled, do some validity checks to make sure we moved correctly
+            debug_assert!(uncled || (
+                initial_height > invalidated &&
+                initial_height < db.get_current_block_height()
+            ));
+
+            // send out events as needed
+            let mut record_listeners = self.record_listeners.lock().unwrap();
+            if invalidated > 0 {
+                record_listeners.notify(&RecordEvent::StateInvalidated{
+                    new_height: db.get_current_block_height(),
+                    after_height: initial_height - invalidated
+                });
+            }
+            record_listeners.notify(&RecordEvent::NewBlock{uncled, hash});
+
             Ok(true)
-        } else {
+        } else { // we already knew about this block, do nothing
             Ok(false)
         }
     }
@@ -215,8 +236,20 @@ impl RecordKeeper {
             Err(e) => return Err(e)
         }
 
+        // add the event
         self.is_valid_txn(txn)?;
         txns.insert(hash, txn.clone());
+
+        // notify listeners
+        self.record_listeners.lock().unwrap().notify(&RecordEvent::NewTxn{hash});
+        let mut game_listeners = self.game_listeners.lock().unwrap();
+        for change in txn.mutation.changes.iter() {  match change {
+            &Change::Event{ref event, ..} => {
+                game_listeners.notify(event);
+            }
+            _ => (),
+        }}
+        
         Ok(true)
     }
 
@@ -343,13 +376,13 @@ impl RecordKeeper {
     /// Add a new listener for events such as new blocks. This will also take a moment to remove any
     /// listeners which no longer exist.
     pub fn register_record_listener(&self, listener: Sender<RecordEvent>) {
-        self.record_listeners.write().unwrap().register(listener);
+        self.record_listeners.lock().unwrap().register(listener);
     }
 
     /// Add a new listener for plot events. This will also take a moment to remove any listeners
     /// which no longer exist.
     pub fn register_game_listener(&self, listener: Sender<PlotEvent>) {
-        self.game_listeners.write().unwrap().register(listener);
+        self.game_listeners.lock().unwrap().register(listener);
     }
 
     /// Add a new rule to the database regarding what network mutations are valid. This will only
@@ -423,13 +456,21 @@ impl RecordKeeper {
 
     /// Internal use function, check if a txn is valid.
     fn is_valid_txn_given_lock(&self, state: &NetState, txn: &Txn) -> Result<(), Error> {
-        rules::txn::Signature.is_valid(state, txn)
+        rules::txn::Signature.is_valid(state, txn)?;
+        rules::txn::AdminCheck.is_valid(state, txn)?;
+        rules::txn::NewValidator.is_valid(state, txn)?;
+        rules::txn::Duplicates.is_valid(state, txn)
     }
 
     /// Internal use function to check if a mutation is valid.
     fn is_valid_mutation_given_lock(&self, state: &NetState, mutation: &Mutation) -> Result<(), Error> {
-        let rules = self.rules.read().unwrap();
         let mut cache = Bin::new();
+        // base rules
+        rules::mutation::Duplicates.is_valid(state, mutation, &mut cache)?;
+        
+        // user-added rules
+        cache = Bin::new();
+        let rules = self.rules.read().unwrap();
         for rule in &*rules {
             // verify all rules are satisfied and return, propagate error if not
             rule.is_valid(state, mutation, &mut cache)?;
