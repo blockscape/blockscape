@@ -28,7 +28,7 @@ pub fn start_forging(context: &Rc<Context>, handler: &Handle, _network_id: U256)
     let (tx, rx) = mpsc::channel(10);
 
     // manufacture a fake event to get the miner started
-    let tx = tx.send(RecordEvent::NewBlock { uncled: false, hash: context.rk.get_current_block_hash() }).wait()
+    let tx = tx.send(RecordEvent::NewBlock { uncled: false, block: context.rk.get_current_block().expect("No current block!") }).wait()
         .expect("Could not post starting event for forging system");
 
     context.rk.register_record_listener(tx);

@@ -7,7 +7,7 @@ use openssl::pkey::PKey;
 
 use bin::*;
 
-use primitives::{Block, Txn, U256};
+use primitives::{Block, Txn, U256, U256_ZERO};
 use super::node::Node;
 use time::Time;
 
@@ -96,7 +96,7 @@ impl Packet {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum DataRequestError {
     /// The requested hash does not exist on this node
     HashesNotFound(Vec<U256>),
@@ -121,7 +121,7 @@ pub enum ByeReason {
     Abuse
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Message {
     /// First message sent by a connecting node. If the other node accepts, it will reply with an "Introduce". The nodes are now connected
     Introduce {
@@ -258,13 +258,11 @@ impl Session {
 
         // connection could have been acquitted while handling the introduce.
         if sess.done.get().is_none() {
-            actions.send_packets.push(SocketPacket(sess.remote_addr.clone(), RawPacket {
-                port: sess.remote_port.get(),
-                payload: Packet::new(0, Message::Introduce {
+            actions.send_packets.push(sess.build_packet(Message::Introduce {
                     node: sess.context.my_node.clone(),
                     port: local_port,
                     network_id: network_id
-                }).apply_sig(&sess.context.config.private_key)}));
+                }, None, true));
         }
 
         sess
@@ -303,6 +301,23 @@ impl Session {
         }
     }
 
+    #[inline]
+    pub fn build_packet(&self, msg: Message, seq: Option<u32>, signed: bool) -> SocketPacket {
+
+        let seq = seq.unwrap_or_else(|| self.current_seq.replace(self.current_seq.get() + 1));
+
+        let mut pl = Packet::new(seq, msg);
+
+        if signed {
+            pl = pl.apply_sig(&self.context.config.private_key);
+        }
+
+        SocketPacket(self.remote_addr.clone(), RawPacket {
+                        port: self.remote_port.get(),
+                        payload: pl
+        })
+    }
+
     /// Provide a packet which has been received for this session
     pub fn recv(&self, packet: &Packet, actions: &mut NetworkActions) {
 
@@ -338,9 +353,7 @@ impl Session {
 
                 Message::Ping(time) => {
                     // Send back a pong
-                    actions.send_packets.push(SocketPacket(self.remote_addr.clone(), RawPacket {
-                        port: self.remote_port.get(),
-                        payload: Packet::new(packet.seq, Message::Pong(time))}));
+                    actions.send_packets.push(self.build_packet(Message::Pong(time), Some(packet.seq), false));
                 },
 
                 Message::Pong(time) => {
@@ -374,13 +387,11 @@ impl Session {
                         })
                         .collect();
 
-                    actions.send_packets.push(SocketPacket(self.remote_addr.clone(), RawPacket {
-                        port: self.remote_port.get(),
-                        payload: Packet::new(packet.seq, Message::NodeList {
+                    actions.send_packets.push(self.build_packet(Message::NodeList {
                             nodes: nodes,
                             network_id: network_id.clone(),
                             skip: skip.clone()
-                    })}));
+                    }, Some(packet.seq), false));
                 },
 
                 Message::NodeList { ref nodes, ref network_id, .. } => {
@@ -574,6 +585,12 @@ impl Session {
                     let f2 = f1.then(move |res| {
                         match res {
                             Ok((pkg, size)) => {
+
+                                if pkg.is_empty() {
+                                    warn!("Received empty block package from peer!");
+                                    return future::err(());
+                                }
+
                                 if let Some((ref job, ref _time)) = j {
 
                                     // here we need to check if previous imported data was for some reason invalidated
@@ -755,13 +772,12 @@ impl Session {
             if !self.is_introduced() {
                 // we might have to re-send the introduce packet
                 let introduce_n = self.context.my_node.clone();
-                actions.send_packets.push(SocketPacket(self.remote_addr.clone(), RawPacket {
-                    port: self.remote_port.get(),
-                    payload: Packet::new(0, Message::Introduce {
+
+                actions.send_packets.push(self.build_packet(Message::Introduce {
                         node: introduce_n,
                         port: self.local_port,
                         network_id: self.network_id
-                })}));
+                }, None, false));
 
                 if self.strikes.replace(self.strikes.get() + 1) + 1 > TIMEOUT_TOLERANCE as u32 {
                     self.done.set(Some(ByeReason::Timeout));
@@ -784,9 +800,7 @@ impl Session {
 
                     let lps = Time::current();
 
-                    actions.send_packets.push(SocketPacket(self.remote_addr.clone(), RawPacket {port: self.remote_port.get(), payload:
-                        Packet::new(self.current_seq.replace(self.current_seq.get()), Message::Ping(lps))}));
-
+                    actions.send_packets.push(self.build_packet(Message::Ping(lps), None, false));
                     self.last_ping_send.set(Some(lps));
                 }
             }
@@ -805,12 +819,10 @@ impl Session {
 
     pub fn find_nodes(&self, network_id: &U256, actions: &mut NetworkActions) {
         if self.is_introduced() {
-            actions.send_packets.push(SocketPacket(self.remote_addr.clone(), RawPacket {
-                port: self.remote_port.get(),
-                payload: Packet::new(self.current_seq.replace(self.current_seq.get() + 1), Message::FindNodes {
+            actions.send_packets.push(self.build_packet(Message::FindNodes {
                         network_id: network_id.clone(),
                         skip: 0
-                })}));
+                }, None, false));
         }
     }
 
@@ -822,6 +834,25 @@ impl Session {
             self.current_job.replace(Some((oj, time)));
             return false;
         }
+
+        // send a packet for the job
+        // construct a dummy packet first so we can adjust it outside
+        let mut packet = self.build_packet(
+            Message::SyncBlocks{last_block_hash: U256_ZERO, target_block_hash: U256_ZERO},
+            None,
+            false
+        );
+        let ctx2 = Rc::clone(&self.context);
+        let j = Rc::clone(job);
+        let rk = Arc::clone(&self.context.rk);
+        self.context.event_loop.spawn(self.context.rk.get_priority_worker().spawn_fn(move || {
+            Ok::<_, ()>(rk.get_current_block_hash())
+        }).then(move |cur| {
+            packet.1.payload.msg = Message::SyncBlocks{last_block_hash: cur.unwrap(), target_block_hash: j.get_target()};
+            ctx2.send_packets(vec![packet]);
+
+            Ok(())
+        }));
 
         true
     }
@@ -838,9 +869,7 @@ impl Session {
     /// Appends a bye packet to the end of the queue
     /// NOTE: Dont forget to empty the send queue after calling this function!
     pub fn close(&self, actions: &mut NetworkActions) {
-        actions.send_packets.push(SocketPacket(self.remote_addr.clone(), RawPacket {port: self.remote_port.get(), payload:
-            Packet::new(self.current_seq.replace(self.current_seq.get() + 1 as u32), Message::Bye(ByeReason::Exit))}));
-
+        actions.send_packets.push(self.build_packet(Message::Bye(ByeReason::Exit), None, false));
         self.done.set(Some(ByeReason::Exit));
     }
 

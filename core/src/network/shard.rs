@@ -273,6 +273,8 @@ impl ShardInfo {
         match p.msg {
             Message::Ping { .. } => {},
             Message::Pong { .. } => {},
+            Message::NewBlock(ref b) => debug!("Import block {}", b.calculate_hash()),
+            Message::NewTransaction(ref t) => debug!("Import txn {}", t.calculate_hash()),
             Message::Introduce { ref node, .. } => debug!("{} ==> Introduce {}", addr, node.get_hash_id()),
             Message::NodeList { ref nodes, .. } => debug!("Received NodeList of {} nodes", nodes.len()),
             _ => debug!("{} ==> {:?}", addr, &p)
@@ -323,6 +325,12 @@ impl ShardInfo {
                 warn!("Unroutable packet: {:?}", p);
             }
         }
+    }
+
+    pub fn reliable_flood(&self, msg: Message, actions: &mut NetworkActions) {
+        self.sessions.borrow().values().for_each(|s| {
+            actions.send_packets.push(s.build_packet(msg.clone(), None, false));
+        });
     }
 
     pub fn get_network_id(&self) -> &U256 {

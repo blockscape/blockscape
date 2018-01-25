@@ -1,4 +1,4 @@
-use primitives::{U256, JU256, Event, RawEvent, JRawEvent};
+use primitives::{Block, JBlock, Txn, JTxn, Event, RawEvent, JRawEvent};
 use std::collections::BTreeMap;
 use std::mem::size_of;
 use super::PlotID;
@@ -13,9 +13,9 @@ use super::PlotID;
 pub enum RecordEvent {
     /// A new block has been added, walk forward (or back, if back, then a state invalidated event
     /// will also be pushed out if relevant)
-    NewBlock { uncled: bool, hash: U256 },
+    NewBlock { uncled: bool, block: Block },
     /// A new transaction that has come into the system and is now pending
-    NewTxn { hash: U256 },
+    NewTxn { txn: Txn },
     /// The state needs to be transitioned backwards, probably onto a new branch
     StateInvalidated { new_height: u64, after_height: u64 },
 }
@@ -80,16 +80,16 @@ pub fn remove_event(events: &mut PlotEvents, tick: u64, event: &PlotEvent) -> bo
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum JRecordEvent {
-    NewBlock { uncled: bool, hash: JU256 },
-    NewTxn { hash: JU256 },
+    NewBlock { uncled: bool, block: JBlock },
+    NewTxn { txn: JTxn },
     StateInvalidated { new_height: u64, after_height: u64}
 }
 
 impl From<RecordEvent> for JRecordEvent {
     fn from(e: RecordEvent) -> JRecordEvent {
         match e {
-            RecordEvent::NewBlock{uncled, hash} => JRecordEvent::NewBlock{uncled, hash: hash.into()},
-            RecordEvent::NewTxn{hash} => JRecordEvent::NewTxn{hash: hash.into()},
+            RecordEvent::NewBlock{uncled, block} => JRecordEvent::NewBlock{uncled, block: block.into()},
+            RecordEvent::NewTxn{txn} => JRecordEvent::NewTxn{txn: txn.into()},
             RecordEvent::StateInvalidated{new_height, after_height} => JRecordEvent::StateInvalidated{new_height, after_height}
         }
     }
@@ -98,8 +98,8 @@ impl From<RecordEvent> for JRecordEvent {
 impl Into<RecordEvent> for JRecordEvent {
     fn into(self) -> RecordEvent {
         match self {
-            JRecordEvent::NewBlock{uncled, hash} => RecordEvent::NewBlock{uncled, hash: hash.into()},
-            JRecordEvent::NewTxn{hash} => RecordEvent::NewTxn{hash: hash.into()},
+            JRecordEvent::NewBlock{uncled, block} => RecordEvent::NewBlock{uncled, block: block.into()},
+            JRecordEvent::NewTxn{txn} => RecordEvent::NewTxn{txn: txn.into()},
             JRecordEvent::StateInvalidated{new_height, after_height} => RecordEvent::StateInvalidated{new_height, after_height}
         }
     }
