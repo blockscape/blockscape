@@ -187,9 +187,17 @@ impl RecordKeeper {
             let invalidated = db.walk_to_head()?;
             let uncled = hash != db.get_current_block_hash();
             
-            // couple of quick checks
-            debug_assert!(initial_height > invalidated);
-            debug_assert!(initial_height < db.get_current_block_height());
+            // couple of quick checks...
+            // if uncled, basic verification that we have not moved
+            debug_assert!(!uncled || (
+                invalidated == 0 &&
+                initial_height == db.get_current_block_height()
+            ));
+            // if not uncled, do some validity checks to make sure we moved correctly
+            debug_assert!(uncled || (
+                initial_height > invalidated &&
+                initial_height < db.get_current_block_height()
+            ));
 
             // send out events as needed
             let mut record_listeners = self.record_listeners.lock().unwrap();
