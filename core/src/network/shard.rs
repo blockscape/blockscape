@@ -289,11 +289,9 @@ impl ShardInfo {
                 false
             }
         };
-        
+
         if !r {
-            debug!("BEFORE");
             let mut sessions = self.sessions.borrow_mut();
-            debug!("AFTER");
             // special case can happen if UDP packet routing leads to a narrower connection path
             if let Message::Introduce {ref node, ..} = p.msg {
                 let hid = node.get_hash_id();
