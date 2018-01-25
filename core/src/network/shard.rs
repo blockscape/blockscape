@@ -273,20 +273,64 @@ impl ShardInfo {
         match p.msg {
             Message::Ping { .. } => {},
             Message::Pong { .. } => {},
+            Message::NewBlock(ref b) => debug!("Import block {}", b.calculate_hash()),
+            Message::NewTransaction(ref t) => debug!("Import txn {}", t.calculate_hash()),
             Message::Introduce { ref node, .. } => debug!("{} ==> Introduce {}", addr, node.get_hash_id()),
             Message::NodeList { ref nodes, .. } => debug!("Received NodeList of {} nodes", nodes.len()),
             _ => debug!("{} ==> {:?}", addr, &p)
         };
-        
-        match self.sessions.borrow().get(&addr) {
-            Some(sess) => {
+
+        let r = {
+            let sessions = self.sessions.borrow();
+
+            if let Some(sess) = sessions.get(&addr) {
                 sess.recv(&p, actions);
-            },
-            None => {
+                true
+            }
+            else {
+                false
+            }
+        };
+
+        if !r {
+            let mut sessions = self.sessions.borrow_mut();
+            // special case can happen if UDP packet routing leads to a narrower connection path
+            if let Message::Introduce {ref node, ..} = p.msg {
+                let hid = node.get_hash_id();
+                
+                // find it
+                let mut rekey = None;
+
+                if let Some((key, val)) = sessions.iter_mut().find(|&(_,ref v)| v.get_remote_node().endpoint == node.endpoint) {
+                    if !val.update_introduce(p, addr) {
+                        warn!("Apparent hijack attempt, or simply incompetant host detected");
+                    }
+                    else {
+                        info!("Remote peer {} has changed connection configuration!", hid);
+                        rekey = Some(*key);
+                    }
+                }
+                else {
+                    // could not find
+                    warn!("Unroutable introduce packet: {:?}", node.get_hash_id());
+                }
+                
+                if let Some(k) = rekey {
+                    let tmp = sessions.remove(&k).unwrap();
+                    sessions.insert(*addr, tmp);
+                }
+            }
+            else {
                 // should never happen because all sessions init through port 255
                 warn!("Unroutable packet: {:?}", p);
             }
         }
+    }
+
+    pub fn reliable_flood(&self, msg: Message, actions: &mut NetworkActions) {
+        self.sessions.borrow().values().for_each(|s| {
+            actions.send_packets.push(s.build_packet(msg.clone(), None, false));
+        });
     }
 
     pub fn get_network_id(&self) -> &U256 {

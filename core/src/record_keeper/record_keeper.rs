@@ -207,7 +207,7 @@ impl RecordKeeper {
                     after_height: initial_height - invalidated
                 });
             }
-            record_listeners.notify(&RecordEvent::NewBlock{uncled, hash});
+            record_listeners.notify(&RecordEvent::NewBlock{uncled, block: block.clone()});
 
             Ok(true)
         } else { // we already knew about this block, do nothing
@@ -241,7 +241,7 @@ impl RecordKeeper {
         txns.insert(hash, txn.clone());
 
         // notify listeners
-        self.record_listeners.lock().unwrap().notify(&RecordEvent::NewTxn{hash});
+        self.record_listeners.lock().unwrap().notify(&RecordEvent::NewTxn{txn: txn.clone()});
         let mut game_listeners = self.game_listeners.lock().unwrap();
         for change in txn.mutation.changes.iter() {  match change {
             &Change::Event{ref event, ..} => {

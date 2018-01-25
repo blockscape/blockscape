@@ -27,7 +27,7 @@ use network::session;
 use network::session::{SessionInfo, SocketPacket, Message};
 use network::shard::{ShardInfo};
 use primitives::U256;
-use record_keeper::RecordKeeper;
+use record_keeper::{RecordKeeper, RecordEvent};
 use signer::generate_private_key;
 use util::QuitSignal;
 
@@ -382,6 +382,10 @@ impl Client {
             let (nout, nin) = UdpSocket::bind(&config.bind_addr, &core.handle()).expect("Could not bind P2P socket!").framed(P2PCodec).split();
 
             let (chain_tx, chain_rx) = unsync::mpsc::unbounded();
+
+            let (rktx, rkrx) = mpsc::channel(10);
+            rk.register_record_listener(rktx);
+
             let t = Rc::new(Client::new(config, rk, &core, chain_tx));
 
             t.context.sink.set(Some(Box::new(nout)));
@@ -438,6 +442,7 @@ impl Client {
 
                 // perform job merging if possible, break if we succeeed
                 if let Some(h) = augmenter {
+                    debug!("I have an augmenter");
                     let mut jobs = this.jobs.borrow_mut();
                     let mut found = false;
                     let mut x = 0;
@@ -461,11 +466,14 @@ impl Client {
                     }
 
                     if found {
+
+                        debug!("Augment/Duplicate Job: Target {}", j.get_target());
                         return Ok::<(), ()>(());
                     }
                 }
 
                 if let Some(ref shard) = *this.shards[this.resolve_port(&j.network_id) as usize].borrow() {
+                    debug!("Assign Job: {}", j.get_target());
                     if !shard.assign_job(&j) {
                         warn!("Could not assign job in network: {}", j.network_id);
                     }
@@ -515,11 +523,44 @@ impl Client {
                     future::err(())
                 });
 
+            this = Rc::clone(&t);
+            let rk_task = rkrx.for_each(move |e| {
+                match e {
+                    RecordEvent::NewBlock {block, ..} => {
+
+                        let shard = this.shards[this.resolve_port(&block.shard) as usize].borrow();
+
+                        if let Some(ref s) = *shard {
+                            let mut actions = NetworkActions::new(this.as_ref());
+                            s.reliable_flood(Message::NewBlock(block), &mut actions);
+                            this.context.send_packets(actions.send_packets);
+                        }
+                        // otherwise do not propogate anything
+                    },
+                    RecordEvent::NewTxn {txn} => {
+                        // TODO: When we have the ability to tell which network a txn is on, apply to the correct net
+                        // for now we assume genesis
+                        let shard = this.shards[0].borrow();
+
+                        if let Some(ref s) = *shard {
+                            let mut actions = NetworkActions::new(this.as_ref());
+                            s.reliable_flood(Message::NewTransaction(txn), &mut actions);
+                            this.context.send_packets(actions.send_packets);
+                        }
+                        // otherwise do not propogate anything
+                    },
+                    _ => {}
+                }
+
+                future::ok(())
+            });
+
             t.context.event_loop.spawn(msg_handler);
             t.context.event_loop.spawn(chain_handler);
             t.context.event_loop.spawn(packet_listener);
             //handle.spawn(ntpTask);
             t.context.event_loop.spawn(session_check_task);
+            t.context.event_loop.spawn(rk_task);
 
             this = Rc::clone(&t);
             core.run(quit).and_then(|_| {

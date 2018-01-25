@@ -155,4 +155,8 @@ impl BlockPackage {
     pub fn starts_at(&self) -> U256 {
         self.blocks.first().unwrap().0.prev
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.txns.is_empty() && self.blocks.is_empty()
+    }
 }
