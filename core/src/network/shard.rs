@@ -282,15 +282,22 @@ impl ShardInfo {
             sess.recv(&p, actions);
         }
         else {
+            debug!("START SPECIAL CASE");
             // special case can happen if UDP packet routing leads to a narrower connection path
             if let Message::Introduce {ref node, ..} = p.msg {
                 let hid = node.get_hash_id();
+
+                debug!("START SPECIAL CASE 2");
                 
                 // find it
                 let mut sessions = self.sessions.borrow_mut();
                 let mut rekey = None;
 
+
+                debug!("START SPECIAL CASE 3");
+
                 if let Some((key, val)) = sessions.iter_mut().find(|&(_,ref v)| v.get_remote_node().endpoint == node.endpoint) {
+                    debug!("START SPECIAL CASE 4");
                     if !val.update_introduce(p, addr) {
                         warn!("Apparent hijack attempt, or simply incompetant host detected");
                     }
