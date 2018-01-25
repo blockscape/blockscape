@@ -73,12 +73,18 @@ impl Packet {
 
     /// Ensures that the packet is signed and is correct for the encoded message
     pub fn check_sig(&self, node: &Arc<Node>) -> bool {
-        if let Ok(key) = PKey::public_key_from_der(&node.key) {
+
+        let r = PKey::public_key_from_der(&node.key);
+
+        if let Ok(key) = r {
             verify_obj(&self.msg, &self.sig, &key)
         }
-        else {
-            warn!("Remote key could not be decoded from DER: {}", node.get_hash_id());
+        else if let Err(e) = r {
+            warn!("Remote key {} could not be decoded from DER: {:?}", node.get_hash_id(), e);
             false
+        }
+        else {
+            unreachable!();
         }
     }
 
@@ -308,6 +314,11 @@ impl Session {
             // we cannot take this packet
             match packet.msg {
                 Message::Introduce { .. } => {
+                    if !self.remote_peer.borrow().key.is_empty() && !packet.check_sig(&self.remote_peer.borrow()) {
+                        self.done.set(Some(ByeReason::ExitPermanent));
+                        return;
+                    }
+
                     self.handle_introduce(&packet.msg);
                 },
 
@@ -715,12 +726,14 @@ impl Session {
         // an attacker could impersonate/hijack a connection using this feature, so the message must include a signature to be taken.
         // If everything checks out, update the remote peer IP
 
-        if packet.check_sig(&self.remote_peer.borrow()) {
+        // the only exception for this is if we do not have a key for the remote peer, because we have not connected yet, and it was from a seed node
+        if self.remote_peer.borrow().key.is_empty() || packet.check_sig(&self.remote_peer.borrow()) {
             self.remote_addr = *new_socket;
 
-            if let Message::Introduce {ref node, ref port, ..} = packet.msg {
-                *self.remote_peer.borrow_mut() = Arc::new(node.clone());
-                self.remote_port.set(*port);
+            if let Message::Introduce {..} = packet.msg {
+                self.handle_introduce(&packet.msg);
+                //*self.remote_peer.borrow_mut() = Arc::new(node.clone());
+                //self.remote_port.set(*port);
             }
             else {
                 unreachable!();
