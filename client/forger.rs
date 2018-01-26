@@ -63,6 +63,17 @@ pub fn start_forging(context: &Rc<Context>, handler: &Handle, _network_id: U256)
         // unfortunately we have to make another channel for each block since the function is called multiple times
         let (tx2, rx2) = mpsc::channel(10);
         context.rk.register_record_listener(tx2);
+
+        // we only want to stop the miner for new blocks on the main chain
+        let rx2 = rx2.filter(|e| {
+            if let &RecordEvent::NewBlock { ref uncled, .. } = e {
+                !uncled
+            }
+            else {
+                false
+            }
+        });
+
         Box::new(rx2.into_future().select2(context.forge_algo.create(b)).then(move |r| {
             // did we get a block? submit if we did
             match r {
