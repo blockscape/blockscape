@@ -482,7 +482,7 @@ impl Session {
                     let r_port = self.remote_port.get();
                     let seq = packet.seq;
                     self.context.event_loop.spawn(self.context.rk.get_priority_worker().spawn_fn(move || {
-                        let bp = rk.get_blocks_before(&lbh, &tbh, MAX_PACKET_SIZE)?;
+                        let bp = rk.get_blocks_between(&lbh, &tbh, MAX_PACKET_SIZE)?;
 
                         Ok(bp.zip()?)
                     })

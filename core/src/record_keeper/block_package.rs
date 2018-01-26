@@ -28,25 +28,10 @@ impl BlockPackage {
         BlockPackage { blocks: Vec::new(), txns: Vec::new() }
     }
 
-    /// Create a `BlockPackage` of blocks before the `target` hash until it collides with the main
-    /// chain. If the `start` hash lies between the target and the main chain, it will return the
-    /// blocks between them, otherwise it will return the blocks from the main chain until target
-    /// in that order and it will not include the start or target blocks.
-    ///
-    /// If the limit is reached, it will prioritize blocks of a lower height, but may have a gap
-    /// between the main chain (or start) and what it includes.
-    pub fn blocks_before(db: &Database, last_known: &U256, target: &U256, limit: usize) -> Result<BlockPackage, Error> {
-        let blocks = db.get_blocks_before(last_known, target, limit / ESTIMATED_BLOCK_SIZE)?;
-        Self::package(db, blocks, limit)
-    }
-
-    /// Create a `BlockPackage` of all the blocks of the current chain which are a descendent of
-    /// the latest common ancestor between the chain of the start block and the current chain. This
-    /// result will be sorted in ascending height order. It will not include the start hash. Also,
-    /// `limit` is the maximum number of blocks it should scan through when ascending the
-    /// blockchain.
-    pub fn blocks_after(db: &Database, start: &U256, limit: usize) -> Result<BlockPackage, Error> {
-        let blocks = db.get_blocks_after(start, limit / ESTIMATED_BLOCK_SIZE)?;
+    /// Create a `BlockPackage` of blocks which are after last_known and up to target. (Not
+    /// including last_known or target in the package).
+    pub fn blocks_between(db: &Database, last_known: &U256, target: &U256, limit: usize) -> Result<BlockPackage, Error> {
+        let blocks = db.get_blocks_between(last_known, target, limit / ESTIMATED_BLOCK_SIZE)?;
         Self::package(db, blocks, limit)
     }
 

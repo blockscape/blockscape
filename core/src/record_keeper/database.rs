@@ -256,14 +256,14 @@ impl Database {
         Ok(headers)
     }
 
-    /// Get blocks before the `target` hash until it collides with the main chain. If the `start`
-    /// hash lies between the target and the main chain, it will return the blocks between them,
-    /// otherwise it will return the blocks from the main chain until target in that order and it
-    /// will not include the start or target blocks.
+    /// Get blocks before the `target` hash until it collides with the main chain. If the
+    /// `last_known` hash lies between the target and the main chain, it will return the blocks
+    /// between them, otherwise it will return the blocks from the main chain until target in that
+    /// order and it will not include the start or target blocks.
     ///
     /// If the limit is reached, it will prioritize blocks of a lower height, but may have a gap
     /// between the main chain (or start) and what it includes.
-    pub fn get_blocks_before(&self, target: &U256, start: &U256, limit: usize)  -> Result<Vec<BlockHeader>, Error> {
+    fn get_blocks_before(&self, target: &U256, last_known: &U256, limit: usize)  -> Result<Vec<BlockHeader>, Error> {
         let mut iter = DownIter(&self, *target)
             .skip(1)
             .take(limit)
@@ -274,7 +274,7 @@ impl Database {
         let mut blocks: Vec<BlockHeader> = Vec::new();
         while let Some((hash, header)) = iter.next() {
             let in_cur_chain = self.is_part_of_current_chain(hash)?;
-            if (hash == *start) || (in_cur_chain) { break; }
+            if (hash == *last_known) || (in_cur_chain) { break; }
             blocks.push(header)
         }
         
@@ -282,21 +282,39 @@ impl Database {
         Ok(blocks)
     }
 
-    /// Retrieves all the blocks of the current chain which are a descendent of the latest common
-    /// ancestor between the chain of the start block and the current chain. This result will be
-    /// sorted in ascending height order. It will not include the start hash. Also, `limit` is the
-    /// maximum number of blocks it should scan through when ascending the blockchain.
-    pub fn get_blocks_after(&self, start: &U256, limit: usize) -> Result<Vec<BlockHeader>, Error> {
+    /// Retrieves all blocks of the current chain which are a descendent of the latest common
+    /// ancestor of the last_known block until it reaches target or the end of the known chain. It
+    /// will not include the last_known or the target blocks. Also, `limit` is the maximum number of
+    /// blocks it should scan through when ascending the blockchain.
+    fn get_blocks_after(&self, last_known: &U256, target: &U256, limit: usize) -> Result<Vec<BlockHeader>, Error> {
         // For efficiency, use a quick check to find if a given block is part of the current chain or not.
-        let ancestor = self.latest_common_ancestor_with_current_chain(start)?;
-        let ancestor_height = self.get_block_height(ancestor)?;
+        let ancestor_height = {
+            let ancestor = self.latest_common_ancestor_with_current_chain(last_known)?;
+            self.get_block_height(ancestor)?
+        };
+        
         Ok(UpIter(&self, ancestor_height)
             .skip(1) // we know they have must have the LCA
             .take(limit) // hard-coded maximum
             .take_while(|res| res.is_ok()) // stop at first error, or when we reach the destination
-            .map(|res| res.unwrap().1)  // exract block header
+            .map(|res| res.unwrap())  // exract block header
+            .take_while(|&(ref hash, _)| hash != target)
+            .map(|(_, header)| header)
             .collect::<Vec<BlockHeader>>()
         )
+    }
+
+    pub fn get_blocks_between(&self, last_known: &U256, target: &U256, limit: usize) -> Result<Vec<BlockHeader>, Error> {
+        if self.is_part_of_current_chain(*target)? {
+            self.get_blocks_after(last_known, target, limit)
+        } else {
+            let mut uncle_blocks = self.get_blocks_before(target, last_known, limit)?;
+            let mc_target = uncle_blocks.get(0).map(BlockHeader::calculate_hash).unwrap_or(*target);
+            let mc_limit = limit - uncle_blocks.len();
+            let mut main_chain = self.get_blocks_after(last_known, &mc_target, mc_limit)?;
+            main_chain.append(&mut uncle_blocks);
+            Ok(main_chain)
+        }
     }
 
     /// Will find the current head of the blockchain. This uses the last known head to find the
@@ -380,6 +398,7 @@ impl Database {
     /// latest blocks were undone and are no longer part of the network state.
     pub fn walk(&mut self, b_block: &U256) -> Result<u64, Error> {
         let a_block = self.head.block;
+        if a_block == *b_block { return Ok(0); }
         debug!("Walking the network state from {} to {}.", a_block, b_block);
         assert!(!b_block.is_zero(), "Cannot walk to nothing");
 
