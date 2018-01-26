@@ -594,11 +594,11 @@ impl Session {
                                 if let Some((ref job, ref _time)) = j {
 
                                     // here we need to check if previous imported data was for some reason invalidated
-                                    if pkg.starts_at() != job.predicted_cur.get() {
+                                    /*if pkg.starts_at() != job.predicted_cur.get() {
                                         // for whatever, the cur block before our submit no longer matches, so cancel import
                                         debug!("Cancel import of block package starting at {}", pkg.starts_at());
                                         return future::err(());
-                                    }
+                                    }*/
 
                                     // update the job size
                                     let mut c = job.concurrent.get();

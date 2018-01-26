@@ -23,7 +23,7 @@ services:
         networks:
             - net
 
-        command: /bin/bash -c 'sleep 60 && /blockscape -h blockscape_3 --seed-node blockscape_1:35653 -F'
+        command: /bin/bash -c 'sleep 20 && /blockscape -h blockscape_3 --seed-node blockscape_1:35653 -F'
 
 networks:
     net:

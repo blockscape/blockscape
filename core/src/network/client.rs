@@ -118,6 +118,8 @@ pub enum ClientMsg {
 
     AttachNetwork(U256, ShardMode),
     DetachNetwork(U256),
+
+    ShouldForge(U256, oneshot::Sender<bool>)
 }
 
 /// Statistical information which can be queried from the network client
@@ -429,7 +431,9 @@ impl Client {
                         this.detach_network(&network_id);
 
                         future::ok(())
-                    }
+                    },
+
+                    ClientMsg::ShouldForge(_network_id, r) => future::result(r.send(this.jobs.borrow().is_empty()).map_err(|_| ()))
                 };
 
                 this.context.event_loop.spawn(f);
