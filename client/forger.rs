@@ -36,9 +36,8 @@ pub fn start_forging(context: &Rc<Context>, handler: &Handle, _network_id: U256)
 
     context.rk.register_record_listener(tx);
 
-    let h2 = handler.clone();
-
-    let context = Rc::clone(&context);
+    let context2 = Rc::clone(context);
+    let handler2 = handler.clone();
 
     let forge_response_task = rx
     .filter(|e| matches!(*e, RecordEvent::NewBlock { .. }))
@@ -51,16 +50,16 @@ pub fn start_forging(context: &Rc<Context>, handler: &Handle, _network_id: U256)
         }
         else { unreachable!() }
 
-
-        let h3 = h2.clone();
+        let handler3 = handler2.clone();
+        let context3 = context2.clone();
 
         // should we be forging atm?
-        let fun = |should: Result<bool, futures::Canceled>| {
+        let fun = move |should: Result<bool, futures::Canceled>| {
             if !should.unwrap_or(false) {
                 return Box::new(future::ok::<(), ()>(()));
             }
 
-            let r = context.rk.create_block();
+            let r = context3.rk.create_block();
 
             if let Err(e) = r {
                 warn!("Could not generate block for forging: {}", e);
@@ -70,11 +69,9 @@ pub fn start_forging(context: &Rc<Context>, handler: &Handle, _network_id: U256)
             let b = r.unwrap();
 
             // time for new work
-            let h2 = h2.clone();
-            let ctx2 = Rc::clone(&context);
             // unfortunately we have to make another channel for each block since the function is called multiple times
             let (tx2, rx2) = mpsc::channel(10);
-            context.rk.register_record_listener(tx2);
+            context3.rk.register_record_listener(tx2);
 
             // we only want to stop the miner for new blocks on the main chain
             let rx2 = rx2.filter(|e| {
@@ -86,14 +83,18 @@ pub fn start_forging(context: &Rc<Context>, handler: &Handle, _network_id: U256)
                 }
             });
 
-            let t = Box::new(rx2.into_future().select2(context.forge_algo.create(b)).then(move |r| {
+            let context4 = Rc::clone(&context3);
+            let handler4 = handler3.clone();
+
+            let t = Box::new(rx2.into_future().select2(context3.forge_algo.create(b)).then(move |r| {
                 // did we get a block? submit if we did
                 match r {
                     Ok(Either::B((block, _))) => {
-                        let block = block.sign(&ctx2.forge_key);
-                        let rk = Arc::clone(&ctx2.rk);
-                        h2.spawn(ctx2.rk.get_priority_worker().spawn_fn(move || {
-                            let r = rk.add_block(&block);
+                        let block = block.sign(&context4.forge_key);
+                        let context_rk = Arc::clone(&context4.rk);
+
+                        handler4.spawn(context4.rk.get_priority_worker().spawn_fn(move || {
+                            let r = context_rk.add_block(&block);
                             if let Ok(_) = r {
                                 println!("FORGE: Submitted {} was accepted!", block.calculate_hash());
                             }
@@ -113,18 +114,18 @@ pub fn start_forging(context: &Rc<Context>, handler: &Handle, _network_id: U256)
                 Ok::<(), ()>(())
             }));
 
-            h2.spawn(t);
+            handler3.spawn(t);
 
             Box::new(future::ok(()))
         };
 
         let (tx, rx) = oneshot::channel();
-        if let Some(n) = context.network {
-            n.unbounded_send(ClientMsg::ShouldForge(U256_ZERO, tx));
-            h2.spawn(rx.then(fun));
+        if let Some(ref n) = context2.network {
+            n.unbounded_send(ClientMsg::ShouldForge(U256_ZERO, tx)).expect("Could not send message to network");
+            handler2.spawn(rx.into_future().then(fun));
         }
         else {
-            h2.spawn(future::ok(true).then(fun));
+            handler2.spawn(future::ok(true).then(fun));
         }
 
         Box::new(future::ok::<(), ()>(()))
