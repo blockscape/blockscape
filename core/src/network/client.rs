@@ -433,7 +433,10 @@ impl Client {
                         future::ok(())
                     },
 
-                    ClientMsg::ShouldForge(_network_id, r) => future::result(r.send(this.jobs.borrow().is_empty()).map_err(|_| ()))
+                    ClientMsg::ShouldForge(_network_id, r) => {
+                        this.clear_weak_jobs();
+                        future::result(r.send(this.jobs.borrow().is_empty()).map_err(|_| ()))
+                    }
                 };
 
                 this.context.event_loop.spawn(f);
@@ -446,34 +449,32 @@ impl Client {
 
                 // perform job merging if possible, break if we succeeed
                 if let Some(h) = augmenter {
+                    this.clear_weak_jobs();
+
                     let mut jobs = this.jobs.borrow_mut();
                     let mut found = false;
                     let mut x = 0;
                     while x < jobs.len() {
-                        if let Some(oje) = jobs[x].upgrade() {
-                            if oje.get_target() == h {
-                                // change the existing job rather than creating a new one.
-                                debug!("Augment Existing Job: {}", oje.get_target());
-                                oje.augment(j.get_target());
-                                found = true;
-                                break;
-                            }
-                            else if j.get_target() == oje.get_target() && Rc::ptr_eq(&j, &oje) {
-                                // previous job resubmitted due to failure/continued processing
-                                jobs.swap_remove(x);
-                                break;
-                            }
-                            else if j.get_target() == oje.get_target() && !Rc::ptr_eq(&j, &oje) {
-                                // duplicate jobs
-                                found = true;
-                                break;
-                            }
-
-                            x += 1;
+                        let oje = jobs[x].upgrade().unwrap(); // guarenteed since we clear weak jobs earlier
+                        if oje.get_target() == h {
+                            // change the existing job rather than creating a new one.
+                            debug!("Augment Existing Job: {}", oje.get_target());
+                            oje.augment(j.get_target());
+                            found = true;
+                            break;
                         }
-                        else {
+                        else if j.get_target() == oje.get_target() && Rc::ptr_eq(&j, &oje) {
+                            // previous job resubmitted due to failure/continued processing
                             jobs.swap_remove(x);
+                            break;
                         }
+                        else if j.get_target() == oje.get_target() && !Rc::ptr_eq(&j, &oje) {
+                            // duplicate jobs
+                            found = true;
+                            break;
+                        }
+
+                        x += 1;
                     }
 
                     if found {
@@ -686,5 +687,18 @@ impl Client {
         }
 
         repo
+    }
+
+    fn clear_weak_jobs(&self) {
+        let mut x = 0;
+        let mut jobs = self.jobs.borrow_mut();
+        while x < jobs.len() {
+            if jobs[x].upgrade().is_none() {
+                jobs.swap_remove(x);
+            }
+            else {
+                x += 1;
+            }
+        }
     }
 }
