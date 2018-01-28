@@ -431,7 +431,7 @@ impl Session {
 
                 Message::NewBlock(ref block) => {
                     let d = block.clone();
-                    let prev = block.prev;
+                    let incoming_hash = block.calculate_hash();
                     let rk = Arc::clone(&self.context.rk);
                     let lcontext = Rc::clone(&self.context);
                     let network_id = self.network_id;
@@ -445,7 +445,7 @@ impl Session {
                                     BlockchainEntry::BlockHeader(hash) => {
                                         // set a new work target
                                         if let Err(e) = lcontext.job_targets.unbounded_send(
-                                            (NetworkJob::new(network_id, hash, lcontext.rk.get_current_block_hash(), None), Some(prev))
+                                            (NetworkJob::new(network_id, hash, lcontext.rk.get_current_block_hash(), None), Some(incoming_hash))
                                         ) {
                                             // should never happen
                                             warn!("Could not buffer new network job: {}", e);
@@ -627,6 +627,9 @@ impl Session {
                                                 let mut c = job.concurrent.get();
                                                 c -= size;
                                                 job.concurrent.set(c);
+                                                // reset the job try counter
+                                                job.try.set(0);
+
                                                 if imported_to != job.get_target() && c < MAX_JOB_SIZE {
                                                     // resubmit the job because we are ready to get more data
                                                     if let Err(e) = lcontext2.job_targets.unbounded_send((Rc::clone(job), None)) {
@@ -813,6 +816,13 @@ impl Session {
             // has it expired?
             if time.diff(&Time::current_local()) < Time::from_milliseconds(JOB_TIMEOUT) {
                 self.current_job.set(Some((job, time)));
+            }
+            else {
+                // return the job
+                job.try.set(job.try.get() + 1);
+                if let Err(e) = self.context.job_targets.unbounded_send((job, None)) {
+                    warn!("Network job handler closed upon job resubmit: {}", e);
+                }
             }
         }
     }

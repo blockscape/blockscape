@@ -446,7 +446,6 @@ impl Client {
 
                 // perform job merging if possible, break if we succeeed
                 if let Some(h) = augmenter {
-                    debug!("I have an augmenter");
                     let mut jobs = this.jobs.borrow_mut();
                     let mut found = false;
                     let mut x = 0;
@@ -454,12 +453,20 @@ impl Client {
                         if let Some(oje) = jobs[x].upgrade() {
                             if oje.get_target() == h {
                                 // change the existing job rather than creating a new one.
+                                debug!("Augment Existing Job: {}", oje.get_target());
                                 oje.augment(j.get_target());
                                 found = true;
+                                break;
                             }
                             else if j.get_target() == oje.get_target() && Rc::ptr_eq(&j, &oje) {
+                                // previous job resubmitted due to failure/continued processing
+                                jobs.swap_remove(x);
+                                break;
+                            }
+                            else if j.get_target() == oje.get_target() && !Rc::ptr_eq(&j, &oje) {
                                 // duplicate jobs
                                 found = true;
+                                break;
                             }
 
                             x += 1;
