@@ -1,6 +1,7 @@
 use bin::{Bin, AsBin};
 use primitives::{U256, U160};
 use super::{PlotID};
+use record_keeper::database as DB;
 
 #[inline]
 fn prefix<T: AsBin>(p: &[u8], k: &T) -> Bin {
@@ -66,7 +67,7 @@ impl Into<Key> for CacheEntry {
 /// Network entries for the network domain
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum NetworkEntry {
-    Plot(PlotID),
+    Plot(PlotID, u64),
     ValidatorKey(U160),
     ValidatorRep(U160),
     AdminKeyID,
@@ -77,7 +78,7 @@ impl AsBin for NetworkEntry {
     fn as_bin(&self) -> Bin {
         use self::NetworkEntry::*;
         match self {
-            &Plot(ref id) => prefix(b"PLT", id),
+            &Plot(ref id, tick) => prefix(&prefix(b"PLT", id), &(tick / DB::PLOT_EVENT_BUCKET_SIZE)),
             &ValidatorKey(ref k) => prefix(b"VKY", k),
             &ValidatorRep(ref k) => prefix(b"VRP", k),
             &AdminKeyID => Bin::from(b"ADMIN" as &[u8]),
