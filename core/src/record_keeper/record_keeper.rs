@@ -329,8 +329,9 @@ impl RecordKeeper {
         db.get_latest_blocks(count)
     }
     
-    /// Retrieve blocks which are after last_known and up to target. (Not including last_known or
-    /// target in the package).
+    /// This is designed to get blocks between a start and end hash. It will get blocks from
+    /// (last_known, target]. Do not include last-known because it is clearly already in the system,
+    /// but do include the target block since it has not yet been accepted into the database.
     pub fn get_blocks_between(&self, last_known: &U256, target: &U256, limit: usize) -> Result<BlockPackage, Error> {
         let db = self.db.read().unwrap();
         debug!("Packaging blocks between {} and {}", last_known, target);
