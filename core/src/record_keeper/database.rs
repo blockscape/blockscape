@@ -15,6 +15,8 @@ use super::key::*;
 
 /// The reward bestowed for backing the correct block
 pub const BLOCK_REWARD: i64 = 10;
+/// The number of ticks grouped together into a "bucket" within the network state.
+pub const PLOT_EVENT_BUCKET_SIZE: u64 = 1000;
 
 /// Represents the current head of the blockchain
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -467,10 +469,19 @@ impl Database {
         }
     }
 
-    /// Add a new event to a plot
+    /// Add a new event to a plot.
     pub fn add_plot_event(&mut self, plot_id: PlotID, tick: u64, event: &PlotEvent) -> Result<(), Error> {
-        let db_key: Key = NetworkEntry::Plot(plot_id).into();
-        let mut event_list = map_not_found(self.get(db_key.clone()), PlotEvents::new())?;
+        let db_key: Key = NetworkEntry::Plot(plot_id, tick).into();
+        let mut event_list = match self.get(db_key.clone()) {
+            Ok(list) => list,
+            Err(Error::NotFound(..)) => {
+                // we need to add empty lists too all prior buckets to make them contiguous
+                self.init_event_buckets(plot_id, tick)?;
+                PlotEvents::new()
+            },
+            Err(e) => return Err(e)
+        };
+
         events::add_event(&mut event_list, tick, event.clone());
         self.put(db_key, &event_list, None)
     }
@@ -479,11 +490,20 @@ impl Database {
     /// seek to reconstruct old history so `after_tick` simply allows additional filtering, e.g. if
     /// you set `after_tick` to 0, you would not get all events unless the oldest events have not
     /// yet been removed from the cache.
-    /// TODO: Store events in tick chunks to prevent the size from becoming too large.
     pub fn get_plot_events(&self, plot_id: PlotID, after_tick: u64) -> Result<PlotEvents, Error> {
-        let db_key = NetworkEntry::Plot(plot_id).into();
-        map_not_found(self.get::<PlotEvents>(db_key), PlotEvents::new())
-            .map(|mut e| e.split_off(&after_tick))
+        let mut tick = after_tick;
+        let mut event_list = PlotEvents::new();
+        loop {
+            let key: Key = NetworkEntry::Plot(plot_id, tick).into();
+            
+            match self.get::<PlotEvents>(key.clone()) {
+                Ok(mut l) => event_list.append(&mut l),
+                Err(Error::NotFound(..)) => break,
+                Err(e) => return Err(e)
+            }
+            
+            tick += PLOT_EVENT_BUCKET_SIZE;
+        } Ok(event_list.split_off(&after_tick))
     }
 
     /// Put together a mutation object from all of the individual transactions
@@ -518,7 +538,7 @@ impl Database {
 
     /// Remove an event from a plot. Should only be used when undoing a mutation.
     fn remove_event(&mut self, id: PlotID, tick: u64, event: &PlotEvent) -> Result<(), Error> {
-        let db_key: Key = NetworkEntry::Plot(id).into();
+        let db_key: Key = NetworkEntry::Plot(id, tick).into();
         match self.get::<PlotEvents>(db_key.clone()) {
             Ok(mut event_list) => {
                 if !events::remove_event(&mut event_list, tick, event) {
@@ -722,6 +742,25 @@ impl Database {
     /// Add a contra for a given block
     fn add_contra(&mut self, hash: U256, contra: &Mutation) -> Result<(), Error> {
         self.put(CacheEntry::ContraMut(hash).into(), contra, None)
+    }
+
+    /// Create empty buckets for all ticks before a given point. It will stop when it reaches an
+    /// existing bucket or when it has reached the last bucket (at 0).
+    fn init_event_buckets(&mut self, plot_id: PlotID, before_tick: u64) -> Result<(), Error> {
+        if before_tick < PLOT_EVENT_BUCKET_SIZE { return Ok(()); }
+        let mut tick = before_tick - PLOT_EVENT_BUCKET_SIZE; // only want prior buckets.
+        loop {
+            let key: Key = NetworkEntry::Plot(plot_id, tick).into();
+            
+            match self.get::<PlotEvents>(key.clone()) {
+                Ok(..) => break,
+                Err(Error::NotFound(..)) => self.put(key, &PlotEvents::new(), None)?,
+                Err(e) => return Err(e)
+            }
+            
+            if tick < PLOT_EVENT_BUCKET_SIZE { break; }
+            tick -= PLOT_EVENT_BUCKET_SIZE;
+        } Ok(())
     }
 
     /// Get the distance of the intersection for the LCA on both paths. Returns
