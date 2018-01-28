@@ -431,6 +431,7 @@ impl Session {
 
                 Message::NewBlock(ref block) => {
                     let d = block.clone();
+                    let prev = block.prev;
                     let incoming_hash = block.calculate_hash();
                     let rk = Arc::clone(&self.context.rk);
                     let lcontext = Rc::clone(&self.context);
@@ -446,7 +447,7 @@ impl Session {
                                         // set a new work target
                                         if let Err(e) = lcontext.job_targets.unbounded_send(
                                             // TODO: Move out reference to record keep,r which could stall network thread!
-                                            (NetworkJob::new(network_id, hash, lcontext.rk.get_current_block_hash(), None), Some(incoming_hash))
+                                            (NetworkJob::new(network_id, incoming_hash, lcontext.rk.get_current_block_hash(), None), Some(prev))
                                         ) {
                                             // should never happen
                                             warn!("Could not buffer new network job: {}", e);
