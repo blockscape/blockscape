@@ -443,7 +443,7 @@ impl Session {
                         match err {
                             Error::NotFound(Key::Blockchain(missing_obj)) => {
                                 match missing_obj {
-                                    BlockchainEntry::BlockHeader(hash) => {
+                                    BlockchainEntry::BlockHeader(_hash) => {
                                         // set a new work target
                                         if let Err(e) = lcontext.job_targets.unbounded_send(
                                             // TODO: Move out reference to record keep,r which could stall network thread!
