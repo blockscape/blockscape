@@ -463,7 +463,7 @@ impl Client {
                             found = true;
                             break;
                         }
-                        else if j.get_target() == oje.get_target() && Rc::ptr_eq(&j, &oje) {
+                        else if Rc::ptr_eq(&j, &oje) {
                             // previous job resubmitted due to failure/continued processing
                             jobs.swap_remove(x);
                             break;

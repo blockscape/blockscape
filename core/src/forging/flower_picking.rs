@@ -10,7 +10,6 @@ use bincode;
 use forging::{BlockForger, Error};
 use record_keeper::RecordKeeper;
 use primitives::block::Block;
-use time::Time;
 
 pub struct FlowerPicking {
     /// A reference to RecordKeeper so block generation/preparation can happen
@@ -57,6 +56,13 @@ impl FlowerPicking {
                     .map_err(|e| Error(format!("Could not get a block from db: {}", e).into()))).header.blob).unwrap())
         }
         else {
+
+            let mut n = self.recalculate_blocks;
+            if height == self.recalculate_blocks {
+                // we dont want to walk all the way back to genesis
+                n -= 1;
+            }
+
             // the best way to find this block is to walk back recalculate_blocks
             let mut hash_cur = block.header.prev;
             
@@ -66,14 +72,16 @@ impl FlowerPicking {
             }
 
             // how long *should* it have taken to get to this point?
-            let expected = self.rate_target * self.recalculate_blocks;
+            let expected: f64 = self.rate_target as f64 * n as f64;
 
             let b = try!(self.rk.get_block(&block.header.prev)
                     .map_err(|e| Error(format!("Could not get a block from db: {}", e).into())));
 
-            let actual = b.header.timestamp.diff(&Time::current()).millis() as u64;
+            let actual = b.header.timestamp.diff(&block.timestamp).millis() as f64;
 
-            Ok((expected / actual) * bincode::deserialize::<u64>(&b.header.blob).unwrap())
+            let last_diff = bincode::deserialize::<u64>(&b.header.blob).unwrap() as f64;
+
+            Ok(((expected / actual) * last_diff) as u64)
         }
     }
 }
