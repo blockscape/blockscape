@@ -25,7 +25,6 @@ build:
       - target/
   script:
     # Build all deps so we do not count those errors against
-    - cargo clean
     - cargo build --release 2>&1 | tee log.txt
     #- "! grep 'warning' log.txt"
   artifacts:
