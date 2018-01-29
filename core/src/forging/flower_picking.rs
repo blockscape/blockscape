@@ -57,16 +57,21 @@ impl FlowerPicking {
         }
         else {
 
+            debug!("Recalculating difficulty!");
+
             let mut n = self.recalculate_blocks;
             if height == self.recalculate_blocks {
                 // we dont want to walk all the way back to genesis
-                n -= 1;
+                n -= 2;
             }
 
             // the best way to find this block is to walk back recalculate_blocks
             let mut hash_cur = block.header.prev;
+
+            let pb = try!(self.rk.get_block(&hash_cur)
+                    .map_err(|e| Error(format!("Could not get a block from db: {}", e).into())));
             
-            for _ in 1..self.recalculate_blocks {
+            for _ in 1..n {
                 hash_cur = try!(self.rk.get_block(&hash_cur)
                     .map_err(|e| Error(format!("Could not get a block from db: {}", e).into()))).header.prev;
             }
@@ -74,12 +79,14 @@ impl FlowerPicking {
             // how long *should* it have taken to get to this point?
             let expected: f64 = self.rate_target as f64 * n as f64;
 
-            let b = try!(self.rk.get_block(&block.header.prev)
+            let b = try!(self.rk.get_block(&hash_cur)
                     .map_err(|e| Error(format!("Could not get a block from db: {}", e).into())));
 
-            let actual = b.header.timestamp.diff(&block.timestamp).millis() as f64;
+            let actual = b.header.timestamp.diff(&pb.header.timestamp).millis() as f64;
 
-            let last_diff = bincode::deserialize::<u64>(&b.header.blob).unwrap() as f64;
+            let last_diff = bincode::deserialize::<u64>(&pb.header.blob).unwrap() as f64;
+
+            debug!("Expected: {}, Actual: {}, Last Diff: {}", expected / 1000.0, actual / 1000.0, last_diff);
 
             Ok(((expected / actual) * last_diff) as u64)
         }
