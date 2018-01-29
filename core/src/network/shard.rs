@@ -276,7 +276,9 @@ impl ShardInfo {
             Message::NewBlock(ref b) => debug!("Import block {}", b.calculate_hash()),
             Message::NewTransaction(ref t) => debug!("Import txn {}", t.calculate_hash()),
             Message::Introduce { ref node, .. } => debug!("{} ==> Introduce {}", addr, node.get_hash_id()),
-            Message::NodeList { ref nodes, .. } => debug!("Received NodeList of {} nodes", nodes.len()),
+            Message::NodeList { .. } => {},
+            Message::FindNodes {..} => {},
+            Message::ChainData(ref data) => debug!("Received {} bytes of chain data", data.len()),
             _ => debug!("{} ==> {:?}", addr, &p)
         };
 

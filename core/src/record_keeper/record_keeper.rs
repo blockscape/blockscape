@@ -256,6 +256,7 @@ impl RecordKeeper {
     /// Import a package of blocks and transactions. Returns the hash of the last block imported.
     pub fn import_pkg(&self, pkg: BlockPackage) -> Result<U256, Error> {
         let (blocks, txns) = pkg.unpack();
+        debug!("Importing {} blocks and {} txns to database.", blocks.len(), txns.len());
 
         if blocks.is_empty() {
             // it is invalid to import an empty block package
@@ -328,25 +329,13 @@ impl RecordKeeper {
         db.get_latest_blocks(count)
     }
     
-    /// Get blocks before the `target` hash until it collides with the main chain. If the `start`
-    /// hash lies between the target and the main chain, it will return the blocks between them,
-    /// otherwise it will return the blocks from the main chain until target in that order and it
-    /// will not include the start or target blocks.
-    ///
-    /// If the limit is reached, it will prioritize blocks of a lower height, but may have a gap
-    /// between the main chain (or start) and what it includes.
-    pub fn get_blocks_before(&self, last_known: &U256, target: &U256, limit: usize) -> Result<BlockPackage, Error> {
+    /// This is designed to get blocks between a start and end hash. It will get blocks from
+    /// (last_known, target]. Do not include last-known because it is clearly already in the system,
+    /// but do include the target block since it has not yet been accepted into the database.
+    pub fn get_blocks_between(&self, last_known: &U256, target: &U256, limit: usize) -> Result<BlockPackage, Error> {
         let db = self.db.read().unwrap();
-        BlockPackage::blocks_before(&*db, last_known, target, limit)
-    }
-
-    /// Create a `BlockPackage` of all the blocks of the current chain which are a descendent of the
-    /// latest common ancestor between the chain of the start block and the current chain. It will
-    /// not include the start block. The `limit` is the maximum number of bytes the final package
-    /// may contain.
-    pub fn get_blocks_after(&self, start: &U256, limit: usize) -> Result<BlockPackage, Error> {
-        let db = self.db.read().unwrap();
-        BlockPackage::blocks_after(&*db, start, limit)
+        debug!("Packaging blocks between {} and {}", last_known, target);
+        BlockPackage::blocks_between(&*db, last_known, target, limit)
     }
 
     /// Returns a map of events for each tick that happened after a given tick. Note: it will not

@@ -7,7 +7,7 @@ use openssl::pkey::PKey;
 
 use bin::*;
 
-use primitives::{Block, Txn, U256, U256_ZERO};
+use primitives::{Block, Txn, U256};
 use super::node::Node;
 use time::Time;
 
@@ -432,6 +432,7 @@ impl Session {
                 Message::NewBlock(ref block) => {
                     let d = block.clone();
                     let prev = block.prev;
+                    let incoming_hash = block.calculate_hash();
                     let rk = Arc::clone(&self.context.rk);
                     let lcontext = Rc::clone(&self.context);
                     let network_id = self.network_id;
@@ -442,10 +443,11 @@ impl Session {
                         match err {
                             Error::NotFound(Key::Blockchain(missing_obj)) => {
                                 match missing_obj {
-                                    BlockchainEntry::BlockHeader(hash) => {
+                                    BlockchainEntry::BlockHeader(_hash) => {
                                         // set a new work target
                                         if let Err(e) = lcontext.job_targets.unbounded_send(
-                                            (NetworkJob::new(network_id, hash, lcontext.rk.get_current_block_hash(), None), Some(prev))
+                                            // TODO: Move out reference to record keep,r which could stall network thread!
+                                            (NetworkJob::new(network_id, incoming_hash, lcontext.rk.get_current_block_hash(), None), Some(prev))
                                         ) {
                                             // should never happen
                                             warn!("Could not buffer new network job: {}", e);
@@ -482,7 +484,7 @@ impl Session {
                     let r_port = self.remote_port.get();
                     let seq = packet.seq;
                     self.context.event_loop.spawn(self.context.rk.get_priority_worker().spawn_fn(move || {
-                        let bp = rk.get_blocks_before(&lbh, &tbh, MAX_PACKET_SIZE)?;
+                        let bp = rk.get_blocks_between(&lbh, &tbh, MAX_PACKET_SIZE)?;
 
                         Ok(bp.zip()?)
                     })
@@ -594,11 +596,11 @@ impl Session {
                                 if let Some((ref job, ref _time)) = j {
 
                                     // here we need to check if previous imported data was for some reason invalidated
-                                    if pkg.starts_at() != job.predicted_cur.get() {
+                                    /*if pkg.starts_at() != job.predicted_cur.get() {
                                         // for whatever, the cur block before our submit no longer matches, so cancel import
                                         debug!("Cancel import of block package starting at {}", pkg.starts_at());
                                         return future::err(());
-                                    }
+                                    }*/
 
                                     // update the job size
                                     let mut c = job.concurrent.get();
@@ -627,6 +629,9 @@ impl Session {
                                                 let mut c = job.concurrent.get();
                                                 c -= size;
                                                 job.concurrent.set(c);
+                                                // reset the job try counter
+                                                job.try.set(0);
+
                                                 if imported_to != job.get_target() && c < MAX_JOB_SIZE {
                                                     // resubmit the job because we are ready to get more data
                                                     if let Err(e) = lcontext2.job_targets.unbounded_send((Rc::clone(job), None)) {
@@ -710,14 +715,56 @@ impl Session {
                     match *err {
                         DataRequestError::HashesNotFound(ref hashes) => {
                             if let Some((job, time)) = self.current_job.replace(None) {
+                                let j2 = Rc::clone(&job);
+                                let mut prob = false;
                                 for hash in hashes {
                                     if *hash == job.get_target() {
-                                        // current 
+                                        // current job could not be found on this node, resubmit the job and increment the try counter
+                                        job.try.set(job.try.get() + 1);
+                                        if let Err(e) = self.context.job_targets.unbounded_send((job, None)) {
+                                            warn!("Network job handler closed upon job resubmit: {}", e);
+                                        }
+
+                                        prob = true;
+                                        break;
+                                    }
+                                    else if *hash == job.predicted_cur.get() {
+                                        // someone probobly sent us some bogus data, or we have mined ahead. Figure out which by seeing if the hash exists in the database
+                                        let rk = Arc::clone(&self.context.rk);
+                                        let phash = *hash;
+                                        let j = Rc::clone(&job);
+                                        let ctx2 = Rc::clone(&self.context);
+                                        self.context.event_loop.spawn(self.context.rk.get_worker().spawn_fn(move || {
+                                            if let Ok(b) = rk.get_block(&phash) {
+                                                Ok::<U256, ()>(b.prev)
+                                            }
+                                            else {
+                                                Ok::<U256, ()>(rk.get_current_block_hash())
+                                            }
+                                        }).then(move |new_cur| {
+                                            if let Ok(c) = new_cur {
+                                                j.predicted_cur.set(c);
+                                                // resubmit
+                                                if let Err(e) = ctx2.job_targets.unbounded_send((j, None)) {
+                                                    warn!("Network job handler closed upon job resubmit: {}", e);
+                                                }
+                                            }
+                                            else {
+                                                warn!("Could not get current block hash for nonexistant block returned from remote!");
+                                            }
+
+                                            Ok::<(), ()>(())
+                                        }));
+
+                                        prob = true;
+                                        break;
                                     }
                                 }
 
                                 // no problems found, put hte job back
-                                self.current_job.replace(Some((job, time)));
+                                if !prob {
+                                    self.current_job.replace(Some((j2, time)));
+                                }
                             }
                         }
                         _ => {
@@ -814,6 +861,13 @@ impl Session {
             if time.diff(&Time::current_local()) < Time::from_milliseconds(JOB_TIMEOUT) {
                 self.current_job.set(Some((job, time)));
             }
+            else {
+                // return the job
+                job.try.set(job.try.get() + 1);
+                if let Err(e) = self.context.job_targets.unbounded_send((job, None)) {
+                    warn!("Network job handler closed upon job resubmit: {}", e);
+                }
+            }
         }
     }
 
@@ -837,22 +891,13 @@ impl Session {
 
         // send a packet for the job
         // construct a dummy packet first so we can adjust it outside
-        let mut packet = self.build_packet(
-            Message::SyncBlocks{last_block_hash: U256_ZERO, target_block_hash: U256_ZERO},
+        let packet = self.build_packet(
+            Message::SyncBlocks{last_block_hash: job.predicted_cur.get(), target_block_hash: job.get_target()},
             None,
             false
         );
-        let ctx2 = Rc::clone(&self.context);
-        let j = Rc::clone(job);
-        let rk = Arc::clone(&self.context.rk);
-        self.context.event_loop.spawn(self.context.rk.get_priority_worker().spawn_fn(move || {
-            Ok::<_, ()>(rk.get_current_block_hash())
-        }).then(move |cur| {
-            packet.1.payload.msg = Message::SyncBlocks{last_block_hash: cur.unwrap(), target_block_hash: j.get_target()};
-            ctx2.send_packets(vec![packet]);
 
-            Ok(())
-        }));
+        self.context.send_packets(vec![packet]);
 
         true
     }

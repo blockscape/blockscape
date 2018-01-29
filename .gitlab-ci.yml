@@ -1,6 +1,6 @@
 # use the official rust image, based on debian
 # see https://hub.docker.com/_/rust
-image: rust:1.21-stretch
+image: dcr.buyme360.com/plu-capstone/rust:latest
 
 variables:
   IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG

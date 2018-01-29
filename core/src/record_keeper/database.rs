@@ -15,6 +15,8 @@ use super::key::*;
 
 /// The reward bestowed for backing the correct block
 pub const BLOCK_REWARD: i64 = 10;
+/// The number of ticks grouped together into a "bucket" within the network state.
+pub const PLOT_EVENT_BUCKET_SIZE: u64 = 1000;
 
 /// Represents the current head of the blockchain
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -256,25 +258,24 @@ impl Database {
         Ok(headers)
     }
 
-    /// Get blocks before the `target` hash until it collides with the main chain. If the `start`
-    /// hash lies between the target and the main chain, it will return the blocks between them,
-    /// otherwise it will return the blocks from the main chain until target in that order and it
-    /// will not include the start or target blocks.
+    /// Get blocks before the `target` hash until it collides with the main chain. If the
+    /// `last_known` hash lies between the target and the main chain, it will return the blocks
+    /// between them, otherwise it will return the blocks from the main chain until target in that
+    /// order and it will not include the last_known block.
     ///
     /// If the limit is reached, it will prioritize blocks of a lower height, but may have a gap
     /// between the main chain (or start) and what it includes.
-    pub fn get_blocks_before(&self, target: &U256, start: &U256, limit: usize)  -> Result<Vec<BlockHeader>, Error> {
+    fn get_blocks_before(&self, target: &U256, last_known: &U256, limit: usize)  -> Result<Vec<BlockHeader>, Error> {
         let mut iter = DownIter(&self, *target)
-            .skip(1)
             .take(limit)
-            .take_while(|res| res.is_ok())
-            .map(|res| res.unwrap());
+            .take_while(Result::is_ok)
+            .map(Result::unwrap);
         
         // expand this as a loop to allow better error handling.
-        let mut blocks: Vec<BlockHeader> = Vec::new();
+        let mut blocks = Vec::new();
         while let Some((hash, header)) = iter.next() {
             let in_cur_chain = self.is_part_of_current_chain(hash)?;
-            if (hash == *start) || (in_cur_chain) { break; }
+            if (hash == *last_known) || (in_cur_chain) { break; }
             blocks.push(header)
         }
         
@@ -282,21 +283,54 @@ impl Database {
         Ok(blocks)
     }
 
-    /// Retrieves all the blocks of the current chain which are a descendent of the latest common
-    /// ancestor between the chain of the start block and the current chain. This result will be
-    /// sorted in ascending height order. It will not include the start hash. Also, `limit` is the
-    /// maximum number of blocks it should scan through when ascending the blockchain.
-    pub fn get_blocks_after(&self, start: &U256, limit: usize) -> Result<Vec<BlockHeader>, Error> {
+    /// Retrieves all blocks of the current chain which are a descendent of the latest common
+    /// ancestor of the last_known block until it reaches target or the end of the known chain. It
+    /// will not include the last_known block. Also, `limit` is the maximum number of blocks it
+    /// should scan through when ascending the blockchain.
+    fn get_blocks_after(&self, last_known: &U256, target: &U256, limit: usize) -> Result<Vec<BlockHeader>, Error> {
         // For efficiency, use a quick check to find if a given block is part of the current chain or not.
-        let ancestor = self.latest_common_ancestor_with_current_chain(start)?;
-        let ancestor_height = self.get_block_height(ancestor)?;
-        Ok(UpIter(&self, ancestor_height)
+        let ancestor_height = {
+            let ancestor = self.latest_common_ancestor_with_current_chain(last_known)?;
+            self.get_block_height(ancestor)?
+        };
+
+        let mut iter = UpIter(&self, ancestor_height)
             .skip(1) // we know they have must have the LCA
             .take(limit) // hard-coded maximum
-            .take_while(|res| res.is_ok()) // stop at first error, or when we reach the destination
-            .map(|res| res.unwrap().1)  // exract block header
-            .collect::<Vec<BlockHeader>>()
-        )
+            .take_while(Result::is_ok) // stop at first error
+            .map(Result::unwrap);  // extract block header
+        
+        let mut blocks = Vec::new();
+        while let Some((hash, header)) = iter.next() {
+            blocks.push(header);
+            if hash == *target { break; }  // stop after adding the target block
+        }
+
+        Ok(blocks)
+    }
+
+    /// This is designed to get blocks between a start and end hash. It will get blocks from
+    /// (last_known, target]. Do not include last-known because it is clearly already in the system,
+    /// but do include the target block since it has not yet been accepted into the database.
+    pub fn get_blocks_between(&self, last_known: &U256, target: &U256, limit: usize) -> Result<Vec<BlockHeader>, Error> {
+        if self.is_part_of_current_chain(*target)? {
+            println!("Target ({}) is part of the current chain.", last_known);
+            let chain = self.get_blocks_after(last_known, target, limit)?;
+            println!("Found {} main chain blocks", chain.len());
+            Ok(chain)
+        } else {
+            println!("Target ({}) is NOT part of the current chain.", last_known);
+            let mut uncle_blocks = self.get_blocks_before(target, last_known, limit)?;
+            println!("Found {} uncle blocks", uncle_blocks.len());
+
+            let mc_target = uncle_blocks.get(0).map(BlockHeader::calculate_hash).unwrap_or(*target);
+            println!("Main chain target: {}", mc_target);
+            let mc_limit = limit - uncle_blocks.len();
+            let mut main_chain = self.get_blocks_after(last_known, &mc_target, mc_limit)?;
+            println!("Found {} main chain blocks", main_chain.len());
+            main_chain.append(&mut uncle_blocks);
+            Ok(main_chain)
+        }
     }
 
     /// Will find the current head of the blockchain. This uses the last known head to find the
@@ -380,6 +414,7 @@ impl Database {
     /// latest blocks were undone and are no longer part of the network state.
     pub fn walk(&mut self, b_block: &U256) -> Result<u64, Error> {
         let a_block = self.head.block;
+        if a_block == *b_block { return Ok(0); }
         debug!("Walking the network state from {} to {}.", a_block, b_block);
         assert!(!b_block.is_zero(), "Cannot walk to nothing");
 
@@ -434,10 +469,19 @@ impl Database {
         }
     }
 
-    /// Add a new event to a plot
+    /// Add a new event to a plot.
     pub fn add_plot_event(&mut self, plot_id: PlotID, tick: u64, event: &PlotEvent) -> Result<(), Error> {
-        let db_key: Key = NetworkEntry::Plot(plot_id).into();
-        let mut event_list = map_not_found(self.get(db_key.clone()), PlotEvents::new())?;
+        let db_key: Key = NetworkEntry::Plot(plot_id, tick).into();
+        let mut event_list = match self.get(db_key.clone()) {
+            Ok(list) => list,
+            Err(Error::NotFound(..)) => {
+                // we need to add empty lists too all prior buckets to make them contiguous
+                self.init_event_buckets(plot_id, tick)?;
+                PlotEvents::new()
+            },
+            Err(e) => return Err(e)
+        };
+
         events::add_event(&mut event_list, tick, event.clone());
         self.put(db_key, &event_list, None)
     }
@@ -446,11 +490,20 @@ impl Database {
     /// seek to reconstruct old history so `after_tick` simply allows additional filtering, e.g. if
     /// you set `after_tick` to 0, you would not get all events unless the oldest events have not
     /// yet been removed from the cache.
-    /// TODO: Store events in tick chunks to prevent the size from becoming too large.
     pub fn get_plot_events(&self, plot_id: PlotID, after_tick: u64) -> Result<PlotEvents, Error> {
-        let db_key = NetworkEntry::Plot(plot_id).into();
-        map_not_found(self.get::<PlotEvents>(db_key), PlotEvents::new())
-            .map(|mut e| e.split_off(&after_tick))
+        let mut tick = after_tick;
+        let mut event_list = PlotEvents::new();
+        loop {
+            let key: Key = NetworkEntry::Plot(plot_id, tick).into();
+            
+            match self.get::<PlotEvents>(key.clone()) {
+                Ok(mut l) => event_list.append(&mut l),
+                Err(Error::NotFound(..)) => break,
+                Err(e) => return Err(e)
+            }
+            
+            tick += PLOT_EVENT_BUCKET_SIZE;
+        } Ok(event_list.split_off(&after_tick))
     }
 
     /// Put together a mutation object from all of the individual transactions
@@ -485,7 +538,7 @@ impl Database {
 
     /// Remove an event from a plot. Should only be used when undoing a mutation.
     fn remove_event(&mut self, id: PlotID, tick: u64, event: &PlotEvent) -> Result<(), Error> {
-        let db_key: Key = NetworkEntry::Plot(id).into();
+        let db_key: Key = NetworkEntry::Plot(id, tick).into();
         match self.get::<PlotEvents>(db_key.clone()) {
             Ok(mut event_list) => {
                 if !events::remove_event(&mut event_list, tick, event) {
@@ -691,6 +744,25 @@ impl Database {
         self.put(CacheEntry::ContraMut(hash).into(), contra, None)
     }
 
+    /// Create empty buckets for all ticks before a given point. It will stop when it reaches an
+    /// existing bucket or when it has reached the last bucket (at 0).
+    fn init_event_buckets(&mut self, plot_id: PlotID, before_tick: u64) -> Result<(), Error> {
+        if before_tick < PLOT_EVENT_BUCKET_SIZE { return Ok(()); }
+        let mut tick = before_tick - PLOT_EVENT_BUCKET_SIZE; // only want prior buckets.
+        loop {
+            let key: Key = NetworkEntry::Plot(plot_id, tick).into();
+            
+            match self.get::<PlotEvents>(key.clone()) {
+                Ok(..) => break,
+                Err(Error::NotFound(..)) => self.put(key, &PlotEvents::new(), None)?,
+                Err(e) => return Err(e)
+            }
+            
+            if tick < PLOT_EVENT_BUCKET_SIZE { break; }
+            tick -= PLOT_EVENT_BUCKET_SIZE;
+        } Ok(())
+    }
+
     /// Get the distance of the intersection for the LCA on both paths. Returns
     /// (distance on path a, distance on path b)
     /// Note, this assumes there is a single element which is a member of both `a` and `b`.
@@ -716,7 +788,7 @@ impl<'a> Iterator for UpIter<'a> {
     type Item = Result<(U256, BlockHeader), Error>;
     
     fn next(&mut self) -> Option<Self::Item> {
-        if self.1 <= self.0.head.height {
+        if self.1 <= self.0.get_current_block_height() {
             let next = self.0.get_current_block_of_height(self.1);
             if next.is_err() { return Some(Err( next.unwrap_err() )); }
 
