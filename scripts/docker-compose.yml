@@ -7,15 +7,15 @@ services:
         networks:
             - net
 
-        command: /blockscape -h blockscape_1 --seed-node blockscape_2:35653 -F
+        command: /blockscape -h blockscape_1 --seed-node blockscape_2:35653 --rpcbind 0.0.0.0 -F
     
-    # blockscape_2:
-    #     image: dcr.buyme360.com/plu-capstone/blockscape:latest
+    blockscape_2:
+        image: dcr.buyme360.com/plu-capstone/blockscape:latest
 
-    #     networks:
-    #         - net
+        networks:
+            - net
 
-    #     command: /blockscape -h blockscape_2 -F # --seed-node blockscape_1:35653
+        command: /blockscape -h blockscape_2 -F # --seed-node blockscape_1:35653
 
     blockscape_3:
         image: dcr.buyme360.com/plu-capstone/blockscape:latest
@@ -24,6 +24,17 @@ services:
             - net
 
         command: /bin/bash -c 'sleep 20 && /blockscape -h blockscape_3 --seed-node blockscape_1:35653 -F'
+
+    blockscape_explorer:
+        image: dcr.buyme360.com/plu-capstone/blockscape-explorer:master
+
+        networks:
+            - net
+        
+        command: /bin/bash -c 'echo "{\"rpc\":{\"host\":\"blockscape_1\",\"port\":8356}}" > config.json && ts-node lib/server.ts'
+
+        ports:
+            - 8000:3000
 
 networks:
     net:

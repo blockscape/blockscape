@@ -61,15 +61,20 @@ impl JsonRpcRequest {
 
         let to = Timeout::new(Duration::from_secs(10), &core.handle()).unwrap();
 
+        debug!("Sending request");
+
         let r = client.request(req)
             .and_then(|res| serde_json::from_slice(&res.body().concat2().wait().unwrap())
                 .map_err(|e| hyper::Error::Io(io::Error::new(io::ErrorKind::InvalidData, e))));
 
-        let work = r.select2(to).then(|res| match res {
-            Ok(Either::A(a)) => Ok(a.0),
-            Ok(Either::B(_)) => Err(hyper::Error::Timeout),
-            Err(Either::A(a)) => Err(a.0),
-            Err(Either::B(b)) => Err(hyper::Error::from(b.0))
+        let work = r.select2(to).then(|res| {
+            debug!("Completed!");
+            match res {
+                Ok(Either::A(a)) => Ok(a.0),
+                Ok(Either::B(_)) => Err(hyper::Error::Timeout),
+                Err(Either::A(a)) => Err(a.0),
+                Err(Either::B(b)) => Err(hyper::Error::from(b.0))
+            }
         });
 
         /*client.request(req).select2(to).wait()
