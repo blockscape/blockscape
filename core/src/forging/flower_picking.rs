@@ -36,7 +36,12 @@ impl FlowerPicking {
     }
 
     fn gen_rand_mod(&self, diff: u64) -> Duration {
-        Duration::from_millis(random::<u64>() % (diff * self.rate_target * 2))
+        if diff == 0 {
+            Duration::from_secs(1)
+        }
+        else {
+            Duration::from_millis(random::<u64>() % (diff * self.rate_target * 2))
+        }
     }
 
     fn calculate_expected_difficulty(&self, block: &Block) -> Result<u64, Error> {
