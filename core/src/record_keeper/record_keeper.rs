@@ -97,21 +97,20 @@ impl RecordKeeper {
         let cbh = db.get_current_block_header()?;
         let cbh_h = cbh.calculate_hash();
 
-        if pending_txns.is_empty() {
-            return Ok(Block{
-                header: BlockHeader{
-                    version: 1,
-                    timestamp: Time::current(),
-                    shard: if cbh.shard.is_zero() { cbh_h } else { cbh.shard },
-                    prev: cbh_h,
-                    merkle_root: Block::calculate_merkle_root(&BTreeSet::new()),
-                    blob: Bin::new(),
-                    creator: U160_ZERO,
-                    signature: Bin::new()
-                },
-                txns: BTreeSet::new()
-            })
-        }
+
+        let mut last_block = Block {
+            header: BlockHeader{
+                version: 1,
+                timestamp: Time::current(),
+                shard: if cbh.shard.is_zero() { cbh_h } else { cbh.shard },
+                prev: cbh_h,
+                merkle_root: Block::calculate_merkle_root(&BTreeSet::new()),
+                blob: Bin::new(),
+                creator: U160_ZERO,
+                signature: Bin::new()
+            },
+            txns: BTreeSet::new()
+        };
 
         // sort txns by their timestamp
         let txns_by_time: BTreeMap<Time, &U256> = 
@@ -120,39 +119,34 @@ impl RecordKeeper {
                 .collect();
 
         let mut accepted_txns: BTreeSet<U256> = BTreeSet::new();
-        let mut last_block = None;
 
         for (_time, txn) in txns_by_time {
-            last_block = Some(Block{
+            let mut tmp_txns = accepted_txns.clone();
+            tmp_txns.insert(*txn);
+
+            let block = Block{
                 header: BlockHeader{
                     version: 1,
                     timestamp: Time::current(),
                     shard: if cbh.shard.is_zero() { cbh_h } else { cbh.shard },
                     prev: cbh_h,
-                    merkle_root: Block::calculate_merkle_root(&accepted_txns),
+                    merkle_root: Block::calculate_merkle_root(&tmp_txns),
                     blob: Bin::new(),
                     creator: U160_ZERO,
                     signature: Bin::new()
                 },
-                txns: {
-                    let mut t = accepted_txns.clone();
-                    t.insert(*txn); t
-                }
-            });
+                txns: tmp_txns
+            };
 
-            let res = self.is_valid_block(last_block.as_ref().unwrap());
-            use self::Error::*;
-            if let Ok(()) = res {
-                accepted_txns.insert(*txn);
-            } else {
-                match res.err().unwrap() {
-                    Logic(..) => {}, // do nothing
-                    e @ _ => return Err(e) // pass along the error
-                }
+            let res = self.is_valid_block(&block);
+            match res {
+                Ok(()) => { accepted_txns.insert(*txn); last_block = block; },
+                Err(Error::Logic(..)) => {},
+                Err(e) => return Err(e)
             }
         }
 
-        Ok(last_block.unwrap())
+        Ok(last_block)
     }
 
     /// Add a new block and its associated transactions to the chain state after verifying
