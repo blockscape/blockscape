@@ -21,4 +21,4 @@ pub use self::key::*;
 
 use primitives;
 /// A unique plot identification marker based on it's (x,y) coordinate.
-pub type PlotID = primitives::Cord;
+pub type PlotID = primitives::Coord;

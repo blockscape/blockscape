@@ -154,7 +154,7 @@ fn main() {
     //     .unwrap()
     //     .for_each(move |_| {
     //         let mut mutation = Mutation::new();
-    //         mutation.changes.push(Change::Event{id: PlotID{x:0, y:0}, tick: Time::current().millis() as u64, event: PlotEvent { from: PlotID{x:0, y:0}, to: PlotID{x:0, y:0}, event: Bin::new()}});
+    //         mutation.changes.push(Change::Event{id: PlotID(0, 0), tick: Time::current().millis() as u64, event: PlotEvent { from: PlotID(0, 0), to: PlotID(0, 0), event: Bin::new()}});
     //         context.rk.add_pending_txn(&Txn::new(hash_pub_key(&context.forge_key.public_key_to_der().unwrap()), mutation).sign(&context.forge_key)).unwrap();
     //         Ok(())
     //     })

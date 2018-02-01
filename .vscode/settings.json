@@ -4,6 +4,7 @@
         "blockchain's",
         "cachestate",
         "chainstate",
+        "coord",
         "deserialization",
         "deserialize",
         "deserialized",
