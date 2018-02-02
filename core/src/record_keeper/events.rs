@@ -13,9 +13,9 @@ use super::PlotID;
 pub enum RecordEvent {
     /// A new block has been added, walk forward (or back, if back, then a state invalidated event
     /// will also be pushed out if relevant)
-    NewBlock { uncled: bool, block: Block },
+    NewBlock { uncled: bool, fresh: bool, block: Block },
     /// A new transaction that has come into the system and is now pending
-    NewTxn { txn: Txn },
+    NewTxn { fresh: bool, txn: Txn },
     /// The state needs to be transitioned backwards, probably onto a new branch
     StateInvalidated { new_height: u64, after_height: u64 },
 }
@@ -46,16 +46,16 @@ impl PlotEvent {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum JRecordEvent {
-    NewBlock { uncled: bool, block: JBlock },
-    NewTxn { txn: JTxn },
+    NewBlock { uncled: bool, fresh: bool, block: JBlock },
+    NewTxn { fresh: bool, txn: JTxn },
     StateInvalidated { new_height: u64, after_height: u64}
 }
 
 impl From<RecordEvent> for JRecordEvent {
     fn from(e: RecordEvent) -> JRecordEvent {
         match e {
-            RecordEvent::NewBlock{uncled, block} => JRecordEvent::NewBlock{uncled, block: block.into()},
-            RecordEvent::NewTxn{txn} => JRecordEvent::NewTxn{txn: txn.into()},
+            RecordEvent::NewBlock{uncled, fresh, block} => JRecordEvent::NewBlock{uncled, fresh, block: block.into()},
+            RecordEvent::NewTxn{fresh, txn} => JRecordEvent::NewTxn{fresh, txn: txn.into()},
             RecordEvent::StateInvalidated{new_height, after_height} => JRecordEvent::StateInvalidated{new_height, after_height}
         }
     }
@@ -64,8 +64,8 @@ impl From<RecordEvent> for JRecordEvent {
 impl Into<RecordEvent> for JRecordEvent {
     fn into(self) -> RecordEvent {
         match self {
-            JRecordEvent::NewBlock{uncled, block} => RecordEvent::NewBlock{uncled, block: block.into()},
-            JRecordEvent::NewTxn{txn} => RecordEvent::NewTxn{txn: txn.into()},
+            JRecordEvent::NewBlock{uncled, fresh, block} => RecordEvent::NewBlock{uncled, fresh, block: block.into()},
+            JRecordEvent::NewTxn{fresh, txn} => RecordEvent::NewTxn{fresh, txn: txn.into()},
             JRecordEvent::StateInvalidated{new_height, after_height} => RecordEvent::StateInvalidated{new_height, after_height}
         }
     }

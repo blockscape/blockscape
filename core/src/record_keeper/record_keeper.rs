@@ -153,7 +153,7 @@ impl RecordKeeper {
     /// Add a new block and its associated transactions to the chain state after verifying
     /// it is valid. Also move the network state to be at the new end of the chain.
     /// Returns true if the block was added, false if it was already in the system.
-    pub fn add_block(&self, block: &Block) -> Result<bool, Error> {
+    pub fn add_block(&self, block: &Block, fresh: bool) -> Result<bool, Error> {
         self.is_valid_block(block)?;
 
         let mut pending_txns = self.pending_txns.write().unwrap();
@@ -202,7 +202,7 @@ impl RecordKeeper {
                     after_height: initial_height - invalidated
                 });
             }
-            record_listeners.notify(&RecordEvent::NewBlock{uncled, block: block.clone()});
+            record_listeners.notify(&RecordEvent::NewBlock{uncled, fresh, block: block.clone()});
 
             Ok(true)
         } else { // we already knew about this block, do nothing
@@ -213,7 +213,7 @@ impl RecordKeeper {
     /// Add a new transaction to the pool of pending transactions after validating it. Returns true
     /// if it was added successfully to pending transactions, and returns false if it is already in
     /// the list of pending transactions or accepted into the database..
-    pub fn add_pending_txn(&self, txn: &Txn) -> Result<bool, Error> {
+    pub fn add_pending_txn(&self, txn: &Txn, fresh: bool) -> Result<bool, Error> {
         let hash = txn.calculate_hash();
 
         let mut txns = self.pending_txns.write().unwrap();
@@ -236,7 +236,7 @@ impl RecordKeeper {
         txns.insert(hash, txn.clone());
 
         // notify listeners
-        self.record_listeners.lock().unwrap().notify(&RecordEvent::NewTxn{txn: txn.clone()});
+        self.record_listeners.lock().unwrap().notify(&RecordEvent::NewTxn{fresh, txn: txn.clone()});
         let mut game_listeners = self.game_listeners.lock().unwrap();
         for change in txn.mutation.changes.iter() {  match change {
             &Change::PlotEvent(ref e) => {
@@ -261,9 +261,9 @@ impl RecordKeeper {
         let last = blocks.last().unwrap().calculate_hash();
 
         for txn in txns {
-            self.add_pending_txn(&txn.1)?;
+            self.add_pending_txn(&txn.1, false)?;
         } for block in blocks {
-            self.add_block(&block)?;
+            self.add_block(&block, false)?;
         }
         
         Ok(last)

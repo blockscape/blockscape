@@ -41,12 +41,12 @@ impl BlockchainRPC {
 
     fn add_block(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
         let block = expect_one_arg::<JBlock>(params)?.into();
-        to_rpc_res(self.rk.add_block(&block))
+        to_rpc_res(self.rk.add_block(&block, true))
     }
 
     fn add_pending_txn(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
         let txn = expect_one_arg::<JTxn>(params)?.into();
-        to_rpc_res(self.rk.add_pending_txn(&txn))
+        to_rpc_res(self.rk.add_pending_txn(&txn, true))
     }
 
     fn get_validator_key(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
