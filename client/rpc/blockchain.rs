@@ -5,7 +5,6 @@ use rpc::types::*;
 use serde::Serialize;
 use std::result::Result;
 use std::sync::Arc;
-use std::collections::BTreeSet;
 
 use blockscape_core::bin::*;
 use blockscape_core::primitives::*;
@@ -18,10 +17,10 @@ pub struct BlockchainRPC {
 }
 
 #[derive(Serialize)]
-pub struct BlockRPC {
+struct BlockRPC {
     header: JBlockHeader,
 
-    txns: BTreeSet<U256>,
+    txns: Vec<JU256>,
 
     height: u64,
 
@@ -31,7 +30,7 @@ pub struct BlockRPC {
 }
 
 impl BlockRPC {
-    fn new(block: Block, rk: &Arc<RecordKeeper>) -> BlockRPC {
+    pub fn new(block: Block, rk: &Arc<RecordKeeper>) -> BlockRPC {
 
         let block_hash = block.calculate_hash();
 
@@ -46,16 +45,16 @@ impl BlockRPC {
 
         BlockRPC {
             header: block.get_header().clone().into(),
-            txns: block.txns.clone(),
+            txns: block.txns.into_iter().map(|n| n.into()).collect(),
             height: h,
-            status: "Mainchain".into(),
+            status: status.into(),
             next: nh.into()
         }
     }
 }
 
 #[derive(Serialize)]
-pub struct TxnRPC {
+struct TxnRPC {
     timestamp: Time,
     creator: JU160,
     mutation: JMutation,
@@ -63,12 +62,12 @@ pub struct TxnRPC {
 }
 
 impl TxnRPC {
-    fn new(txn: JTxn, rk: &Arc<RecordKeeper>) -> TxnRPC {
+    pub fn new(txn: Txn, _rk: &Arc<RecordKeeper>) -> TxnRPC {
         TxnRPC {
             timestamp: txn.timestamp,
-            creator: txn.creator,
-            mutation: txn.mutation,
-            signature: txn.signature
+            creator: txn.creator.into(),
+            mutation: txn.mutation.into(),
+            signature: txn.signature.into()
         }
     }
 }
@@ -126,7 +125,7 @@ impl BlockchainRPC {
     }
 
     fn get_current_block(&self, _params: Params, _meta: SocketMetadata) -> RpcResult {
-        into_rpc_res::<_, JBlock>(self.rk.get_current_block())
+        into_rpc_res::<_, BlockRPC>(self.rk.get_current_block().map(|b| BlockRPC::new(b, &self.rk)))
     }
 
     fn get_block_height(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
@@ -165,12 +164,12 @@ impl BlockchainRPC {
 
     fn get_block(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
         let hash = expect_one_arg::<JU256>(params)?.into();
-        into_rpc_res::<_, JBlock>(self.rk.get_block(&hash))
+        into_rpc_res::<_, BlockRPC>(self.rk.get_block(&hash).map(|b| BlockRPC::new(b, &self.rk)))
     }
 
     fn get_txn(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
         let hash = expect_one_arg::<JU256>(params)?.into();
-        into_rpc_res::<_, JTxn>(self.rk.get_txn(&hash))
+        into_rpc_res::<_, TxnRPC>(self.rk.get_txn(&hash).map(|t| TxnRPC::new(t, &self.rk)))
     }
 }
 
