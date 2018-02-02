@@ -272,7 +272,7 @@ pub fn call_rpc(cmdline: &ArgMatches) -> bool {
     let a = if raw_args.len() == 1 {
         let res: Result<serde_json::Value, _> = serde_json::from_str(&raw_args[0]);
         if let Ok(r) = res {
-            r
+            serde_json::to_value([r]).unwrap()
         }
         else {
             //println!("Could not parse JSON arguments: {:?}", res);

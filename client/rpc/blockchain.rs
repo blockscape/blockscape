@@ -5,14 +5,72 @@ use rpc::types::*;
 use serde::Serialize;
 use std::result::Result;
 use std::sync::Arc;
+use std::collections::BTreeSet;
 
 use blockscape_core::bin::*;
 use blockscape_core::primitives::*;
+use blockscape_core::time::Time;
 use blockscape_core::record_keeper::RecordKeeper;
 use blockscape_core::record_keeper::Error as RKErr;
 
 pub struct BlockchainRPC {
     rk: Arc<RecordKeeper>
+}
+
+#[derive(Serialize)]
+pub struct BlockRPC {
+    header: JBlockHeader,
+
+    txns: BTreeSet<U256>,
+
+    height: u64,
+
+    status: String,
+
+    next: JU256
+}
+
+impl BlockRPC {
+    fn new(block: Block, rk: &Arc<RecordKeeper>) -> BlockRPC {
+
+        let block_hash = block.calculate_hash();
+
+        let h = rk.get_block_height(&block_hash).expect("Could not load current block height from database!");
+        let nh = rk.get_blocks_of_height(h + 1).expect("Blocks of height not available").first().unwrap_or(&U256_ZERO).clone();
+
+        let status = match rk.is_block_in_current_chain(&block_hash) {
+            Ok(true) => "Mainchain",
+            Ok(false) => "Uncle",
+            _ => ""
+        };
+
+        BlockRPC {
+            header: block.get_header().clone().into(),
+            txns: block.txns.clone(),
+            height: h,
+            status: "Mainchain".into(),
+            next: nh.into()
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct TxnRPC {
+    timestamp: Time,
+    creator: JU160,
+    mutation: JMutation,
+    signature: JBin
+}
+
+impl TxnRPC {
+    fn new(txn: JTxn, rk: &Arc<RecordKeeper>) -> TxnRPC {
+        TxnRPC {
+            timestamp: txn.timestamp,
+            creator: txn.creator,
+            mutation: txn.mutation,
+            signature: txn.signature
+        }
+    }
 }
 
 impl BlockchainRPC {

@@ -426,6 +426,11 @@ impl RecordKeeper {
         }
     }
 
+    /// Whether or not the block is part of the longest chain, and therefore influences the history
+    pub fn is_block_in_current_chain(&self, hash: &U256) -> Result<bool, Error> {
+        let db = self.db.read().unwrap();
+        db.is_part_of_current_chain(*hash)
+    }
 
     /// Internal use function to check if a block and all its sub-components are valid.
     fn is_valid_block_given_lock(&self, state: &NetState, db: &Database, block: &Block) -> Result<(), Error> {        
