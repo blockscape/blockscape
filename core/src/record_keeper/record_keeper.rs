@@ -3,8 +3,9 @@ use primitives::{U256, U160, U160_ZERO, Txn, Block, BlockHeader, Mutation, Chang
 use std::collections::{HashMap, BTreeSet, BTreeMap};
 use std::path::PathBuf;
 use std::sync::{RwLock, Mutex};
-use super::{Error, RecordEvent, PlotID};
-use super::{PlotEvent, PlotEvents, events, NetState, NetDiff};
+use primitives::{RawEvents, event};
+use super::{Error, RecordEvent, PlotEvent, PlotID};
+use super::{NetState, NetDiff};
 use super::{rules, BlockRule, TxnRule, MutationRule, MutationRules};
 use super::BlockPackage;
 use super::database::*;
@@ -238,8 +239,8 @@ impl RecordKeeper {
         self.record_listeners.lock().unwrap().notify(&RecordEvent::NewTxn{txn: txn.clone()});
         let mut game_listeners = self.game_listeners.lock().unwrap();
         for change in txn.mutation.changes.iter() {  match change {
-            &Change::Event{ref event, ..} => {
-                game_listeners.notify(event);
+            &Change::PlotEvent(ref e) => {
+                game_listeners.notify(e);
             }
             _ => (),
         }}
@@ -336,8 +337,8 @@ impl RecordKeeper {
     /// seek to reconstruct old history so `after_tick` simply allows additional filtering, e.g. if
     /// you set `after_tick` to 0, you would not get all events unless the oldest events have not
     /// yet been removed from the cache.
-    pub fn get_plot_events(&self, plot_id: PlotID, after_tick: u64) -> Result<PlotEvents, Error> {
-        let mut events: PlotEvents = {
+    pub fn get_plot_events(&self, plot_id: PlotID, after_tick: u64) -> Result<RawEvents, Error> {
+        let mut events: RawEvents = {
             let db = self.db.read().unwrap();
             db.get_plot_events(plot_id, after_tick)?
         };
@@ -345,9 +346,9 @@ impl RecordKeeper {
         let txns = self.pending_txns.read().unwrap();
         for txn in txns.values() {
             for change in &txn.mutation.changes {
-                if let &Change::Event{id, tick, ref event} = change {
-                    if tick >= after_tick && id == plot_id {
-                        events::add_event(&mut events, tick, event.clone());
+                if let &Change::PlotEvent(ref e) = change {
+                    if e.tick >= after_tick && (e.from == plot_id) || (e.to.contains(&plot_id)) {
+                        event::add_event(&mut events, e.tick, e.event.clone());
                     }
                 }
             }
@@ -382,7 +383,7 @@ impl RecordKeeper {
         self.is_valid_block_given_lock(&state, &db, block)
     }
 
-    /// Check if a txn is valid given the current network state. Use this to validate pending txns.
+    /// Check if a txn is valid given the current network stafrom: PlotID, to: &BTreeSet<PlotID>, tick: u64, event: &RawEventte. Use this to validate pending txns.
     pub fn is_valid_txn(&self, txn: &Txn) -> Result<(), Error> {
         let db = self.db.read().unwrap();
         let state = {
@@ -449,6 +450,7 @@ impl RecordKeeper {
     fn is_valid_mutation_given_lock(&self, state: &NetState, mutation: &Mutation) -> Result<(), Error> {
         let mut cache = Bin::new();
         // base rules
+        rules::mutation::PlotEvent.is_valid(state, mutation, &mut cache)?;
         rules::mutation::Duplicates.is_valid(state, mutation, &mut cache)?;
         
         // user-added rules
