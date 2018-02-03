@@ -1,5 +1,5 @@
 use bin::Bin;
-use primitives::{U256, U160, U160_ZERO, Txn, Block, BlockHeader, Mutation, Change, ListenerPool};
+use primitives::{U256, U160, U160_ZERO, Txn, Block, BlockHeader, Change, ListenerPool};
 use std::collections::{HashMap, BTreeSet, BTreeMap};
 use std::path::PathBuf;
 use std::sync::{RwLock, Mutex};
@@ -391,7 +391,12 @@ impl RecordKeeper {
             NetState::new(&*db, NetDiff::new(cur, cur))
         };
         self.is_valid_txn_given_lock(&state, txn)?;
-        self.is_valid_mutation_given_lock(&state, &txn.mutation)
+
+        let mut mutation = Vec::new();
+        for change in txn.mutation.changes.iter().cloned() {
+            mutation.push((change, txn.creator));
+        }
+        self.is_valid_mutation_given_lock(&state, &mutation)
     }
 
     /// Retrieve a block header from the database.
@@ -428,11 +433,13 @@ impl RecordKeeper {
         rules::block::Signature.is_valid(state, db, block)?;
         rules::block::MerkleRoot.is_valid(state, db, block)?;
 
-        let mut mutation = Mutation::new();
+        let mut mutation = Vec::new();
         for txn_hash in &block.txns {
             let txn = self.get_txn_given_lock(db, &txn_hash)?;
             self.is_valid_txn_given_lock(state, &txn)?;
-            mutation.merge_clone(&txn.mutation);
+            for change in txn.mutation.changes {
+                mutation.push((change, txn.creator));
+            }
         }
 
         self.is_valid_mutation_given_lock(state, &mutation)
@@ -447,12 +454,12 @@ impl RecordKeeper {
     }
 
     /// Internal use function to check if a mutation is valid.
-    fn is_valid_mutation_given_lock(&self, state: &NetState, mutation: &Mutation) -> Result<(), Error> {
+    fn is_valid_mutation_given_lock(&self, state: &NetState, mutation: &Vec<(Change, U160)>) -> Result<(), Error> {
         let mut cache = Bin::new();
         // base rules
         rules::mutation::PlotEvent.is_valid(state, mutation, &mut cache)?;
         rules::mutation::Duplicates.is_valid(state, mutation, &mut cache)?;
-        
+
         // user-added rules
         cache = Bin::new();
         let rules = self.rules.read().unwrap();

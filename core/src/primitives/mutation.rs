@@ -1,6 +1,7 @@
 use bin::*;
 use record_keeper::{PlotEvent, JPlotEvent};
 use primitives::{U160, JU160};
+use std::ops::{Deref, DerefMut};
 
 /// A single change to the database, a mutation may be the composite of multiple changes. This is
 /// designed as a simple structure which the outer world can use to store the changes which should
@@ -85,6 +86,19 @@ impl Mutation {
         1 + 8 + // contra + changes count
         self.changes.iter().fold(0, |total, c| total + c.calculate_size())
     } 
+}
+
+impl Deref for Mutation {
+    type Target = Vec<Change>;
+    fn deref(&self) -> &Self::Target {
+        &self.changes
+    }
+}
+
+impl DerefMut for Mutation {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.changes
+    }
 }
 
 

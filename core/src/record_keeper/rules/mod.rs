@@ -6,7 +6,7 @@ pub mod txn;
 pub mod mutation;
 
 
-use primitives::{Mutation, Block, Txn};
+use primitives::{Change, Block, Txn, U160};
 use std::collections::LinkedList;
 use std::fmt::Debug;
 use super::database::Database;
@@ -46,7 +46,7 @@ pub trait TxnRule: Send + Sync {
 /// in RAM, and they will need to keep multiple checkpoints to allow going backwards.
 pub trait MutationRule: Send + Sync {
     /// Return Ok if it is valid, or an error explaining what rule was broken or what error was encountered.
-    fn is_valid(&self, net_state: &NetState, mutation: &Mutation, cache: &mut Bin) -> Result<(), Error>;
+    fn is_valid(&self, net_state: &NetState, mutation: &Vec<(Change, U160)>, cache: &mut Bin) -> Result<(), Error>;
     /// Retrieve a description of the rule.
     fn description(&self) -> &'static str;
 }

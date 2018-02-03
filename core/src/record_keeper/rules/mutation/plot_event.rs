@@ -1,5 +1,5 @@
 use bin::Bin;
-use primitives::{Change, Mutation};
+use primitives::{Change, U160};
 use record_keeper::{Error, LogicError, NetState};
 use record_keeper::rules::MutationRule;
 
@@ -7,8 +7,8 @@ use record_keeper::rules::MutationRule;
 /// Make sure PlotEvent Changes in the mutation seem valid. (Cannot verify the RawEvent though)
 pub struct PlotEvent;
 impl MutationRule for PlotEvent {
-    fn is_valid(&self, _state: &NetState, mutation: &Mutation, _cache: &mut Bin) -> Result<(), Error> {
-        for change in mutation.changes.iter() {  match change {
+    fn is_valid(&self, _state: &NetState, mutation: &Vec<(Change, U160)>, _cache: &mut Bin) -> Result<(), Error> {
+        for &(ref change, _) in mutation {  match change {
             &Change::PlotEvent(ref e) => {
                 // TODO: verify all the PlotIDs exist
                 

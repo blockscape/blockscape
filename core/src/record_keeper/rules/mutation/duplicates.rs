@@ -1,6 +1,6 @@
 use bin::Bin;
 use hash::hash_pub_key;
-use primitives::{Change, Mutation, RawEvent, RawEvents};
+use primitives::{Change, RawEvent, RawEvents, U160};
 use record_keeper::{Error, LogicError, NetState, PlotID};
 use primitives::event::add_event;
 use record_keeper::rules::MutationRule;
@@ -47,11 +47,11 @@ impl Duplicates {
 }
 
 impl MutationRule for Duplicates {
-    fn is_valid(&self, state: &NetState, mutation: &Mutation, _cache: &mut Bin) -> Result<(), Error> {
+    fn is_valid(&self, state: &NetState, mutation: &Vec<(Change, U160)>, _cache: &mut Bin) -> Result<(), Error> {
         let mut validators = HashSet::new();
         let mut events: HashMap<PlotID, RawEvents> = HashMap::new();
 
-        for change in mutation.changes.iter() {  match change {
+        for &(ref change, _) in mutation {  match change {
             &Change::NewValidator { ref pub_key } => {
                 let hash = hash_pub_key(pub_key);
                 if validators.contains(&hash) || state.get_validator_key(hash).is_ok() {
