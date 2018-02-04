@@ -471,11 +471,11 @@ impl Database {
     }
 
     /// Returns a map of events for each tick that happened after a given tick. Note: it will not
-    /// seek to reconstruct old history so `after_tick` simply allows additional filtering, e.g. if
-    /// you set `after_tick` to 0, you would not get all events unless the oldest events have not
+    /// seek to reconstruct old history so `from_tick` simply allows additional filtering, e.g. if
+    /// you set `from_tick` to 0, you would not get all events unless the oldest events have not
     /// yet been removed from the cache.
-    pub fn get_plot_events(&self, plot_id: PlotID, after_tick: u64) -> Result<RawEvents, Error> {
-        let mut tick = after_tick;
+    pub fn get_plot_events(&self, plot_id: PlotID, from_tick: u64) -> Result<RawEvents, Error> {
+        let mut tick = from_tick;
         let mut event_list = RawEvents::new();
         loop {
             let key: Key = NetworkEntry::Plot(plot_id, tick).into();
@@ -487,7 +487,7 @@ impl Database {
             }
             
             tick += PLOT_EVENT_BUCKET_SIZE;
-        } Ok(event_list.split_off(&after_tick))
+        } Ok(event_list.split_off(&from_tick))
     }
 
     /// Put together a mutation object from all of the individual transactions

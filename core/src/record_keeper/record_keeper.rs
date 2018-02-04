@@ -22,7 +22,7 @@ use futures_cpupool;
 /// TODO: Also allow for reaching out to the network to request missing information.
 /// TODO: Allow removing state data for shards which are not being processed.
 pub struct RecordKeeper {
-    db: RwLock<Database>, 
+    db: RwLock<Database>,
     rules: RwLock<MutationRules>,
     pending_txns: RwLock<HashMap<U256, Txn>>,
 
@@ -334,20 +334,20 @@ impl RecordKeeper {
     }
 
     /// Returns a map of events for each tick that happened after a given tick. Note: it will not
-    /// seek to reconstruct old history so `after_tick` simply allows additional filtering, e.g. if
-    /// you set `after_tick` to 0, you would not get all events unless the oldest events have not
+    /// seek to reconstruct old history so `from_tick` simply allows additional filtering, e.g. if
+    /// you set `from_tick` to 0, you would not get all events unless the oldest events have not
     /// yet been removed from the cache.
-    pub fn get_plot_events(&self, plot_id: PlotID, after_tick: u64) -> Result<RawEvents, Error> {
+    pub fn get_plot_events(&self, plot_id: PlotID, from_tick: u64) -> Result<RawEvents, Error> {
         let mut events: RawEvents = {
             let db = self.db.read().unwrap();
-            db.get_plot_events(plot_id, after_tick)?
+            db.get_plot_events(plot_id, from_tick)?
         };
         
         let txns = self.pending_txns.read().unwrap();
         for txn in txns.values() {
             for change in &txn.mutation.changes {
                 if let &Change::PlotEvent(ref e) = change {
-                    if e.tick >= after_tick && (e.from == plot_id) || (e.to.contains(&plot_id)) {
+                    if e.tick >= from_tick && (e.from == plot_id) || (e.to.contains(&plot_id)) {
                         event::add_event(&mut events, e.tick, e.event.clone());
                     }
                 }

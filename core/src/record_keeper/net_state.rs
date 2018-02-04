@@ -53,20 +53,20 @@ impl<'a> NetState<'a> {
         Ok(bincode::deserialize::<i64>(&raw)?)
     }
 
-    pub fn get_plot_events(&self, plot_id: PlotID, after_tick: u64) -> Result<RawEvents, Error> {
+    pub fn get_plot_events(&self, plot_id: PlotID, from_tick: u64) -> Result<RawEvents, Error> {
         let new_events = self.diff.get_new_events(plot_id);
         let removed_events = self.diff.get_removed_events(plot_id);
         
         // get the base events from the DB
         let mut plot_events = map_not_found(
-            self.db.get_plot_events(plot_id, after_tick),
+            self.db.get_plot_events(plot_id, from_tick),
             RawEvents::new()
         )?;
 
         // remove the removed events
         if let Some(removed_e) = removed_events {
-            for (&tick, r_event_list) in removed_e.range(after_tick..) {
-                // if tick <= after_tick { continue; }
+            for (&tick, r_event_list) in removed_e.range(from_tick..) {
+                // if tick <= from_tick { continue; }
                 for ref event in r_event_list {
                     event::remove_event(&mut plot_events, tick, event);
                 }
@@ -75,7 +75,7 @@ impl<'a> NetState<'a> {
 
         // add the new events
         if let Some(new_e) = new_events {
-            for (&tick, n_event_list) in new_e.range(after_tick..) {
+            for (&tick, n_event_list) in new_e.range(from_tick..) {
                 for ref event in n_event_list {
                     event::add_event(&mut plot_events, tick, (*event).clone());
                 }
