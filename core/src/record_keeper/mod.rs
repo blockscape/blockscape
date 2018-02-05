@@ -5,6 +5,7 @@ pub mod events;
 pub mod key;
 pub mod net_dif;
 pub mod net_state;
+pub mod game_state;
 
 mod record_keeper;
 mod rules;
