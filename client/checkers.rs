@@ -37,21 +37,23 @@ pub enum Direction {
 impl Direction {
     /// Move a coordinate one tile in the direction specified. (Will wrap if it goes below 0).
     pub fn move_in_dir(self, r: usize, c: usize) -> (usize, usize) {
-        match self {
-            Direction::NW => (r-1, c-1),
-            Direction::NE => (r-1, c+1),
-            Direction::SE => (r+1, c+1),
-            Direction::SW => (r+1, c-1)
-        }
+        let (dr, dc) = self.dir_vec();
+        ((r as i8 + dr) as usize, (c as i8 + dc) as usize)
     }
 
     /// Move a coordinate two tiles in the direction specified. (Will wrap if it goes below 0)
     pub fn jump_in_dir(self, r: usize, c: usize) -> (usize, usize) {
+        let (dr, dc) = self.dir_vec();
+        ((r as i8 + dr * 2) as usize, (c as i8 + dc * 2) as usize)
+    }
+
+    fn dir_vec(self) -> (i8, i8) {
+        use self::Direction::*;
         match self {
-            Direction::NW => (r-2, c-2),
-            Direction::NE => (r-2, c+2),
-            Direction::SE => (r+2, c+2),
-            Direction::SW => (r+2, c-2)
+            NW => (-1, -1),
+            NE => (-1, 1),
+            SE => (1, 1),
+            SW => (1, -1)
         }
     }
 }
@@ -84,7 +86,7 @@ impl fmt::Display for Tile {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use self::Tile::*;
         write!(f, "{}", match *self {
-            None => ' ',
+            None => '.',
             Red => 'r',
             RedKing => 'R',
             Black => 'b',
@@ -195,11 +197,12 @@ impl Default for Board {
 
 impl fmt::Display for Board {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "-------------------")?;
-        for r in self.0.iter() {
-            writeln!(f, "| {} {} {} {} {} {} {} {} |", r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7])?;
+        writeln!(f, "\n    A B C D E F G H")?;
+        writeln!(f, "  -------------------")?;
+        for (c, r) in self.0.iter().enumerate() {
+            writeln!(f, "{} | {} {} {} {} {} {} {} {} |", c+1, r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7])?;
         }
-        writeln!(f, "-------------------")
+        writeln!(f, "  -------------------")
     }
 }
 
@@ -250,7 +253,7 @@ impl Board {
             },
             Event::Jump(idx, path) => {
                 let (r, c) = Self::idx_to_rc(idx)?;
-                let (r, c) = (r as usize, c as usize);
+                let (mut r, mut c) = (r as usize, c as usize);
 
                 // check basic direction and player ownership logic
                 if self.0[r][c] == Tile::None { return Err(MissingPiece); }
@@ -265,8 +268,8 @@ impl Board {
                         return Err(InvalidPlay);
                     }
 
-                    let (pr, pc) = dir.move_in_dir(nr, nc); //passover piece
-                    {let t = dir.jump_in_dir(nr, nc); nr = t.0; nc = t.1;}
+                    let (pr, pc) = dir.move_in_dir(r, c); //passover piece
+                    {let t = dir.jump_in_dir(r, c); nr = t.0; nc = t.1;}
 
                     if nr > 7 || nc > 7 ||
                         self.0[nr][nc] != Tile::None ||
@@ -283,6 +286,7 @@ impl Board {
                     self.0[nr][nc] = self.0[r][c];
                     self.0[pr][pc] = Tile::None;
                     self.0[r][c] = Tile::None;
+                    r = nr; c = nc;
                 }
 
                 // upgrade piece to a king if needed
@@ -302,7 +306,7 @@ impl Board {
         if idx > 63 {
             Err(Error::InvalidCoordinate)
         } else {
-            Ok((idx % 8, idx / 8))
+            Ok((idx / 8, idx % 8))
         }
     }
 
@@ -314,5 +318,110 @@ impl Board {
         } else {
             Ok(r*8 + c)
         }
+    }
+}
+
+
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn from_turn() {
+        use super::Player;
+        assert!(Player::from_turn(0).is_err());
+        assert_eq!(Player::from_turn(1).unwrap(), Player::Red);
+        assert_eq!(Player::from_turn(2).unwrap(), Player::Black);
+        assert_eq!(Player::from_turn(3).unwrap(), Player::Red);
+        assert_eq!(Player::from_turn(4).unwrap(), Player::Black);
+    }
+
+    #[test]
+    fn move_in_dir() {
+        use super::Direction::*;
+        assert_eq!(NE.move_in_dir(1, 0), (0, 1));
+        assert_eq!(SE.move_in_dir(0, 0), (1, 1));
+        assert_eq!(NW.move_in_dir(1, 1), (0, 0));
+        assert_eq!(SW.move_in_dir(1, 1), (2, 0));
+    }
+
+    #[test]
+    fn jump_in_dir() {
+        use super::Direction::*;
+        assert_eq!(NE.jump_in_dir(2, 2), (0, 4));
+        assert_eq!(SE.jump_in_dir(2, 2), (4, 4));
+        assert_eq!(NW.jump_in_dir(2, 2), (0, 0));
+        assert_eq!(SW.jump_in_dir(2, 2), (4, 0));
+    }
+
+    #[test]
+    fn basic_move() {
+        use super::Board;
+        use super::Event::*;
+        use super::Player::*;
+        use super::Direction::*;
+        let rc_to_idx = |r, c| Board::rc_to_idx(r, c).unwrap();
+        let mut board = Board::default();
+        assert!(board.play(Move(rc_to_idx(0, 0), SE), Black).is_err()); //collision
+        assert!(board.play(Move(rc_to_idx(2, 0), SW), Black).is_err()); //off board
+        assert!(board.play(Move(rc_to_idx(3, 1), SW), Black).is_err()); //nothing there
+        assert!(board.play(Move(rc_to_idx(2, 0), SE), Black).is_ok()); //valid
+        assert!(board.play(Move(rc_to_idx(2, 0), SE), Black).is_err()); //nothing there
+        assert!(board.play(Move(rc_to_idx(3, 1), NW), Black).is_err()); //wrong direction
+        assert!(board.play(Move(rc_to_idx(3, 1), SW), Black).is_ok()); //valid
+        assert!(board.play(Move(rc_to_idx(5, 7), NW), Black).is_err()); //wrong player
+        assert!(board.play(Move(rc_to_idx(5, 7), NW), Red).is_ok()); //valid
+    }
+
+    #[test]
+    fn king_move() {
+        use super::Board;
+        use super::Tile;
+        use super::Event::*;
+        use super::Player::*;
+        use super::Direction::*;
+        let rc_to_idx = |r, c| Board::rc_to_idx(r, c).unwrap();
+        let mut board = Board::new();
+        board.0[3][3] = Tile::RedKing;
+        assert!(board.play(Move(rc_to_idx(3, 3), NW), Black).is_err()); //wrong player
+        assert!(board.play(Move(rc_to_idx(3, 3), NW), Red).is_ok()); //valid
+        assert!(board.play(Move(rc_to_idx(2, 2), SW), Red).is_ok()); //valid
+        assert!(board.play(Move(rc_to_idx(3, 1), SE), Red).is_ok()); //valid
+    }
+
+    #[test]
+    fn jump() {
+        use super::Board;
+        use super::Tile;
+        use super::Event::*;
+        use super::Player::*;
+        use super::Direction::*;
+        let rc_to_idx = |r, c| Board::rc_to_idx(r, c).unwrap();
+        let mut board = Board::new();
+        board.0[0][0] = Tile::BlackKing;
+        board.0[1][1] = Tile::Red;
+        board.0[3][3] = Tile::RedKing;
+        board.0[3][5] = Tile::Red;
+        assert!(board.play(Jump(0, vec![SE, SE, NE]), Black).is_ok());
+    }
+
+
+    #[test]
+    fn idx_to_rc() {
+        use super::Board;
+        assert!(Board::idx_to_rc(120).is_err());
+        assert_eq!(Board::idx_to_rc(5).unwrap(), (0, 5));
+        assert_eq!(Board::idx_to_rc(63).unwrap(), (7, 7));
+        assert_eq!(Board::idx_to_rc(25).unwrap(), (3, 1));
+    }
+
+    #[test]
+    fn rc_to_idx() {
+        use super::Board;
+        assert!(Board::rc_to_idx(8, 0).is_err());
+        assert!(Board::rc_to_idx(0, 8).is_err());
+        assert_eq!(Board::rc_to_idx(7, 7).unwrap(), 63);
+        assert_eq!(Board::rc_to_idx(0, 0).unwrap(), 0);
+        assert_eq!(Board::rc_to_idx(3, 1).unwrap(), 25);
+        assert_eq!(Board::rc_to_idx(0, 5).unwrap(), 5);
     }
 }
