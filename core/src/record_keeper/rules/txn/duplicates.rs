@@ -10,8 +10,12 @@ use record_keeper::rules::mutation::Duplicates as MutationDuplicates;
 pub struct Duplicates;
 impl TxnRule for Duplicates {
     fn is_valid(&self, state: &NetState, txn: &Txn) -> Result<(), Error> {
+        let mut mutation = Vec::new();
+        for change in txn.mutation.changes.iter().cloned() {
+            mutation.push((change, txn.creator));
+        }
         let mut stupid = Vec::new();  // will not be used...
-        MutationDuplicates.is_valid(state, &txn.mutation, &mut stupid)
+        MutationDuplicates.is_valid(state, &mutation, &mut stupid)
     }
 
     fn description(&self) -> &'static str {

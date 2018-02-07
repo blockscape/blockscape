@@ -1,7 +1,10 @@
 use primitives::{Block, JBlock, Txn, JTxn, Event, RawEvent, JRawEvent};
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::mem::size_of;
 use super::PlotID;
+use bincode;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 
 /// An event regarding the keeping of records, such as the introduction of a new block or shifting
 /// state.
@@ -13,20 +16,22 @@ use super::PlotID;
 pub enum RecordEvent {
     /// A new block has been added, walk forward (or back, if back, then a state invalidated event
     /// will also be pushed out if relevant)
-    NewBlock { uncled: bool, block: Block },
+    NewBlock { uncled: bool, fresh: bool, block: Block },
     /// A new transaction that has come into the system and is now pending
-    NewTxn { txn: Txn },
+    NewTxn { fresh: bool, txn: Txn },
     /// The state needs to be transitioned backwards, probably onto a new branch
     StateInvalidated { new_height: u64, after_height: u64 },
 }
 impl Event for RecordEvent {}
 
 
-/// An event representing something which happened on or between plots.
+/// An event representing something which happened on or between plots. This is not stored directly
+/// in the database, but the information is used to determine where the raw event will be stored.
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize, Hash)]
 pub struct PlotEvent {
     pub from: PlotID,
-    pub to: PlotID,
+    pub to: BTreeSet<PlotID>,
+    pub tick: u64,
     pub event: RawEvent
 }
 impl Event for PlotEvent {}
@@ -34,45 +39,41 @@ impl Event for PlotEvent {}
 impl PlotEvent {
     /// Calculate the encoded size of this event in bytes.
     pub fn calculate_size(&self) -> usize {
-        size_of::<PlotID>() * 2 +
+        size_of::<PlotID>() * (2 + self.to.len()) +
         self.event.len() + 1
     }
 }
 
-/// Lists of events stored by their tick
-pub type PlotEvents = BTreeMap<u64, Vec<PlotEvent>>;
 
-/// Add an event to a PlotEvents object. Returns true if a new entry was added, false if it was a
-/// duplicate. Will not add duplicate entries.
-pub fn add_event(events: &mut PlotEvents, tick: u64, event: PlotEvent) -> bool {
-    // if there is already a list of events for this tick, append to it
-    if let Some(event_list) = events.get_mut(&tick) {
-        if !event_list.contains(&event) {
-            // the event is not already stored for that tick
-            event_list.push(event.clone());
-            return true; //we have added it successfully
-        } else { return false; }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DePlotEvent<E> where E: Event {
+    pub from: PlotID,
+    pub to: BTreeSet<PlotID>,
+    pub tick: u64,
+    pub event: E
+}
+impl<E: Event> Event for DePlotEvent<E> {}
+
+impl<E> DePlotEvent<E> where E: Event + DeserializeOwned {
+    pub fn deserialize(e: &PlotEvent) -> Result<DePlotEvent<E>, bincode::Error> {
+        Ok(DePlotEvent {
+            from: e.from,
+            to: e.to.clone(),
+            tick: e.tick,
+            event: bincode::deserialize(&e.event)?
+        })
     }
-
-    // if not, then we need to create a new entry
-    let mut event_list = Vec::new();
-    event_list.push(event);
-    events.insert(tick, event_list);
-    true
 }
 
-/// Remove an event from a PlotEvents object. Returns true if the event was removed.
-pub fn remove_event(events: &mut PlotEvents, tick: u64, event: &PlotEvent) -> bool {
-    let mut del_tick = false;
-    let removed = if let Some(event_list) = events.get_mut(&tick) {
-        let initial_size = event_list.len();
-        event_list.retain(|e| e != event);
-        if event_list.len() == 0 { del_tick = true; }
-        event_list.len() < initial_size
-    } else { false };
-
-    if del_tick { events.remove(&tick).unwrap(); }
-    removed
+impl<E> DePlotEvent<E> where E: Event + Serialize {
+    pub fn serialize(&self) -> Result<PlotEvent, bincode::Error> {
+        Ok(PlotEvent {
+            from: self.from,
+            to: self.to.clone(),
+            tick: self.tick,
+            event: bincode::serialize(&self.event, bincode::Infinite)?
+        })
+    }
 }
 
 
@@ -80,16 +81,16 @@ pub fn remove_event(events: &mut PlotEvents, tick: u64, event: &PlotEvent) -> bo
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum JRecordEvent {
-    NewBlock { uncled: bool, block: JBlock },
-    NewTxn { txn: JTxn },
+    NewBlock { uncled: bool, fresh: bool, block: JBlock },
+    NewTxn { fresh: bool, txn: JTxn },
     StateInvalidated { new_height: u64, after_height: u64}
 }
 
 impl From<RecordEvent> for JRecordEvent {
     fn from(e: RecordEvent) -> JRecordEvent {
         match e {
-            RecordEvent::NewBlock{uncled, block} => JRecordEvent::NewBlock{uncled, block: block.into()},
-            RecordEvent::NewTxn{txn} => JRecordEvent::NewTxn{txn: txn.into()},
+            RecordEvent::NewBlock{uncled, fresh, block} => JRecordEvent::NewBlock{uncled, fresh, block: block.into()},
+            RecordEvent::NewTxn{fresh, txn} => JRecordEvent::NewTxn{fresh, txn: txn.into()},
             RecordEvent::StateInvalidated{new_height, after_height} => JRecordEvent::StateInvalidated{new_height, after_height}
         }
     }
@@ -98,8 +99,8 @@ impl From<RecordEvent> for JRecordEvent {
 impl Into<RecordEvent> for JRecordEvent {
     fn into(self) -> RecordEvent {
         match self {
-            JRecordEvent::NewBlock{uncled, block} => RecordEvent::NewBlock{uncled, block: block.into()},
-            JRecordEvent::NewTxn{txn} => RecordEvent::NewTxn{txn: txn.into()},
+            JRecordEvent::NewBlock{uncled, fresh, block} => RecordEvent::NewBlock{uncled, fresh, block: block.into()},
+            JRecordEvent::NewTxn{fresh, txn} => RecordEvent::NewTxn{fresh, txn: txn.into()},
             JRecordEvent::StateInvalidated{new_height, after_height} => RecordEvent::StateInvalidated{new_height, after_height}
         }
     }
@@ -109,18 +110,19 @@ impl Into<RecordEvent> for JRecordEvent {
 #[derive(Serialize, Deserialize)]
 pub struct JPlotEvent {
     from: PlotID,
-    to: PlotID,
+    to: BTreeSet<PlotID>,
+    tick: u64,
     event: JRawEvent
 }
 
 impl From<PlotEvent> for JPlotEvent {
     fn from(e: PlotEvent) -> JPlotEvent {
-        JPlotEvent {from: e.from, to: e.to, event: e.event.into()}
+        JPlotEvent {from: e.from, to: e.to, tick: e.tick, event: e.event.into()}
     }
 }
 
 impl Into<PlotEvent> for JPlotEvent {
     fn into(self) -> PlotEvent {
-        PlotEvent {from: self.from, to: self.to, event: self.event.into()}
+        PlotEvent {from: self.from, to: self.to, tick: self.tick, event: self.event.into()}
     }
 }

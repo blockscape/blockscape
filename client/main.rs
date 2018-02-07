@@ -29,13 +29,14 @@ extern crate bincode;
 
 mod boot;
 mod context;
-mod plot_event;
 mod rules;
 mod reporter;
 mod format;
 mod forger;
 
 mod rpc;
+
+mod checkers;
 
 use std::sync::Arc;
 use std::thread;
@@ -51,9 +52,9 @@ use tokio_core::reactor::*;
 use openssl::pkey::PKey;
 
 use blockscape_core::env;
+use blockscape_core::forging::flower_picking::FlowerPicking;
 use blockscape_core::network::client::*;
 use blockscape_core::record_keeper::RecordKeeper;
-use blockscape_core::forging::flower_picking::FlowerPicking;
 
 use boot::*;
 
@@ -149,7 +150,19 @@ fn main() {
         })
         .map_err(|_| ());
 
+    // let context = Rc::clone(&ctx);
+    // let test_txn_job = Interval::new(Duration::from_millis(7500), &handler)
+    //     .unwrap()
+    //     .for_each(move |_| {
+    //         let mut mutation = Mutation::new();
+    //         mutation.changes.push(Change::Event{id: PlotID(0, 0), tick: Time::current().millis() as u64, event: PlotEvent { from: PlotID(0, 0), to: PlotID(0, 0), event: Bin::new()}});
+    //         context.rk.add_pending_txn(&Txn::new(hash_pub_key(&context.forge_key.public_key_to_der().unwrap()), mutation).sign(&context.forge_key)).unwrap();
+    //         Ok(())
+    //     })
+    //     .map_err(|_| ());
+
     core.handle().spawn(rpt_job);
+    // core.handle().spawn(test_txn_job);
 
     if cmdline.is_present("forge") {
         forger::start_forging(&ctx, &handler, genesis_net);

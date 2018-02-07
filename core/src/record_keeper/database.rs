@@ -1,14 +1,15 @@
 use bin::{Bin, AsBin};
 use bincode;
 use hash::hash_pub_key;
-use primitives::{U256, U160, Mutation, Change, Block, BlockHeader, Txn};
+use primitives::{U256, U160, Mutation, Change, Block, BlockHeader, Txn, RawEvent, RawEvents};
+use primitives::event;
 use rocksdb::{DB, Options, IteratorMode};
 use rocksdb::Error as RocksDBError;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::collections::{HashMap, BTreeMap};
 use std::path::PathBuf;
-use super::{PlotEvent, PlotEvents, events, PlotID, NetDiff};
+use super::{PlotID, NetDiff, PlotEvent};
 use super::error::*;
 use super::key::*;
 
@@ -469,41 +470,24 @@ impl Database {
         }
     }
 
-    /// Add a new event to a plot.
-    pub fn add_plot_event(&mut self, plot_id: PlotID, tick: u64, event: &PlotEvent) -> Result<(), Error> {
-        let db_key: Key = NetworkEntry::Plot(plot_id, tick).into();
-        let mut event_list = match self.get(db_key.clone()) {
-            Ok(list) => list,
-            Err(Error::NotFound(..)) => {
-                // we need to add empty lists too all prior buckets to make them contiguous
-                self.init_event_buckets(plot_id, tick)?;
-                PlotEvents::new()
-            },
-            Err(e) => return Err(e)
-        };
-
-        events::add_event(&mut event_list, tick, event.clone());
-        self.put(db_key, &event_list, None)
-    }
-
     /// Returns a map of events for each tick that happened after a given tick. Note: it will not
-    /// seek to reconstruct old history so `after_tick` simply allows additional filtering, e.g. if
-    /// you set `after_tick` to 0, you would not get all events unless the oldest events have not
+    /// seek to reconstruct old history so `from_tick` simply allows additional filtering, e.g. if
+    /// you set `from_tick` to 0, you would not get all events unless the oldest events have not
     /// yet been removed from the cache.
-    pub fn get_plot_events(&self, plot_id: PlotID, after_tick: u64) -> Result<PlotEvents, Error> {
-        let mut tick = after_tick;
-        let mut event_list = PlotEvents::new();
+    pub fn get_plot_events(&self, plot_id: PlotID, from_tick: u64) -> Result<RawEvents, Error> {
+        let mut tick = from_tick;
+        let mut event_list = RawEvents::new();
         loop {
             let key: Key = NetworkEntry::Plot(plot_id, tick).into();
             
-            match self.get::<PlotEvents>(key.clone()) {
+            match self.get::<RawEvents>(key.clone()) {
                 Ok(mut l) => event_list.append(&mut l),
                 Err(Error::NotFound(..)) => break,
                 Err(e) => return Err(e)
             }
             
             tick += PLOT_EVENT_BUCKET_SIZE;
-        } Ok(event_list.split_off(&after_tick))
+        } Ok(event_list.split_off(&from_tick))
     }
 
     /// Put together a mutation object from all of the individual transactions
@@ -536,12 +520,40 @@ impl Database {
         self.put(db_key, &value, Some(8))
     }
 
+
+    
+    /// Add a new event to the specified plot.
+    fn add_event(&mut self, plot_id: PlotID, tick: u64, event: &RawEvent) -> Result<(), Error> {
+        let db_key: Key = NetworkEntry::Plot(plot_id, tick).into();
+        let mut event_list = match self.get(db_key.clone()) {
+            Ok(list) => list,
+            Err(Error::NotFound(..)) => {
+                // we need to add empty lists too all prior buckets to make them contiguous
+                self.init_event_buckets(plot_id, tick)?;
+                RawEvents::new()
+            },
+            Err(e) => return Err(e)
+        };
+
+        event::add_event(&mut event_list, tick, event.clone());
+        self.put(db_key, &event_list, None)
+    }
+
+    /// Add an event to all the specified plots (iff they are in this shard).
+    /// TODO: verify if a PlotID is in the shard
+    fn add_events(&mut self, e: &PlotEvent) -> Result<(), Error> {
+        self.add_event(e.from, e.tick, &e.event)?;
+        for plot in e.to.iter() {
+            self.add_event(*plot, e.tick, &e.event)?;
+        } Ok(())
+    }
+
     /// Remove an event from a plot. Should only be used when undoing a mutation.
-    fn remove_event(&mut self, id: PlotID, tick: u64, event: &PlotEvent) -> Result<(), Error> {
+    fn remove_event(&mut self, id: PlotID, tick: u64, event: &RawEvent) -> Result<(), Error> {
         let db_key: Key = NetworkEntry::Plot(id, tick).into();
-        match self.get::<PlotEvents>(db_key.clone()) {
+        match self.get::<RawEvents>(db_key.clone()) {
             Ok(mut event_list) => {
-                if !events::remove_event(&mut event_list, tick, event) {
+                if !event::remove_event(&mut event_list, tick, event) {
                     warn!("Unable to remove event because it does not exist! The network state \
                         may be desynchronized.");
                 } else { self.put(db_key, &event_list, None)?; }
@@ -551,6 +563,15 @@ impl Database {
                                                The network state may be desynchronized."); Ok(()) },
             Err(e) => Err(e)
         }
+    }
+
+    /// Remove an event from all the specified plots (iff they are in this shard).
+    /// TODO: verify if a PlotID is in the shard
+    fn remove_events(&mut self, e: &PlotEvent) -> Result<(), Error> {
+        self.remove_event(e.from, e.tick, &e.event)?;
+        for plot in e.to.iter() {
+            self.remove_event(*plot, e.tick, &e.event)?;
+        } Ok(())
     }
 
 
@@ -571,9 +592,9 @@ impl Database {
                 self.change_validator_rep(id, BLOCK_REWARD)?;
                 Change::BlockReward{id, proof: Bin::new()}
             },
-            &Change::Event{id, tick, ref event} => {
-                self.add_plot_event(id, tick, event)?;
-                Change::Event{id, tick, event: event.clone()}
+            &Change::PlotEvent(ref e) => {
+                self.add_events(e)?;
+                Change::PlotEvent(e.clone())
             },
             &Change::NewValidator{ref pub_key, ..} => {
                 let id = hash_pub_key(pub_key);
@@ -600,7 +621,7 @@ impl Database {
         for change in mutation.changes { match change {
             Change::Admin{key, value} => { self.set_value(key, &value)?; },
             Change::BlockReward{id, ..} => { self.change_validator_rep(id, -BLOCK_REWARD)?; },
-            Change::Event{id, tick, event} => { self.remove_event(id, tick, &event)?; },
+            Change::PlotEvent(e) => { self.remove_events(&e)?; },
             Change::NewValidator{pub_key, ..} => {
                 let id = hash_pub_key(&pub_key);
                 let key: Key = NetworkEntry::ValidatorKey(id).into();
@@ -752,9 +773,9 @@ impl Database {
         loop {
             let key: Key = NetworkEntry::Plot(plot_id, tick).into();
             
-            match self.get::<PlotEvents>(key.clone()) {
+            match self.get::<RawEvents>(key.clone()) {
                 Ok(..) => break,
-                Err(Error::NotFound(..)) => self.put(key, &PlotEvents::new(), None)?,
+                Err(Error::NotFound(..)) => self.put(key, &RawEvents::new(), None)?,
                 Err(e) => return Err(e)
             }
             

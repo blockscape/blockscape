@@ -1,9 +1,10 @@
 use bin::Bin;
 use bincode;
 use hash::hash_pub_key;
-use primitives::{Change, Mutation, U256, U160};
+use primitives::{Change, Mutation, U256, U160, RawEvent, RawEvents, event};
+use record_keeper::PlotEvent;
 use std::collections::{HashMap, HashSet};
-use super::{PlotEvent, PlotEvents, PlotID, events};
+use super::PlotID;
 use super::key::*;
 use super::database as DB;
 
@@ -23,9 +24,9 @@ pub struct NetDiff {
     /// Keys which are to be removed from the DB
     delete: HashSet<Key>,
     /// Events which need to be added to plots
-    new_events: HashMap<PlotID, PlotEvents>,
+    new_events: HashMap<PlotID, RawEvents>,
     /// Events which need to be removed from plots
-    removed_events: HashMap<PlotID, PlotEvents>
+    removed_events: HashMap<PlotID, RawEvents>
 }
 
 impl NetDiff {
@@ -40,18 +41,36 @@ impl NetDiff {
     }
 
     /// Add an event to the appropriate plot
-    pub fn add_event(&mut self, id: PlotID, tick: u64, event: PlotEvent) {
+    pub fn add_event(&mut self, id: PlotID, tick: u64, event: RawEvent) {
         //if it was in removed events, then we don't need to add it
         if !Self::remove(&mut self.removed_events, id, tick, &event) {
             Self::add(&mut self.new_events, id, tick, event);
         }
     }
 
+    /// Add an event to the appropriate plots.
+    /// TODO: Handle shards?
+    pub fn add_events(&mut self, e: &PlotEvent) {
+        self.add_event(e.from, e.tick, e.event.clone());
+        for plot in e.to.iter() {
+            self.add_event(*plot, e.tick, e.event.clone());
+        }
+    }
+
     /// Remove an event from the appropriate plot (or mark it to be removed).
-    pub fn remove_event(&mut self, id: PlotID, tick: u64, event: PlotEvent) {
+    pub fn remove_event(&mut self, id: PlotID, tick: u64, event: RawEvent) {
         //if it was in new events events, then we don't need to add it be removed
         if !Self::remove(&mut self.new_events, id, tick, &event) {
             Self::add(&mut self.removed_events, id, tick, event)
+        }
+    }
+
+    /// Add an event to the appropriate plots.
+    /// TODO: Handle shards?
+    pub fn remove_events(&mut self, e: &PlotEvent) {
+        self.remove_event(e.from, e.tick, e.event.clone());
+        for plot in e.to.iter() {
+            self.remove_event(*plot, e.tick, e.event.clone());
         }
     }
 
@@ -93,8 +112,8 @@ impl NetDiff {
             Change::BlockReward{id, ..} => {
                 self.change_validator_rep(&id, DB::BLOCK_REWARD);
             },
-            Change::Event{id, tick, event} => {
-                self.add_event(id, tick, event);
+            Change::PlotEvent(e) => {
+                self.add_events(&e);
             },
             Change::NewValidator{pub_key, ..} => {
                 let key = NetworkEntry::ValidatorRep( hash_pub_key(&pub_key) ).into();
@@ -118,8 +137,8 @@ impl NetDiff {
             Change::BlockReward{id, ..} => {
                 self.change_validator_rep(&id, -DB::BLOCK_REWARD);
             },
-            Change::Event{id, tick, event} => {
-                self.remove_event(id, tick, event);
+            Change::PlotEvent(e) => {
+                self.remove_events(&e);
             },
             Change::NewValidator{pub_key, ..} => {
                 self.delete_value(NetworkEntry::ValidatorKey( hash_pub_key(&pub_key) ).into());
@@ -131,12 +150,12 @@ impl NetDiff {
     }
 
     /// Retrieve a list of new events for a given plot.
-    pub fn get_new_events(&self, plot: PlotID) -> Option<&PlotEvents> {
+    pub fn get_new_events(&self, plot: PlotID) -> Option<&RawEvents> {
         self.new_events.get(&plot)
     }
 
     /// Retrieves a list of events to be removed from a given plot.
-    pub fn get_removed_events(&self, plot: PlotID) -> Option<&PlotEvents> {
+    pub fn get_removed_events(&self, plot: PlotID) -> Option<&RawEvents> {
         self.removed_events.get(&plot)
     }
 
@@ -152,7 +171,7 @@ impl NetDiff {
     }
 
     /// Check if an event has been marked for removal from its associated plots.
-    pub fn is_event_removed(&self, plot: PlotID, tick: u64, event: &PlotEvent) -> bool {
+    pub fn is_event_removed(&self, plot: PlotID, tick: u64, event: &RawEvent) -> bool {
         if let Some(plot) = self.removed_events.get(&plot) {
             if let Some(events) = plot.get(&tick) {
                 events.contains(event)
@@ -186,22 +205,22 @@ impl NetDiff {
 
 
     /// Attempt to remove an event from list and return whether it was was there or not.
-    fn remove(plots: &mut HashMap<PlotID, PlotEvents>, id: PlotID, tick: u64, event: &PlotEvent) -> bool {
+    fn remove(plots: &mut HashMap<PlotID, RawEvents>, id: PlotID, tick: u64, event: &RawEvent) -> bool {
         if let Some(plot) = plots.get_mut(&id) {
-            events::remove_event(plot, tick, event)
+            event::remove_event(plot, tick, event)
         } else { false } // did not remove because plot is not listed)
     }
 
-    fn add(plots: &mut HashMap<PlotID, PlotEvents>, id: PlotID, tick: u64, event: PlotEvent) {
+    fn add(plots: &mut HashMap<PlotID, RawEvents>, id: PlotID, tick: u64, event: RawEvent) {
         // check if we need to create a new entry (if not go ahead and append it)
         if let Some(plot) = plots.get_mut(&id) {
-            events::add_event(plot, tick, event);
+            event::add_event(plot, tick, event);
             return;
         }
 
         // insert a new entry
-        let mut plot = PlotEvents::new();
-        events::add_event(&mut plot, tick, event);
+        let mut plot = RawEvents::new();
+        event::add_event(&mut plot, tick, event);
         plots.insert(id, plot);
     }
 }
@@ -212,7 +231,7 @@ use std::vec::IntoIter as VecIntoIter;
 /// the list of events to remove, and finally it has the list of new events,
 pub struct EventDiffIter<'a>(&'a NetDiff, VecIntoIter<PlotID>);
 impl<'a> Iterator for EventDiffIter<'a> {
-    type Item = (PlotID, Option<&'a PlotEvents>, Option<&'a PlotEvents>);
+    type Item = (PlotID, Option<&'a RawEvents>, Option<&'a RawEvents>);
 
     fn next(&mut self) -> Option<Self::Item> {
         self.1.next().map(|k| (k, self.0.get_removed_events(k), self.0.get_new_events(k)) )
