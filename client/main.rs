@@ -29,7 +29,6 @@ extern crate bincode;
 
 mod boot;
 mod context;
-mod plot_event;
 mod rules;
 mod reporter;
 mod format;

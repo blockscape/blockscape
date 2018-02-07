@@ -2,6 +2,9 @@ use primitives::{Block, JBlock, Txn, JTxn, Event, RawEvent, JRawEvent};
 use std::collections::BTreeSet;
 use std::mem::size_of;
 use super::PlotID;
+use bincode;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 
 /// An event regarding the keeping of records, such as the introduction of a new block or shifting
 /// state.
@@ -38,6 +41,38 @@ impl PlotEvent {
     pub fn calculate_size(&self) -> usize {
         size_of::<PlotID>() * (2 + self.to.len()) +
         self.event.len() + 1
+    }
+}
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DePlotEvent<E> where E: Event {
+    pub from: PlotID,
+    pub to: BTreeSet<PlotID>,
+    pub tick: u64,
+    pub event: E
+}
+impl<E: Event> Event for DePlotEvent<E> {}
+
+impl<E> DePlotEvent<E> where E: Event + DeserializeOwned {
+    pub fn deserialize(e: &PlotEvent) -> Result<DePlotEvent<E>, bincode::Error> {
+        Ok(DePlotEvent {
+            from: e.from,
+            to: e.to.clone(),
+            tick: e.tick,
+            event: bincode::deserialize(&e.event)?
+        })
+    }
+}
+
+impl<E> DePlotEvent<E> where E: Event + Serialize {
+    pub fn serialize(&self) -> Result<PlotEvent, bincode::Error> {
+        Ok(PlotEvent {
+            from: self.from,
+            to: self.to.clone(),
+            tick: self.tick,
+            event: bincode::serialize(&self.event, bincode::Infinite)?
+        })
     }
 }
 

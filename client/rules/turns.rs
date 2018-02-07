@@ -1,31 +1,19 @@
-use blockscape_core::record_keeper::{MutationRule, Error, LogicError, NetState, plot_events_rule_iter};
+use blockscape_core::record_keeper::{MutationRule, Error, NetState, LogicError};
+use blockscape_core::record_keeper::error::assert_mut_valid;
 use blockscape_core::primitives::{Change, U160};
 use blockscape_core::bin::*;
 use checkers;
 use bincode;
 use std::collections::HashMap;
 
-/// Enforce tick progression to happen as turns. I.e. tick 0 is init, and then odd ticks are player1's turn and even ticks are player2's turn.
+/// Enforce tick progression to happen as turns. I.e. tick 0 is init, and then odd ticks are
+/// player1's turn and even ticks are player2's turn. This does not validate game logic, only
+/// blockchain-level stuff which must be correct.
 pub struct Turns;
 impl MutationRule for Turns {
     fn is_valid(&self, net_state: &NetState, mutation: &Vec<(Change, U160)>, _cache: &mut Bin) -> Result<(), Error> {
         // Construct a list of all the game events so we can mess around with it
-        let mut events = Vec::new();
-        plot_events_rule_iter(|event, player| {
-            events.push((
-                event.from,
-                event.tick,
-                bincode::deserialize::<checkers::Event>(&event.event)?,
-                player
-            )); Ok(())
-        }, mutation)?;
-
-        // sort them by plot and then by tick
-        events.sort_by(|a, b|
-            a.0.cmp(&b.0).then(
-                a.1.cmp(&b.1)
-            )
-        );
+        let events = super::get_events(mutation)?;
 
         // keep track of the players of games to prevent needing to find them again
         let mut players= HashMap::new();
@@ -35,56 +23,50 @@ impl MutationRule for Turns {
         let mut last_coord = None;
         let mut last_turn = 0u64;
         let mut iter = events.iter();
-        while let Some(i) = iter.next() {
-            if last_coord == Some(i.0) { // same plot
-                if (last_turn + 1) != i.1 {
-                    return Err(LogicError::InvalidMutation("Cannot skip or duplicate turns".into()).into())
-                } last_turn += 1;
+        while let Some(&(ref e, _)) = iter.next() {
+            assert_mut_valid(e.to.is_empty(), "Checkers events only occur on one plot.")?;
+
+            if last_coord == Some(e.from) { // same plot
+                assert_mut_valid(last_turn + 1 == e.tick, "Cannot skip or duplicate turns.")?;
+                last_turn += 1;
             }
             else { // new plot encountered
-                last_coord = Some(i.0);
-                last_turn = i.1;
+                last_coord = Some(e.from);
+                last_turn = e.tick;
 
                 // check network state to make sure we are continuing in the right place
-                if i.1 == 0 { //trying to make a new game
-                    if let checkers::Event::Start(p1, p2) = i.2 {
-                        players.insert(i.0, (p1, p2));
+                if e.tick == 0 { //trying to make a new game
+                    if let checkers::Event::Start(p1, p2) = e.event {
+                        players.insert(e.from, (p1, p2));
                     } else {
                         return Err(LogicError::InvalidMutation("Must have new game txn to begin a game".into()).into())
                     }
 
-                    if !net_state.get_plot_events(i.0, 0)?.is_empty() {
-                        return Err(LogicError::InvalidMutation("Cannot start a new game on an existing board.".into()).into())
-                    }
+                    assert_mut_valid(
+                        net_state.get_plot_events(e.from, 0)?.is_empty(),
+                        "Cannot start a new game on an existing board."
+                    )?;
                 }
                 else { //trying to continue an existing game
-                    let events = net_state.get_plot_events(i.0, 0)?;
+                    let events = net_state.get_plot_events(e.from, 0)?;
                     let ps = events.get(&0);
-                    if ps.is_none() || !events.contains_key(&(i.1 - 1)) {
-                        return Err(LogicError::InvalidMutation("Missing prior turns.".into()).into())
-                    }
-                    if events.contains_key(&i.1) {
-                        return Err(LogicError::InvalidMutation("Cannot replace existing turn.".into()).into())
-                    }
+                    assert_mut_valid(!ps.is_none() && events.contains_key(&(e.tick - 1)), "Missing prior turns.")?;
+                    assert_mut_valid(!events.contains_key(&e.tick), "Cannot replace existing turn.")?;
                     if let checkers::Event::Start(p1, p2) = bincode::deserialize(&ps.unwrap()[0])? {
-                        players.insert(i.0, (p1, p2));
+                        players.insert(e.from, (p1, p2));
                     } else { unreachable!() }
                 }
             }
         }
 
         // make sure players play on the correct turn
-        for &(plot, tick, _, player) in events.iter() {
-            if tick == 0 { continue; }
-            let &(p1, p2) = players.get(&plot).unwrap();
-            if tick % 2 == 1 { // p1 turn
-                if player != p1 {
-                    return Err(LogicError::InvalidMutation("Invalid player.".into()).into())
-                }
+        for &(ref e, player) in events.iter() {
+            if e.tick == 0 { continue; }
+            let &(p1, p2) = players.get(&e.from).unwrap();
+            if e.tick % 2 == 1 { // p1 turn
+                assert_mut_valid(player == p1, "Invalid player.")?;
             } else { // p2 turn
-                if player != p2 {
-                    return Err(LogicError::InvalidMutation("Invalid player.".into()).into())
-                }
+                assert_mut_valid(player == p2, "Invalid player.")?;
             }
         }
 

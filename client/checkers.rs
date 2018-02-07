@@ -1,5 +1,7 @@
 use blockscape_core::primitives::{U160};
 use blockscape_core::primitives::Event as CoreEvent;
+use blockscape_core::record_keeper::Error as RKErr;
+use blockscape_core::record_keeper::LogicError;
 use blockscape_core::bin::*;
 use bincode;
 use std::fmt;
@@ -10,6 +12,18 @@ use std::ops::Deref;
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Hash, Eq, PartialEq)]
 pub enum Player {
     Red, Black
+}
+
+impl Player {
+    /// Determine what player's turn it is for a given turn number.
+    #[inline]
+    pub fn from_turn(turn: u64) -> Result<Player, Error> {
+        match turn {
+            0 => Err(Error::InvalidPlay),
+            t @ _ if t % 2 == 1 => Ok(Player::Red),
+            _ => Ok(Player::Black)
+        }
+    }
 }
 
 
@@ -201,22 +215,26 @@ impl Board {
         Board([[Tile::None; 8]; 8])
     }
 
+    /// Make a move defined by the event for the given player. This will validate the action to make
+    /// sure it is valid and will change the board state if it is valid and return an error if not.
+    /// *Note:* The state will remain unchanged if the play is invalid.
     pub fn play(&mut self, event: Event, player: Player) -> Result<(), Error> {
+        use self::Error::*;
         match event {
             Event::Move(idx, dir) => {
                 let (r, c) = Self::idx_to_rc(idx)?;
                 let (r, c) = (r as usize, c as usize);
 
                 // check basic direction and player ownership logic
-                if self.0[r][c] == Tile::None { return Err(Error::MissingPiece); }
-                if !self.0[r][c].is_this_player(player) { return Err(Error::WrongPlayer); }
-                if !self.0[r][c].valid_direction(dir) { return Err(Error::InvalidPlay); }
+                if self.0[r][c] == Tile::None { return Err(MissingPiece); }
+                if !self.0[r][c].is_this_player(player) { return Err(WrongPlayer); }
+                if !self.0[r][c].valid_direction(dir) { return Err(InvalidPlay); }
 
                 // find new position and verify it is valid
                 let (nr, nc) = dir.move_in_dir(r, c);
                 if nr > 7 || nc > 7 || self.0[nr][nc] != Tile::None {
                     //unsigned, so never less than zero
-                    return Err(Error::InvalidPlay);
+                    return Err(InvalidPlay);
                 }
 
                 // move the piece
@@ -235,8 +253,8 @@ impl Board {
                 let (r, c) = (r as usize, c as usize);
 
                 // check basic direction and player ownership logic
-                if self.0[r][c] == Tile::None { return Err(Error::MissingPiece); }
-                if !self.0[r][c].is_this_player(player) { return Err(Error::WrongPlayer); }
+                if self.0[r][c] == Tile::None { return Err(MissingPiece); }
+                if !self.0[r][c].is_this_player(player) { return Err(WrongPlayer); }
                 let (mut nr, mut nc): (usize, usize) = (r, c);
 
                 let old_board = self.0.clone();
@@ -244,7 +262,7 @@ impl Board {
                 for dir in path {
                     if !self.0[r][c].valid_direction(dir) {
                         self.0 = old_board;
-                        return Err(Error::InvalidPlay);
+                        return Err(InvalidPlay);
                     }
 
                     let (pr, pc) = dir.move_in_dir(nr, nc); //passover piece
@@ -258,7 +276,7 @@ impl Board {
                         //must land on an empty tile
                         //must pass over an opponent tile
                         self.0 = old_board;
-                        return Err(Error::InvalidPlay);
+                        return Err(InvalidPlay);
                     }
 
                     // perform jump
@@ -274,7 +292,7 @@ impl Board {
 
                 Ok(())
             },
-            Event::Start(..) => Err(Error::GameAlreadyStarted)
+            Event::Start(..) => Err(GameAlreadyStarted)
         }
     }
 

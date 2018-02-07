@@ -8,6 +8,13 @@ pub struct GameStateCache<S> {
 }
 
 impl<S> GameStateCache<S> {
+    pub fn new() -> GameStateCache<S> {
+        GameStateCache {
+            states: BTreeMap::new(),
+            latest: HashMap::new()
+        }
+    }
+
     /// Cache a state. Will remove any cached states for that plot which come at a later tick.
     pub fn cache(&mut self, tick: u64, plot: PlotID, state: S) {
         if !self.states.contains_key(&tick) {
