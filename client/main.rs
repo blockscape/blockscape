@@ -130,16 +130,21 @@ fn main() {
         threads.push(t);
     }
 
+    let checkers_game = Arc::new(CheckersGame{ 
+        rk: Arc::clone(&rk), 
+        sign_key: PKey::private_key_from_pem(boot::TESTING_PRIVATE).unwrap(), 
+        cache: game_cache 
+    });
+
     let ctx = Rc::new(Context {
         rk: rk.clone(),
         network: net_client.clone(),
+        game: checkers_game,
         // this block forger will be callibrated to mine a block every 10 seconds, with 6 hours before each recalculate
         forge_algo: Box::new(FlowerPicking::new(rk, core.handle(), 10 * 1000, 2160)),
 
         forge_key: PKey::private_key_from_pem(boot::TESTING_PRIVATE).unwrap()
     });
-
-    let checkers_game = CheckersGame{ context: Rc::clone(&ctx), cache: game_cache };
 
     // Open RPC interface
     let rpc = make_rpc(&cmdline, Rc::clone(&ctx));

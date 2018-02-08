@@ -6,6 +6,7 @@ mod types;
 mod blockchain;
 mod control;
 mod network;
+mod checkers;
 
 use context::Context;
 use jsonrpc_core::*;
@@ -14,9 +15,12 @@ use rpc::types::LogMiddleware;
 use std::net::SocketAddr;
 use std::rc::Rc;
 
+use blockscape_core::hash::hash_pub_key;
+
 use rpc::blockchain::BlockchainRPC;
 use rpc::control::ControlRPC;
 use rpc::network::NetworkRPC;
+use rpc::checkers::CheckersRPC;
 
 pub struct RPC {
     server: Server,
@@ -34,6 +38,8 @@ impl RPC {
         }
 
         BlockchainRPC::add(ctx.rk.clone(), &mut io);
+        CheckersRPC::add(
+            ctx.game.clone(), ctx.key_hash(), &mut io);
 
         RPC {
             server: ServerBuilder::new(io).start_http(&bind_addr).expect("Could not start RPC Interface")

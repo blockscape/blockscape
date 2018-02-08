@@ -300,7 +300,7 @@ impl Board {
 
     /// Convert an index to row-column
     #[inline]
-    fn idx_to_rc(idx: u8) -> Result<(u8, u8), Error> {
+    pub fn idx_to_rc(idx: u8) -> Result<(u8, u8), Error> {
         if idx > 63 {
             Err(Error::InvalidCoordinate)
         } else {
@@ -310,7 +310,7 @@ impl Board {
 
     /// Convert row-column to an index
     #[inline]
-    fn rc_to_idx(r: u8, c: u8) -> Result<u8, Error> {
+    pub fn rc_to_idx(r: u8, c: u8) -> Result<u8, Error> {
         if r > 7 || c > 7 {
             Err(Error::InvalidCoordinate)
         } else {

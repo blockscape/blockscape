@@ -128,12 +128,3 @@ fn into_rpc_res<T, J>(r: Result<T, RKErr>) -> RpcResult
 {
     to_rpc_res::<J>( r.map(|v| v.into()) )
 }
-
-fn map_rk_err(e: RKErr) -> Error {
-    match e {
-        RKErr::DB(..) => Error::internal_error(),
-        RKErr::Deserialize(msg) => Error::invalid_params(msg),
-        RKErr::Logic(err) => Error::invalid_params(format!("{:?}", err)),
-        RKErr::NotFound(..) => Error::invalid_request()
-    }
-}
