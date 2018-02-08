@@ -23,7 +23,7 @@ impl MutationRule for Turns {
         let mut last_coord = None;
         let mut last_turn = 0u64;
         let mut iter = events.iter();
-        while let Some(&(ref e, _)) = iter.next() {
+        while let Some(&(ref e, player)) = iter.next() {
             assert_mut_valid(e.tick <= 500, "Games may not have more than 500 turns.")?;
             assert_mut_valid(e.to.is_empty(), "Checkers events only occur on one plot.")?;
 
@@ -38,6 +38,10 @@ impl MutationRule for Turns {
                 // check network state to make sure we are continuing in the right place
                 if e.tick == 0 { //trying to make a new game
                     if let checkers::Event::Start(p1, p2) = e.event {
+                        assert_mut_valid(
+                            p1 == player || p2 == player,
+                            "Cannot start a game for other players."
+                        )?;
                         players.insert(e.from, (p1, p2));
                     } else {
                         return Err(LogicError::InvalidMutation("Must have new game txn to begin a game".into()).into())
