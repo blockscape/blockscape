@@ -409,7 +409,7 @@ impl Session {
                     let d = txn.clone();
                     let rk = Arc::clone(&self.context.rk);
                     self.context.event_loop.spawn(self.context.rk.get_worker().spawn_fn(move || {
-                        rk.add_pending_txn(&d, true)
+                        rk.add_pending_txn(d, true)
                     }).map(|_| ()).or_else(|err| {
                         // react for this node's records here if they are bad
                         match err {

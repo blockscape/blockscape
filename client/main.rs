@@ -33,6 +33,7 @@ mod rules;
 mod reporter;
 mod format;
 mod forger;
+mod game;
 
 mod rpc;
 
@@ -54,7 +55,9 @@ use openssl::pkey::PKey;
 use blockscape_core::env;
 use blockscape_core::forging::flower_picking::FlowerPicking;
 use blockscape_core::network::client::*;
-use blockscape_core::record_keeper::RecordKeeper;
+use blockscape_core::record_keeper::{RecordKeeper};
+
+use game::CheckersGame;
 
 use boot::*;
 
@@ -98,10 +101,11 @@ fn main() {
     let genesis = make_genesis();
     let genesis_net = genesis.0.calculate_hash();
 
+    let game_cache = game::create_cache();
     let rk = Arc::new(
         RecordKeeper::open(
             {let mut p = env::get_storage_dir().unwrap(); p.push("db"); p},
-            Some(rules::build_rules()),
+            Some(rules::build_rules(Arc::clone(&game_cache))),
             genesis
         ).expect("Record Keeper was not able to initialize!")
     );
@@ -117,7 +121,7 @@ fn main() {
         // start network
         let cc = make_network_config(&cmdline);
 
-        let (mut h, t) = Client::run(cc, rk.clone(), quit.clone()).expect("Could not start network");
+        let (mut h, t) = Client::run(cc, Arc::clone(&rk), quit.clone()).expect("Could not start network");
 
         // must be connected to at least one network in order to do anything, might as well be genesis for now.
         h = h.send(ClientMsg::AttachNetwork(genesis_net, ShardMode::Primary)).wait().expect("Could not attach to root network!");
@@ -130,10 +134,12 @@ fn main() {
         rk: rk.clone(),
         network: net_client.clone(),
         // this block forger will be callibrated to mine a block every 10 seconds, with 6 hours before each recalculate
-        forge_algo: Box::new(FlowerPicking::new(rk.clone(), core.handle(), 10 * 1000, 2160)),
+        forge_algo: Box::new(FlowerPicking::new(rk, core.handle(), 10 * 1000, 2160)),
 
         forge_key: PKey::private_key_from_pem(boot::TESTING_PRIVATE).unwrap()
     });
+
+    let checkers_game = CheckersGame{ context: Rc::clone(&ctx), cache: game_cache };
 
     // Open RPC interface
     let rpc = make_rpc(&cmdline, Rc::clone(&ctx));

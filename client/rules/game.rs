@@ -1,5 +1,4 @@
 use blockscape_core::record_keeper::{MutationRule, Error, LogicError, NetState, GameStateCache};
-use blockscape_core::record_keeper::error::assert_mut_valid;
 use blockscape_core::primitives::{Change, U160};
 use blockscape_core::bin::*;
 use std::error::Error as StdErr;
@@ -7,11 +6,11 @@ use checkers;
 use bincode;
 use std::sync::{Arc, RwLock};
 
-type Cache = Arc<RwLock<GameStateCache<checkers::Board>>>;
+use game::GameCache;
 
 /// Validate based on game rules to make sure actions are valid. This will create and track a
 /// checkers game state for each plot and verify that a given move make sense and perform it.
-pub struct Game(Cache);
+pub struct Game(GameCache);
 
 impl Default for Game {
     fn default() -> Game {
@@ -20,11 +19,11 @@ impl Default for Game {
 }
 
 impl Game {
-    pub fn new(cache: Cache) -> Game {
+    pub fn new(cache: GameCache) -> Game {
         Game(cache)
     }
 
-    pub fn get_cache(&self) -> Cache {
+    pub fn get_cache(&self) -> GameCache {
         Arc::clone(&self.0)
     }
 }

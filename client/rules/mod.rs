@@ -1,17 +1,17 @@
-use blockscape_core::record_keeper::{MutationRules, Error, PlotID, plot_events_rule_iter, DePlotEvent};
+use blockscape_core::record_keeper::{MutationRules, Error, plot_events_rule_iter, DePlotEvent};
 use blockscape_core::primitives::{Change, U160};
-use bincode;
 use checkers;
+use game::GameCache;
 
 mod valid_event;
 mod turns;
 mod game;
 
-pub fn build_rules() -> MutationRules {
+pub fn build_rules(cache: GameCache) -> MutationRules {
     let mut rules = MutationRules::new();
     rules.push_back(Box::new(valid_event::ValidEvent));
     rules.push_back(Box::new(turns::Turns));
-    rules.push_back(Box::new(game::Game::default()));
+    rules.push_back(Box::new(game::Game::new(cache)));
     rules
 }
 

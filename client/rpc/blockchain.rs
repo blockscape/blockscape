@@ -46,7 +46,7 @@ impl BlockchainRPC {
 
     fn add_pending_txn(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
         let txn = expect_one_arg::<JTxn>(params)?.into();
-        to_rpc_res(self.rk.add_pending_txn(&txn, true))
+        to_rpc_res(self.rk.add_pending_txn(txn, true))
     }
 
     fn get_validator_key(&self, params: Params, _meta: SocketMetadata) -> RpcResult {

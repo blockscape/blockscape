@@ -24,6 +24,7 @@ impl MutationRule for Turns {
         let mut last_turn = 0u64;
         let mut iter = events.iter();
         while let Some(&(ref e, _)) = iter.next() {
+            assert_mut_valid(e.tick <= 500, "Games may not have more than 500 turns.")?;
             assert_mut_valid(e.to.is_empty(), "Checkers events only occur on one plot.")?;
 
             if last_coord == Some(e.from) { // same plot

@@ -213,7 +213,7 @@ impl RecordKeeper {
     /// Add a new transaction to the pool of pending transactions after validating it. Returns true
     /// if it was added successfully to pending transactions, and returns false if it is already in
     /// the list of pending transactions or accepted into the database..
-    pub fn add_pending_txn(&self, txn: &Txn, fresh: bool) -> Result<bool, Error> {
+    pub fn add_pending_txn(&self, txn: Txn, fresh: bool) -> Result<bool, Error> {
         let hash = txn.calculate_hash();
 
         let mut txns = self.pending_txns.write().unwrap();
@@ -232,11 +232,11 @@ impl RecordKeeper {
         }
 
         // add the event
-        self.is_valid_txn(txn)?;
+        self.is_valid_txn(&txn)?;
         txns.insert(hash, txn.clone());
 
         // notify listeners
-        self.record_listeners.lock().unwrap().notify(&RecordEvent::NewTxn{fresh, txn: txn.clone()});
+        self.record_listeners.lock().unwrap().notify(&RecordEvent::NewTxn{fresh, txn: txn.clone() });
         let mut game_listeners = self.game_listeners.lock().unwrap();
         for change in txn.mutation.changes.iter() {  match change {
             &Change::PlotEvent(ref e) => {
@@ -261,7 +261,7 @@ impl RecordKeeper {
         let last = blocks.last().unwrap().calculate_hash();
 
         for txn in txns {
-            self.add_pending_txn(&txn.1, false)?;
+            self.add_pending_txn(txn.1, false)?;
         } for block in blocks {
             self.add_block(&block, false)?;
         }
@@ -374,6 +374,15 @@ impl RecordKeeper {
     pub fn add_rule(&mut self, rule: Box<MutationRule>) {
         let mut rules_lock = self.rules.write().unwrap();
         rules_lock.push_back(rule);
+    }
+
+    /// Add a list of new rules to the database regarding what network mutations are valid. These
+    /// will only impact things which are mutated through the `mutate` function.
+    pub fn add_rules(&mut self, rules: MutationRules) {
+        let mut rules_lock = self.rules.write().unwrap();
+        for rule in rules {
+            rules_lock.push_back(rule);
+        }
     }
 
     /// Check if a block is valid and all its components.

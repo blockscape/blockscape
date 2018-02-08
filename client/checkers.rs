@@ -1,7 +1,5 @@
 use blockscape_core::primitives::{U160};
 use blockscape_core::primitives::Event as CoreEvent;
-use blockscape_core::record_keeper::Error as RKErr;
-use blockscape_core::record_keeper::LogicError;
 use blockscape_core::bin::*;
 use bincode;
 use std::fmt;
