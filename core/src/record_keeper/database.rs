@@ -202,6 +202,27 @@ impl Database {
         self.get(BlockchainEntry::Txn(hash).into())
     }
 
+    /// Get the block a txn is part of. **Warning:** this will scan the blockchain and should only
+    /// be used for debugging at the moment. We can add caching if this is useful for some reason.
+    pub fn get_txn_block(&self, hash: U256) -> Result<U256, Error> {
+        // verify we know of the txn so it is not a wild goose chase, will return NotFound error if
+        // it is not in the DB.
+        self.get_txn(hash)?;
+
+        // now find where it is
+        for res in DownIter(&self, self.get_current_block_hash()) {
+            let (b_hash, header) = res?;
+            let block = self.complete_block(header)?;
+            for h in block.txns {
+                if h == hash {
+                    return Ok(b_hash);
+                }
+            }
+        }
+
+        unreachable!()
+    }
+
     /// Get the public key of a validator given their ID.
     /// TODO: Handle shard-based reputations
     pub fn get_validator_key(&self, id: U160) -> Result<Bin, Error> {

@@ -1,12 +1,11 @@
 use checkers;
 use std::sync::{Arc, RwLock};
-use blockscape_core::record_keeper::{GameStateCache, Error, PlotID, PlotEvent};
+use blockscape_core::record_keeper::{RecordKeeper, GameStateCache, Error, PlotID, PlotEvent};
 use blockscape_core::primitives::{Txn, Mutation, Change};
 use std::collections::BTreeSet;
 use blockscape_core::bin::*;
 use blockscape_core::time::Time;
 use blockscape_core::hash::hash_pub_key;
-use blockscape_core::record_keeper::RecordKeeper;
 use openssl::pkey::PKey;
 use bincode;
 
@@ -29,7 +28,7 @@ impl CheckersGame {
     /// Get the game board at the given plot. If tick is specified, it will attempt to get a board
     /// at that tick, if the tick comes after the latest known information, then it will simply give
     /// the latest board. If it is None, it will simply get the latest known state. If no game has
-    /// been started on the given plot, it will return an error.
+    /// been started on the given plot, it will return the default starting board.
     pub fn get_board(&self, location: PlotID, tick: Option<u64>) -> Result<checkers::Board, Error> {
         let (actual_tick, mut board) = self.cache.read().unwrap().latest(location, tick)
             .map(|(t, b)| (t, b.clone()))
@@ -67,6 +66,7 @@ impl CheckersGame {
     /// Wrap a checkers event in a txn and submit it to record keeper.
     pub fn play(&self, location: PlotID, event: checkers::Event) -> Result<(), Error> {
         let tick = self.get_moves(location)?.len() as u64;
+        debug!("Playing {:?} on turn {}", event, tick);
         let change = Change::PlotEvent(PlotEvent{
             from: location,
             to: BTreeSet::new(),

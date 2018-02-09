@@ -394,7 +394,12 @@ mod tests {
         use super::Player::*;
         use super::Direction::*;
         let rc_to_idx = |r, c| Board::rc_to_idx(r, c).unwrap();
-        let mut board = Board::new();
+        let mut board = Board::default();
+        assert!(board.play(Move(rc_to_idx(5, 3), NW), Red).is_ok());
+        assert!(board.play(Move(rc_to_idx(2, 0), SE), Black).is_ok());
+        assert!(board.play(Jump(rc_to_idx(4, 2), vec![NW]), Red).is_ok());
+
+        board = Board::new();
         board.0[0][0] = Tile::BlackKing;
         board.0[1][1] = Tile::Red;
         board.0[3][3] = Tile::RedKing;

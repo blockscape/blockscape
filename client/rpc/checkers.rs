@@ -40,34 +40,36 @@ impl CheckersRPC {
 
         let pid = read_plot_id(&p_arr[0..2])?;
 
-        // TODO: take into oaccount move number
+        // TODO: take into account move number
         to_rpc_res(self.game.get_board(pid, None).map(|b| format!("{}", b)).map_err(|_| Error::internal_error()))
     }
 
     fn play_checkers(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
         let p_arr = parse_args_simple(params, 4..100)?;
-
         let pid = read_plot_id(&p_arr[0..2])?;
-
         let c = read_chess_coord(&p_arr[2])?;
 
-        let e = if p_arr[3].to_lowercase() == "move" {
-            let n = read_direction(&p_arr[4])?;
-            Ok(checkers::Event::Move(checkers::Board::rc_to_idx(c.0 as u8, c.1 as u8).unwrap_or(0), n))
-        }
-        else if p_arr[3].to_lowercase() == "jump" {
-            let mut moves = Vec::with_capacity(p_arr.len() - 4);
+        let e = match p_arr[3].to_lowercase().as_str() {
+            "move" => {
+                let n = read_direction(&p_arr[4])?;
+                Ok(checkers::Event::Move(
+                    checkers::Board::rc_to_idx(c.0 as u8, c.1 as u8)
+                        .unwrap_or(0), n)
+                )
+            },
+            "jump" => {
+                let mut moves: Vec<checkers::Direction> = Vec::with_capacity(p_arr.len() - 4);
 
-            let mut iter = p_arr.into_iter();
+                for m in &p_arr[4..] {
+                    moves.push(read_direction(m)?);
+                }
 
-            while let Some(m) = iter.next() {
-                moves.push(read_direction(&m)?);
-            }
-
-            Ok(checkers::Event::Jump(checkers::Board::rc_to_idx(c.0 as u8, c.1 as u8).unwrap_or(0), moves))
-        }
-        else {
-            return Err(Error::invalid_params(format!("Unrecognized play command: {}", p_arr[3])));
+                Ok(checkers::Event::Jump(
+                    checkers::Board::rc_to_idx(c.0 as u8, c.1 as u8)
+                        .unwrap_or(0), moves)
+                )
+            },
+            _ => { return Err(Error::invalid_params(format!("Unrecognized play command: {}", p_arr[3]))); }
         }?;
 
         to_rpc_res(self.game.play(pid, e).map_err(map_rk_err))
@@ -110,8 +112,8 @@ fn read_chess_coord(p: &String) -> Result<Coord, Error> {
 
     let mut chars = p.chars();
 
-    let row = chars.next().unwrap() as u8 - ('a' as u8);
-    let col = chars.next().unwrap() as u8 - ('1' as u8);
+    let col = chars.next().unwrap() as u8 - ('a' as u8);
+    let row = chars.next().unwrap() as u8 - ('1' as u8);
 
     if row >= 8 || col >= 8 {
         return Err(Error::invalid_params("Chess coordinate is not valid"));
@@ -121,12 +123,12 @@ fn read_chess_coord(p: &String) -> Result<Coord, Error> {
 }
 
 fn read_direction(p: &String) -> Result<checkers::Direction, Error> {
-
+    let p = p.to_lowercase();
     match p.as_str() {
-        "NW" => Ok(checkers::Direction::NW),
-        "NE" => Ok(checkers::Direction::NE),
-        "SE" => Ok(checkers::Direction::SE),
-        "SW" => Ok(checkers::Direction::SW),
+        "nw" => Ok(checkers::Direction::NW),
+        "ne" => Ok(checkers::Direction::NE),
+        "se" => Ok(checkers::Direction::SE),
+        "sw" => Ok(checkers::Direction::SW),
         _ => Err(Error::invalid_params("Invalid move direction"))
     }
 }

@@ -34,6 +34,7 @@ impl BlockchainRPC {
         d.add_method_with_meta("get_block_header", Self::get_block_header);
         d.add_method_with_meta("get_block", Self::get_block);
         d.add_method_with_meta("get_txn", Self::get_txn);
+        d.add_method_with_meta("get_txn_block", Self::get_txn_block);
 
         io.extend_with(d);
         rpc
@@ -113,6 +114,11 @@ impl BlockchainRPC {
     fn get_txn(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
         let hash = expect_one_arg::<JU256>(params)?.into();
         into_rpc_res::<_, JTxn>(self.rk.get_txn(&hash))
+    }
+
+    fn get_txn_block(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
+        let hash = expect_one_arg::<JU256>(params)?.into();
+        to_rpc_res(self.rk.get_txn_block(hash).map(|o| o.map(|h| JU256::from(h))))
     }
 }
 

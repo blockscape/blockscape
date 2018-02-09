@@ -1,6 +1,6 @@
 use bin::Bin;
 use bincode;
-use primitives::{U256, U160, RawEvents, event, Txn, Change};
+use primitives::{U256, U160, RawEvents, event, Txn};
 use super::database::Database;
 use super::{Error, NetDiff, PlotID};
 use super::error::map_not_found;

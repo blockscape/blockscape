@@ -232,7 +232,7 @@ impl RecordKeeper {
         }
 
         // add the event
-        self.is_valid_txn(&txn)?;
+        self.is_valid_txn_given_lock(&*db, &*txns, &txn)?;
         txns.insert(hash, txn.clone());
 
         // notify listeners
@@ -394,24 +394,15 @@ impl RecordKeeper {
             db.get_diff(&db.get_current_block_hash(), &block.prev)?,
             Some(&*pending)
         );
-        self.is_valid_block_given_lock(&state, &db, block)
+        self.is_valid_block_given_state(&state, &db, block)
     }
 
-    /// Check if a txn is valid given the current network stafrom: PlotID, to: &BTreeSet<PlotID>, tick: u64, event: &RawEventte. Use this to validate pending txns.
+    /// Check if a txn is valid given the current network state: PlotID, to: &BTreeSet<PlotID>,
+    /// tick: u64, event: &RawEventte. Use this to validate pending txns.
     pub fn is_valid_txn(&self, txn: &Txn) -> Result<(), Error> {
-        let db = self.db.read().unwrap();
         let pending = self.pending_txns.read().unwrap();
-        let state = {
-            let cur = db.get_current_block_hash();
-            NetState::new(&*db, NetDiff::new(cur, cur), Some(&*pending))
-        };
-        self.is_valid_txn_given_lock(&state, txn)?;
-
-        let mut mutation = Vec::new();
-        for change in txn.mutation.changes.iter().cloned() {
-            mutation.push((change, txn.creator));
-        }
-        self.is_valid_mutation_given_lock(&state, &mutation)
+        let db = self.db.read().unwrap();
+        self.is_valid_txn_given_lock(&*db, &*pending, txn)
     }
 
     /// Retrieve a block header from the database.
@@ -441,9 +432,23 @@ impl RecordKeeper {
         }
     }
 
+    /// Get the block a txn is part of. **Warning:** this will scan the blockchain and should only
+    /// be used for debugging at the moment. We can add caching if this is useful for some reason.
+    /// Will return Ok(Some(Block_hash)) if it is found on a block, Ok(None) if it is pending, and
+    /// Err(..) if anything goes wrong or it is not found.
+    pub fn get_txn_block(&self, hash: U256) -> Result<Option<U256>, Error> {
+        // check pending txns
+        for (h, _t) in self.pending_txns.read().unwrap().iter() {
+            if *h == hash { return Ok(None) }
+        }
+
+        // check DB
+        self.db.read().unwrap().get_txn_block(hash).map(|h| Some(h))
+    }
+
 
     /// Internal use function to check if a block and all its sub-components are valid.
-    fn is_valid_block_given_lock(&self, state: &NetState, db: &Database, block: &Block) -> Result<(), Error> {        
+    fn is_valid_block_given_state(&self, state: &NetState, db: &Database, block: &Block) -> Result<(), Error> {
         rules::block::TimeStamp.is_valid(state, db, block)?;
         rules::block::Signature.is_valid(state, db, block)?;
         rules::block::MerkleRoot.is_valid(state, db, block)?;
@@ -451,17 +456,33 @@ impl RecordKeeper {
         let mut mutation = Vec::new();
         for txn_hash in &block.txns {
             let txn = self.get_txn_given_lock(db, &txn_hash)?;
-            self.is_valid_txn_given_lock(state, &txn)?;
+            self.is_valid_txn_given_state(state, &txn)?;
             for change in txn.mutation.changes {
                 mutation.push((change, txn.creator));
             }
         }
 
-        self.is_valid_mutation_given_lock(state, &mutation)
+        self.is_valid_mutation_given_state(state, &mutation)
+    }
+
+    /// Check if a txn is valid given access to the database and pending txns. Will construct a
+    /// network state.
+    fn is_valid_txn_given_lock(&self, db: &Database, pending: &HashMap<U256, Txn>, txn: &Txn) -> Result<(), Error> {
+        let state = {
+            let cur = db.get_current_block_hash();
+            NetState::new(&*db, NetDiff::new(cur, cur), Some(&*pending))
+        };
+        self.is_valid_txn_given_state(&state, txn)?;
+
+        let mut mutation = Vec::new();
+        for change in txn.mutation.changes.iter().cloned() {
+            mutation.push((change, txn.creator));
+        }
+        self.is_valid_mutation_given_state(&state, &mutation)
     }
 
     /// Internal use function, check if a txn is valid.
-    fn is_valid_txn_given_lock(&self, state: &NetState, txn: &Txn) -> Result<(), Error> {
+    fn is_valid_txn_given_state(&self, state: &NetState, txn: &Txn) -> Result<(), Error> {
         rules::txn::Signature.is_valid(state, txn)?;
         rules::txn::AdminCheck.is_valid(state, txn)?;
         rules::txn::NewValidator.is_valid(state, txn)?;
@@ -469,7 +490,7 @@ impl RecordKeeper {
     }
 
     /// Internal use function to check if a mutation is valid.
-    fn is_valid_mutation_given_lock(&self, state: &NetState, mutation: &Vec<(Change, U160)>) -> Result<(), Error> {
+    fn is_valid_mutation_given_state(&self, state: &NetState, mutation: &Vec<(Change, U160)>) -> Result<(), Error> {
         let mut cache = Bin::new();
         // base rules
         rules::mutation::PlotEvent.is_valid(state, mutation, &mut cache)?;
