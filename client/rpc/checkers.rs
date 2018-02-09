@@ -85,7 +85,7 @@ impl CheckersRPC {
         to_rpc_res(self.game.play(pid, event).map_err(map_rk_err))
     }
 
-    fn get_my_player(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
+    fn get_my_player(&self, _params: Params, _meta: SocketMetadata) -> RpcResult {
         let m: JU160 = self.my_player.into();
 
         to_rpc_res(to_rpc_res(Ok(m)))

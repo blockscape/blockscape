@@ -15,8 +15,6 @@ use rpc::types::LogMiddleware;
 use std::net::SocketAddr;
 use std::rc::Rc;
 
-use blockscape_core::hash::hash_pub_key;
-
 use rpc::blockchain::BlockchainRPC;
 use rpc::control::ControlRPC;
 use rpc::network::NetworkRPC;

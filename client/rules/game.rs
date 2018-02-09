@@ -29,11 +29,11 @@ impl Game {
 }
 
 impl MutationRule for Game {
-    fn is_valid(&self, net_state: &NetState, mutation: &Vec<(Change, U160)>, cache: &mut Bin) -> Result<(), Error> {
+    fn is_valid(&self, net_state: &NetState, mutation: &Vec<(Change, U160)>, _cache: &mut Bin) -> Result<(), Error> {
         let events = super::get_events(mutation)?;
 
         let mut cache = self.0.write().unwrap();
-        for (event, player) in events {
+        for (event, _player) in events {
             let (start_tick, mut board) =
                 if event.tick == 0 {
                     // can ignore game setup events here
