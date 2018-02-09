@@ -1,11 +1,12 @@
 use bin::Bin;
 use bincode;
-use primitives::{U160, RawEvents, event};
+use primitives::{U256, U160, RawEvents, event, Txn, Change};
 use super::database::Database;
 use super::{Error, NetDiff, PlotID};
 use super::error::map_not_found;
 use super::key::*;
 use serde::de::DeserializeOwned;
+use std::collections::HashMap;
 
 /// A snapshot of the network state at a given point in time. This builds on a reference to the
 /// database with a diff to allow being at a point in time without modifying the DB. This will hold
@@ -16,8 +17,16 @@ pub struct NetState<'a> {
 }
 
 impl<'a> NetState<'a> {
-    /// Create a new Network Snapshot given a reference to the db and a network difference.
-    pub fn new(db: &'a Database, diff: NetDiff) -> NetState {
+    /// Create a new Network Snapshot given a reference to the db and a network difference. If
+    /// pending txns are provided, it will apply all of them immediately to the network diff.
+    pub fn new(db: &'a Database, mut diff: NetDiff, pending: Option<&'a HashMap<U256, Txn>>) -> NetState<'a> {
+        // add the pending events if any to the diff
+        if let Some(pending) = pending {
+            for (_hash, txn) in pending {
+                diff.apply_mutation(txn.mutation.clone());
+            }
+        }
+
         NetState {db, diff}
     }
 
@@ -62,6 +71,7 @@ impl<'a> NetState<'a> {
             self.db.get_plot_events(plot_id, from_tick),
             RawEvents::new()
         )?;
+
 
         // remove the removed events
         if let Some(removed_e) = removed_events {

@@ -388,16 +388,22 @@ impl RecordKeeper {
     /// Check if a block is valid and all its components.
     pub fn is_valid_block(&self, block: &Block) -> Result<(), Error> {
         let db = self.db.read().unwrap();
-        let state = NetState::new(&*db, db.get_diff(&db.get_current_block_hash(), &block.prev)?);
+        let pending = self.pending_txns.read().unwrap();
+        let state = NetState::new(
+            &*db,
+            db.get_diff(&db.get_current_block_hash(), &block.prev)?,
+            Some(&*pending)
+        );
         self.is_valid_block_given_lock(&state, &db, block)
     }
 
     /// Check if a txn is valid given the current network stafrom: PlotID, to: &BTreeSet<PlotID>, tick: u64, event: &RawEventte. Use this to validate pending txns.
     pub fn is_valid_txn(&self, txn: &Txn) -> Result<(), Error> {
         let db = self.db.read().unwrap();
+        let pending = self.pending_txns.read().unwrap();
         let state = {
             let cur = db.get_current_block_hash();
-            NetState::new(&*db, NetDiff::new(cur, cur))
+            NetState::new(&*db, NetDiff::new(cur, cur), Some(&*pending))
         };
         self.is_valid_txn_given_lock(&state, txn)?;
 
