@@ -44,7 +44,8 @@ build_arm:
       - cargo/
       - target/
   script:
-    - which cargo
+    - mkdir cargo
+    - cp /root/.cargo/config cargo
     - cargo build --release --verbose 2>&1 | tee log.txt
   artifacts:
     paths:
