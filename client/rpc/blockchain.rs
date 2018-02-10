@@ -5,19 +5,22 @@ use rpc::types::*;
 use serde::Serialize;
 use std::result::Result;
 use std::sync::Arc;
+use openssl::pkey::PKey;
 
 use blockscape_core::bin::*;
 use blockscape_core::primitives::*;
 use blockscape_core::record_keeper::RecordKeeper;
 use blockscape_core::record_keeper::Error as RKErr;
+use blockscape_core::hash::hash_pub_key;
 
 pub struct BlockchainRPC {
-    rk: Arc<RecordKeeper>
+    rk: Arc<RecordKeeper>,
+    forge_key: PKey
 }
 
 impl BlockchainRPC {
-    pub fn add(rk: Arc<RecordKeeper>, io: &mut MetaIoHandler<SocketMetadata, LogMiddleware>) -> Arc<BlockchainRPC> {
-        let rpc = Arc::new(BlockchainRPC { rk });
+    pub fn add(rk: Arc<RecordKeeper>, forge_key: PKey, io: &mut MetaIoHandler<SocketMetadata, LogMiddleware>) -> Arc<BlockchainRPC> {
+        let rpc = Arc::new(BlockchainRPC { rk, forge_key });
 
         let mut d = IoDelegate::<BlockchainRPC, SocketMetadata>::new(rpc.clone());
         d.add_method_with_meta("add_block", Self::add_block);
@@ -35,6 +38,9 @@ impl BlockchainRPC {
         d.add_method_with_meta("get_block", Self::get_block);
         d.add_method_with_meta("get_txn", Self::get_txn);
         d.add_method_with_meta("get_txn_block", Self::get_txn_block);
+
+        d.add_method_with_meta("sign_txn", Self::sign_txn);
+        d.add_method_with_meta("sign_block", Self::sign_block);
 
         io.extend_with(d);
         rpc
@@ -119,6 +125,24 @@ impl BlockchainRPC {
     fn get_txn_block(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
         let hash = expect_one_arg::<JU256>(params)?.into();
         to_rpc_res(self.rk.get_txn_block(hash).map(|o| o.map(|h| JU256::from(h))))
+    }
+
+
+    fn sign_block(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
+        let mut block : Block = expect_one_arg::<JBlock>(params)?.into();
+        block.merkle_root = Block::calculate_merkle_root(&block.txns);
+        block.creator = hash_pub_key(&self.forge_key.public_key_to_der().unwrap());
+        block = block.sign(&self.forge_key);
+        self.rk.is_valid_block(&block).map_err(map_rk_err)?;
+        to_rpc_res(Ok((JU256::from(block.calculate_hash()), JBlock::from(block))))
+    }
+
+    fn sign_txn(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
+        let mut txn : Txn = expect_one_arg::<JTxn>(params)?.into();
+        txn.creator = hash_pub_key(&self.forge_key.public_key_to_der().unwrap());
+        txn = txn.sign(&self.forge_key);
+        self.rk.is_valid_txn(&txn).map_err(map_rk_err)?;
+        to_rpc_res(Ok((JU256::from(txn.calculate_hash()), JTxn::from(txn))))
     }
 }
 

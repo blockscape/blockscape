@@ -143,7 +143,7 @@ impl Database {
     /// Returns true if the block was added, and false if it was already in the system.
     pub fn add_block(&mut self, block: &Block) -> Result<bool, Error> {
         let hash = block.calculate_hash();
-        debug!("Adding block ({}) to database", hash);
+        debug!("Adding block ({}) to database containing {} txns.", hash, block.txns.len());
 
         if self.get_block_header(&hash).is_ok() { return Ok(false) }
 

@@ -1,6 +1,6 @@
 use bin::Bin;
 use primitives::{U256, U160, U160_ZERO, Txn, Block, BlockHeader, Change, ListenerPool};
-use std::collections::{HashMap, BTreeSet, BTreeMap};
+use std::collections::{HashMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::{RwLock, Mutex};
 use primitives::{RawEvents, event};
@@ -98,56 +98,23 @@ impl RecordKeeper {
         let cbh = db.get_current_block_header()?;
         let cbh_h = cbh.calculate_hash();
 
+        let txns: BTreeSet<U256> = pending_txns.keys().cloned().collect();
 
-        let mut last_block = Block {
+        let block = Block {
             header: BlockHeader{
                 version: 1,
                 timestamp: Time::current(),
                 shard: if cbh.shard.is_zero() { cbh_h } else { cbh.shard },
                 prev: cbh_h,
-                merkle_root: Block::calculate_merkle_root(&BTreeSet::new()),
+                merkle_root: Block::calculate_merkle_root(&txns),
                 blob: Bin::new(),
                 creator: U160_ZERO,
                 signature: Bin::new()
             },
-            txns: BTreeSet::new()
+            txns
         };
 
-        // sort txns by their timestamp
-        let txns_by_time: BTreeMap<Time, &U256> = 
-            pending_txns.iter()
-                .map(|(txn_h, txn)| (txn.timestamp, txn_h))
-                .collect();
-
-        let mut accepted_txns: BTreeSet<U256> = BTreeSet::new();
-
-        for (_time, txn) in txns_by_time {
-            let mut tmp_txns = accepted_txns.clone();
-            tmp_txns.insert(*txn);
-
-            let block = Block{
-                header: BlockHeader{
-                    version: 1,
-                    timestamp: Time::current(),
-                    shard: if cbh.shard.is_zero() { cbh_h } else { cbh.shard },
-                    prev: cbh_h,
-                    merkle_root: Block::calculate_merkle_root(&tmp_txns),
-                    blob: Bin::new(),
-                    creator: U160_ZERO,
-                    signature: Bin::new()
-                },
-                txns: tmp_txns
-            };
-
-            let res = self.is_valid_block(&block);
-            match res {
-                Ok(()) => { accepted_txns.insert(*txn); last_block = block; },
-                Err(Error::Logic(..)) => {},
-                Err(e) => return Err(e)
-            }
-        }
-
-        Ok(last_block)
+        Ok(block)
     }
 
     /// Add a new block and its associated transactions to the chain state after verifying
@@ -230,6 +197,8 @@ impl RecordKeeper {
             Err(Error::NotFound(..)) => {},
             Err(e) => return Err(e)
         }
+
+        debug!("New pending txn ({})", txn.calculate_hash());
 
         // add the event
         self.is_valid_txn_given_lock(&*db, &*txns, &txn)?;
@@ -388,11 +357,8 @@ impl RecordKeeper {
     /// Check if a block is valid and all its components.
     pub fn is_valid_block(&self, block: &Block) -> Result<(), Error> {
         let db = self.db.read().unwrap();
-        let pending = self.pending_txns.read().unwrap();
         let state = NetState::new(
-            &*db,
-            db.get_diff(&db.get_current_block_hash(), &block.prev)?,
-            Some(&*pending)
+            &*db, db.get_diff(&db.get_current_block_hash(), &block.prev)?
         );
         self.is_valid_block_given_state(&state, &db, block)
     }
@@ -470,7 +436,11 @@ impl RecordKeeper {
     fn is_valid_txn_given_lock(&self, db: &Database, pending: &HashMap<U256, Txn>, txn: &Txn) -> Result<(), Error> {
         let state = {
             let cur = db.get_current_block_hash();
-            NetState::new(&*db, NetDiff::new(cur, cur), Some(&*pending))
+            let mut diff = NetDiff::new(cur, cur);
+            for mutation in pending.values().map(|txn| txn.mutation.clone()) {
+                diff.apply_mutation(mutation);
+            }
+            NetState::new(&*db, diff)
         };
         self.is_valid_txn_given_state(&state, txn)?;
 

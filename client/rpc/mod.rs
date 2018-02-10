@@ -14,6 +14,7 @@ use jsonrpc_http_server::{ServerBuilder, Server};
 use rpc::types::LogMiddleware;
 use std::net::SocketAddr;
 use std::rc::Rc;
+use openssl::pkey::PKey;
 
 use rpc::blockchain::BlockchainRPC;
 use rpc::control::ControlRPC;
@@ -35,7 +36,8 @@ impl RPC {
             NetworkRPC::add(net_client.clone(), &mut io);
         }
 
-        BlockchainRPC::add(ctx.rk.clone(), &mut io);
+        let forge_key = PKey::private_key_from_der(&ctx.forge_key.private_key_to_der().unwrap()).unwrap();
+        BlockchainRPC::add(ctx.rk.clone(), forge_key, &mut io);
         CheckersRPC::add(
             ctx.game.clone(), ctx.key_hash(), &mut io);
 
