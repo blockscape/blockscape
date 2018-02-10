@@ -538,8 +538,7 @@ impl Client {
             this = Rc::clone(&t);
             let rk_task = rkrx.for_each(move |e| {
                 match e {
-                    RecordEvent::NewBlock {block, ..} => {
-
+                    RecordEvent::NewBlock {block, fresh: true, ..} => {
                         let shard = this.shards[this.resolve_port(&block.shard) as usize].borrow();
 
                         if let Some(ref s) = *shard {
@@ -549,7 +548,7 @@ impl Client {
                         }
                         // otherwise do not propogate anything
                     },
-                    RecordEvent::NewTxn {txn} => {
+                    RecordEvent::NewTxn {txn, fresh: true} => {
                         // TODO: When we have the ability to tell which network a txn is on, apply to the correct net
                         // for now we assume genesis
                         let shard = this.shards[0].borrow();
@@ -560,6 +559,7 @@ impl Client {
                             this.context.send_packets(actions.send_packets);
                         }
                         // otherwise do not propogate anything
+                        
                     },
                     _ => {}
                 }

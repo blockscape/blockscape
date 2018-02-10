@@ -9,6 +9,8 @@ use jsonrpc_core::Params;
 use serde_json::{Value, from_value};
 use serde::de::DeserializeOwned;
 
+use blockscape_core::record_keeper::Error as RKErr;
+
 pub type RpcResult = Result<jsonrpc_core::Value, jsonrpc_core::Error>;
 pub type RpcFuture = Box<Future<Item=jsonrpc_core::Value, Error=jsonrpc_core::Error> + Send>;
 
@@ -105,6 +107,15 @@ pub fn expect_two_args<A, B>(p: Params) -> Result<(A, B), Error>
 		.map_err( |e| Error::invalid_params(format!("{:?}", e)) )?;
 
 	Ok((a, b))
+}
+
+pub fn map_rk_err(e: RKErr) -> Error {
+    match e {
+        RKErr::DB(..) => Error::internal_error(),
+        RKErr::Deserialize(msg) => Error::invalid_params(msg),
+        RKErr::Logic(err) => Error::invalid_params(format!("{:?}", err)),
+        RKErr::NotFound(..) => Error::invalid_request()
+    }
 }
 
 /*pub fn read_value<T: DeserializeOwned>(m: &mut Map<String, Value>, key: &'static str) -> Result<T, Error> {	

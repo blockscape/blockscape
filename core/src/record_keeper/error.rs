@@ -100,3 +100,14 @@ impl Display for LogicError {
         formatter.write_str(self.description())
     }
 }
+
+
+/// Returns Ok if the condition is true, or InvalidMutation if it is false.
+#[inline(always)]
+pub fn assert_mut_valid(condition: bool, msg: &'static str) -> Result<(), Error> {
+    if condition {
+        Ok(())
+    } else {
+        Err(LogicError::InvalidMutation(msg.into()).into())
+    }
+}

@@ -1,10 +1,11 @@
 use bin::Bin;
-use primitives::{U256, U160, U160_ZERO, Txn, Block, BlockHeader, Mutation, Change, ListenerPool};
-use std::collections::{HashMap, BTreeSet, BTreeMap};
+use primitives::{U256, U160, U160_ZERO, Txn, Block, BlockHeader, Change, ListenerPool};
+use std::collections::{HashMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::{RwLock, Mutex};
-use super::{Error, RecordEvent, PlotID};
-use super::{PlotEvent, PlotEvents, events, NetState, NetDiff};
+use primitives::{RawEvents, event};
+use super::{Error, RecordEvent, PlotEvent, PlotID};
+use super::{NetState, NetDiff};
 use super::{rules, BlockRule, TxnRule, MutationRule, MutationRules};
 use super::BlockPackage;
 use super::database::*;
@@ -21,7 +22,7 @@ use futures_cpupool;
 /// TODO: Also allow for reaching out to the network to request missing information.
 /// TODO: Allow removing state data for shards which are not being processed.
 pub struct RecordKeeper {
-    db: RwLock<Database>, 
+    db: RwLock<Database>,
     rules: RwLock<MutationRules>,
     pending_txns: RwLock<HashMap<U256, Txn>>,
 
@@ -97,68 +98,29 @@ impl RecordKeeper {
         let cbh = db.get_current_block_header()?;
         let cbh_h = cbh.calculate_hash();
 
-        if pending_txns.is_empty() {
-            return Ok(Block{
-                header: BlockHeader{
-                    version: 1,
-                    timestamp: Time::current(),
-                    shard: if cbh.shard.is_zero() { cbh_h } else { cbh.shard },
-                    prev: cbh_h,
-                    merkle_root: Block::calculate_merkle_root(&BTreeSet::new()),
-                    blob: Bin::new(),
-                    creator: U160_ZERO,
-                    signature: Bin::new()
-                },
-                txns: BTreeSet::new()
-            })
-        }
+        let txns: BTreeSet<U256> = pending_txns.keys().cloned().collect();
 
-        // sort txns by their timestamp
-        let txns_by_time: BTreeMap<Time, &U256> = 
-            pending_txns.iter()
-                .map(|(txn_h, txn)| (txn.timestamp, txn_h))
-                .collect();
+        let block = Block {
+            header: BlockHeader{
+                version: 1,
+                timestamp: Time::current(),
+                shard: if cbh.shard.is_zero() { cbh_h } else { cbh.shard },
+                prev: cbh_h,
+                merkle_root: Block::calculate_merkle_root(&txns),
+                blob: Bin::new(),
+                creator: U160_ZERO,
+                signature: Bin::new()
+            },
+            txns
+        };
 
-        let mut accepted_txns: BTreeSet<U256> = BTreeSet::new();
-        let mut last_block = None;
-
-        for (_time, txn) in txns_by_time {
-            last_block = Some(Block{
-                header: BlockHeader{
-                    version: 1,
-                    timestamp: Time::current(),
-                    shard: if cbh.shard.is_zero() { cbh_h } else { cbh.shard },
-                    prev: cbh_h,
-                    merkle_root: Block::calculate_merkle_root(&accepted_txns),
-                    blob: Bin::new(),
-                    creator: U160_ZERO,
-                    signature: Bin::new()
-                },
-                txns: {
-                    let mut t = accepted_txns.clone();
-                    t.insert(*txn); t
-                }
-            });
-
-            let res = self.is_valid_block(last_block.as_ref().unwrap());
-            use self::Error::*;
-            if let Ok(()) = res {
-                accepted_txns.insert(*txn);
-            } else {
-                match res.err().unwrap() {
-                    Logic(..) => {}, // do nothing
-                    e @ _ => return Err(e) // pass along the error
-                }
-            }
-        }
-
-        Ok(last_block.unwrap())
+        Ok(block)
     }
 
     /// Add a new block and its associated transactions to the chain state after verifying
     /// it is valid. Also move the network state to be at the new end of the chain.
     /// Returns true if the block was added, false if it was already in the system.
-    pub fn add_block(&self, block: &Block) -> Result<bool, Error> {
+    pub fn add_block(&self, block: &Block, fresh: bool) -> Result<bool, Error> {
         self.is_valid_block(block)?;
 
         let mut pending_txns = self.pending_txns.write().unwrap();
@@ -207,7 +169,7 @@ impl RecordKeeper {
                     after_height: initial_height - invalidated
                 });
             }
-            record_listeners.notify(&RecordEvent::NewBlock{uncled, block: block.clone()});
+            record_listeners.notify(&RecordEvent::NewBlock{uncled, fresh, block: block.clone()});
 
             Ok(true)
         } else { // we already knew about this block, do nothing
@@ -218,7 +180,7 @@ impl RecordKeeper {
     /// Add a new transaction to the pool of pending transactions after validating it. Returns true
     /// if it was added successfully to pending transactions, and returns false if it is already in
     /// the list of pending transactions or accepted into the database..
-    pub fn add_pending_txn(&self, txn: &Txn) -> Result<bool, Error> {
+    pub fn add_pending_txn(&self, txn: Txn, fresh: bool) -> Result<bool, Error> {
         let hash = txn.calculate_hash();
 
         let mut txns = self.pending_txns.write().unwrap();
@@ -236,16 +198,18 @@ impl RecordKeeper {
             Err(e) => return Err(e)
         }
 
+        debug!("New pending txn ({})", txn.calculate_hash());
+
         // add the event
-        self.is_valid_txn(txn)?;
+        self.is_valid_txn_given_lock(&*db, &*txns, &txn)?;
         txns.insert(hash, txn.clone());
 
         // notify listeners
-        self.record_listeners.lock().unwrap().notify(&RecordEvent::NewTxn{txn: txn.clone()});
+        self.record_listeners.lock().unwrap().notify(&RecordEvent::NewTxn{fresh, txn: txn.clone() });
         let mut game_listeners = self.game_listeners.lock().unwrap();
         for change in txn.mutation.changes.iter() {  match change {
-            &Change::Event{ref event, ..} => {
-                game_listeners.notify(event);
+            &Change::PlotEvent(ref e) => {
+                game_listeners.notify(e);
             }
             _ => (),
         }}
@@ -266,9 +230,9 @@ impl RecordKeeper {
         let last = blocks.last().unwrap().calculate_hash();
 
         for txn in txns {
-            self.add_pending_txn(&txn.1)?;
+            self.add_pending_txn(txn.1, false)?;
         } for block in blocks {
-            self.add_block(&block)?;
+            self.add_block(&block, false)?;
         }
         
         Ok(last)
@@ -339,21 +303,21 @@ impl RecordKeeper {
     }
 
     /// Returns a map of events for each tick that happened after a given tick. Note: it will not
-    /// seek to reconstruct old history so `after_tick` simply allows additional filtering, e.g. if
-    /// you set `after_tick` to 0, you would not get all events unless the oldest events have not
+    /// seek to reconstruct old history so `from_tick` simply allows additional filtering, e.g. if
+    /// you set `from_tick` to 0, you would not get all events unless the oldest events have not
     /// yet been removed from the cache.
-    pub fn get_plot_events(&self, plot_id: PlotID, after_tick: u64) -> Result<PlotEvents, Error> {
-        let mut events: PlotEvents = {
+    pub fn get_plot_events(&self, plot_id: PlotID, from_tick: u64) -> Result<RawEvents, Error> {
+        let mut events: RawEvents = {
             let db = self.db.read().unwrap();
-            db.get_plot_events(plot_id, after_tick)?
+            db.get_plot_events(plot_id, from_tick)?
         };
         
         let txns = self.pending_txns.read().unwrap();
         for txn in txns.values() {
             for change in &txn.mutation.changes {
-                if let &Change::Event{id, tick, ref event} = change {
-                    if tick >= after_tick && id == plot_id {
-                        events::add_event(&mut events, tick, event.clone());
+                if let &Change::PlotEvent(ref e) = change {
+                    if e.tick >= from_tick && (e.from == plot_id) || (e.to.contains(&plot_id)) {
+                        event::add_event(&mut events, e.tick, e.event.clone());
                     }
                 }
             }
@@ -381,22 +345,30 @@ impl RecordKeeper {
         rules_lock.push_back(rule);
     }
 
+    /// Add a list of new rules to the database regarding what network mutations are valid. These
+    /// will only impact things which are mutated through the `mutate` function.
+    pub fn add_rules(&mut self, rules: MutationRules) {
+        let mut rules_lock = self.rules.write().unwrap();
+        for rule in rules {
+            rules_lock.push_back(rule);
+        }
+    }
+
     /// Check if a block is valid and all its components.
     pub fn is_valid_block(&self, block: &Block) -> Result<(), Error> {
         let db = self.db.read().unwrap();
-        let state = NetState::new(&*db, db.get_diff(&db.get_current_block_hash(), &block.prev)?);
-        self.is_valid_block_given_lock(&state, &db, block)
+        let state = NetState::new(
+            &*db, db.get_diff(&db.get_current_block_hash(), &block.prev)?
+        );
+        self.is_valid_block_given_state(&state, &db, block)
     }
 
-    /// Check if a txn is valid given the current network state. Use this to validate pending txns.
+    /// Check if a txn is valid given the current network state: PlotID, to: &BTreeSet<PlotID>,
+    /// tick: u64, event: &RawEventte. Use this to validate pending txns.
     pub fn is_valid_txn(&self, txn: &Txn) -> Result<(), Error> {
+        let pending = self.pending_txns.read().unwrap();
         let db = self.db.read().unwrap();
-        let state = {
-            let cur = db.get_current_block_hash();
-            NetState::new(&*db, NetDiff::new(cur, cur))
-        };
-        self.is_valid_txn_given_lock(&state, txn)?;
-        self.is_valid_mutation_given_lock(&state, &txn.mutation)
+        self.is_valid_txn_given_lock(&*db, &*pending, txn)
     }
 
     /// Retrieve a block header from the database.
@@ -432,24 +404,60 @@ impl RecordKeeper {
         db.is_part_of_current_chain(*hash)
     }
 
+    /// Get the block a txn is part of. **Warning:** this will scan the blockchain and should only
+    /// be used for debugging at the moment. We can add caching if this is useful for some reason.
+    /// Will return Ok(Some(Block_hash)) if it is found on a block, Ok(None) if it is pending, and
+    /// Err(..) if anything goes wrong or it is not found.
+    pub fn get_txn_block(&self, hash: U256) -> Result<Option<U256>, Error> {
+        // check pending txns
+        for (h, _t) in self.pending_txns.read().unwrap().iter() {
+            if *h == hash { return Ok(None) }
+        }
+
+        // check DB
+        self.db.read().unwrap().get_txn_block(hash).map(|h| Some(h))
+    }
+
     /// Internal use function to check if a block and all its sub-components are valid.
-    fn is_valid_block_given_lock(&self, state: &NetState, db: &Database, block: &Block) -> Result<(), Error> {        
+    fn is_valid_block_given_state(&self, state: &NetState, db: &Database, block: &Block) -> Result<(), Error> {
         rules::block::TimeStamp.is_valid(state, db, block)?;
         rules::block::Signature.is_valid(state, db, block)?;
         rules::block::MerkleRoot.is_valid(state, db, block)?;
 
-        let mut mutation = Mutation::new();
+        let mut mutation = Vec::new();
         for txn_hash in &block.txns {
             let txn = self.get_txn_given_lock(db, &txn_hash)?;
-            self.is_valid_txn_given_lock(state, &txn)?;
-            mutation.merge_clone(&txn.mutation);
+            self.is_valid_txn_given_state(state, &txn)?;
+            for change in txn.mutation.changes {
+                mutation.push((change, txn.creator));
+            }
         }
 
-        self.is_valid_mutation_given_lock(state, &mutation)
+        self.is_valid_mutation_given_state(state, &mutation)
+    }
+
+    /// Check if a txn is valid given access to the database and pending txns. Will construct a
+    /// network state.
+    fn is_valid_txn_given_lock(&self, db: &Database, pending: &HashMap<U256, Txn>, txn: &Txn) -> Result<(), Error> {
+        let state = {
+            let cur = db.get_current_block_hash();
+            let mut diff = NetDiff::new(cur, cur);
+            for mutation in pending.values().map(|txn| txn.mutation.clone()) {
+                diff.apply_mutation(mutation);
+            }
+            NetState::new(&*db, diff)
+        };
+        self.is_valid_txn_given_state(&state, txn)?;
+
+        let mut mutation = Vec::new();
+        for change in txn.mutation.changes.iter().cloned() {
+            mutation.push((change, txn.creator));
+        }
+        self.is_valid_mutation_given_state(&state, &mutation)
     }
 
     /// Internal use function, check if a txn is valid.
-    fn is_valid_txn_given_lock(&self, state: &NetState, txn: &Txn) -> Result<(), Error> {
+    fn is_valid_txn_given_state(&self, state: &NetState, txn: &Txn) -> Result<(), Error> {
         rules::txn::Signature.is_valid(state, txn)?;
         rules::txn::AdminCheck.is_valid(state, txn)?;
         rules::txn::NewValidator.is_valid(state, txn)?;
@@ -457,11 +465,12 @@ impl RecordKeeper {
     }
 
     /// Internal use function to check if a mutation is valid.
-    fn is_valid_mutation_given_lock(&self, state: &NetState, mutation: &Mutation) -> Result<(), Error> {
+    fn is_valid_mutation_given_state(&self, state: &NetState, mutation: &Vec<(Change, U160)>) -> Result<(), Error> {
         let mut cache = Bin::new();
         // base rules
+        rules::mutation::PlotEvent.is_valid(state, mutation, &mut cache)?;
         rules::mutation::Duplicates.is_valid(state, mutation, &mut cache)?;
-        
+
         // user-added rules
         cache = Bin::new();
         let rules = self.rules.read().unwrap();

@@ -10,40 +10,37 @@ fn sq(x: i32) -> u64 {
 
 /// A signed (x, y) coordinate. This can be used as a PlotID.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Cord {
-    pub x: i32,
-    pub y: i32
-}
+pub struct Coord(pub i32, pub i32);
 
-impl Cord {
+impl Coord {
     pub fn bytes(&self) -> Vec<u8> {
         bincode::serialize(&self, bincode::Bounded(8)).unwrap()
     }
 }
 
-impl PartialOrd for Cord {
+impl PartialOrd for Coord {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
 }
 
-impl Ord for Cord {
+impl Ord for Coord {
     /// Define the 
     fn cmp(&self, other: &Self) -> Ordering {
         // Calculate the distance from the origin of both points and compare
-        let d1 = sq(self.x) + sq(self.y); // should not overflow because we up-size to u64
-        let d2 = sq(other.x) + sq(other.y);
+        let d1 = sq(self.0) + sq(self.1); // should not overflow because we up-size to u64
+        let d2 = sq(other.0) + sq(other.1);
         
         if d1 != d2 { d1.cmp(&d2) }
-        else if self.x != other.x { self.x.cmp(&other.x) }
-        else { self.y.cmp(&other.y) }
+        else if self.0 != other.0 { self.0.cmp(&other.0) }
+        else { self.1.cmp(&other.1) }
     }
 }
 
-impl AsBin for Cord {
+impl AsBin for Coord {
     fn as_bin(&self) -> Bin { bincode::serialize(self, bincode::Bounded(8)).unwrap() }
 }
 
 
 // pub struct BoundingBox {
-//     a: Cord,
-//     b: Cord
+//     a: Coord,
+//     b: Coord
 // }

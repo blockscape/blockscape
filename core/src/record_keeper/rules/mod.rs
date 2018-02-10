@@ -6,13 +6,15 @@ pub mod txn;
 pub mod mutation;
 
 
-use primitives::{Mutation, Block, Txn};
+use primitives::{Change, Block, Txn, U160, Event};
 use std::collections::LinkedList;
 use std::fmt::Debug;
 use super::database::Database;
-use super::{Error, NetState};
+use super::{Error, NetState, PlotEvent};
 use bin::Bin;
 use std::fmt;
+use serde::de::DeserializeOwned;
+use bincode;
 
 
 /// A rule which is responsible for assessing if the high-level block structure is valid.
@@ -46,9 +48,32 @@ pub trait TxnRule: Send + Sync {
 /// in RAM, and they will need to keep multiple checkpoints to allow going backwards.
 pub trait MutationRule: Send + Sync {
     /// Return Ok if it is valid, or an error explaining what rule was broken or what error was encountered.
-    fn is_valid(&self, net_state: &NetState, mutation: &Mutation, cache: &mut Bin) -> Result<(), Error>;
+    fn is_valid(&self, net_state: &NetState, mutation: &Vec<(Change, U160)>, cache: &mut Bin) -> Result<(), Error>;
     /// Retrieve a description of the rule.
     fn description(&self) -> &'static str;
+}
+
+/// Simplify iterating over PlotEvents for Mutation Rules.
+pub fn plot_events_rule_iter<F>(mut func: F, mutation: &Vec<(Change, U160)>) -> Result<(), Error>
+    where F: FnMut(&PlotEvent, U160) -> Result<(), Error>
+{
+    for &(ref change, ref user) in mutation {
+        if let &Change::PlotEvent(ref pe) = change {
+            func(pe, *user)?;
+        }
+    } Ok(())
+}
+
+/// Simply iterating over game events for Mutation Rules.
+pub fn game_events_rule_iter<F, E>(mut func: F, mutation: &Vec<(Change, U160)>) -> Result<(), Error>
+    where F: FnMut(E, U160) -> Result<(), Error>,
+          E: Event + DeserializeOwned
+{
+    for &(ref change, ref user) in mutation {
+        if let &Change::PlotEvent(ref pe) = change {
+            func(bincode::deserialize(&pe.event)?, *user)?;
+        }
+    } Ok(())
 }
 
 /// A list of mutation rules

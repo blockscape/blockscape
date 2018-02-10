@@ -31,7 +31,7 @@ pub fn start_forging(context: &Rc<Context>, handler: &Handle, _network_id: U256)
     let (tx, rx) = mpsc::channel(10);
 
     // manufacture a fake event to get the miner started
-    let tx = tx.send(RecordEvent::NewBlock { uncled: false, block: context.rk.get_current_block().expect("No current block!") }).wait()
+    let tx = tx.send(RecordEvent::NewBlock { uncled: false, fresh: true, block: context.rk.get_current_block().expect("No current block!") }).wait()
         .expect("Could not post starting event for forging system");
 
     context.rk.register_record_listener(tx);
@@ -94,7 +94,7 @@ pub fn start_forging(context: &Rc<Context>, handler: &Handle, _network_id: U256)
                         let context_rk = Arc::clone(&context4.rk);
 
                         handler4.spawn(context4.rk.get_priority_worker().spawn_fn(move || {
-                            let r = context_rk.add_block(&block);
+                            let r = context_rk.add_block(&block, true);
                             if let Ok(_) = r {
                                 println!("FORGE: Submitted {} was accepted!", block.calculate_hash());
                             }

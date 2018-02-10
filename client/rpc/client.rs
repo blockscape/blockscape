@@ -110,7 +110,17 @@ impl fmt::Display for JsonRpcResponse {
             write!(f, "Remote RPC Error {}: {:#}", err.code, err.message)
         }
         else {
-            write!(f, "{:#}", self.result.clone().unwrap_or_default())
+            if let Some(r) = self.result.as_ref() {
+                if let Some(rstr) = r.as_str() {
+                    write!(f, "{:#}", rstr)
+                }
+                else {
+                    write!(f, "{:#}", r)
+                }
+            }
+            else {
+                write!(f, "No Response Returned from Server")
+            }
         }
     }
 }

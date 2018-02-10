@@ -47,6 +47,15 @@ impl Ord for Txn {
 
 
 impl Txn {
+    pub fn new(creator: U160, mutation: Mutation) -> Txn {
+        Txn {
+            timestamp: Time::current(),
+            creator,
+            mutation,
+            signature: Bin::new()
+        }
+    }
+
     pub fn calculate_hash(&self) -> U256 {
         hash_obj(self)
     }

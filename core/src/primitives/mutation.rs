@@ -1,7 +1,7 @@
 use bin::*;
-use record_keeper::{PlotID, PlotEvent, JPlotEvent};
-use std::mem::size_of;
+use record_keeper::{PlotEvent, JPlotEvent};
 use primitives::{U160, JU160};
+use std::ops::{Deref, DerefMut};
 
 /// A single change to the database, a mutation may be the composite of multiple changes. This is
 /// designed as a simple structure which the outer world can use to store the changes which should
@@ -10,7 +10,7 @@ use primitives::{U160, JU160};
 pub enum Change {
     Admin { key: Bin, value: Option<Bin> },
     BlockReward { id: U160, proof: Bin },
-    Event { id: PlotID, tick: u64, event: PlotEvent },
+    PlotEvent(PlotEvent),
     NewValidator { pub_key: Bin },
     Slash { id: U160, amount: u64, proof: Bin }
 }
@@ -24,7 +24,7 @@ impl Change {
                 if let Some(a) = value.as_ref() { a.len() } else { 0 } + 2
             },
             &Change::BlockReward{ref proof, ..} => 20 + proof.len() + 1,
-            &Change::Event{ref event, ..} => size_of::<PlotID>() + 8 + event.calculate_size(),
+            &Change::PlotEvent(ref e) => e.calculate_size(),
             &Change::NewValidator{ref pub_key} => pub_key.len() + 1,
             &Change::Slash{ref proof, ..} => 20 + 8 + proof.len() + 1
         }
@@ -88,6 +88,19 @@ impl Mutation {
     } 
 }
 
+impl Deref for Mutation {
+    type Target = Vec<Change>;
+    fn deref(&self) -> &Self::Target {
+        &self.changes
+    }
+}
+
+impl DerefMut for Mutation {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.changes
+    }
+}
+
 
 
 #[derive(Serialize, Deserialize)]
@@ -95,7 +108,7 @@ impl Mutation {
 pub enum JChange {
     Admin { key: JBin, value: Option<JBin> },
     BlockReward { id: JU160, proof: JBin },
-    Event { id: PlotID, tick: u64, event: JPlotEvent },
+    PlotEvent(JPlotEvent),
     NewValidator { pub_key: JBin },
     Slash { id: JU160, amount: u64, proof: JBin }
 }
@@ -105,7 +118,7 @@ impl From<Change> for JChange {
         match c {
             Change::Admin{key, value} => JChange::Admin{key: key.into(), value: value.map(Into::into)},
             Change::BlockReward{id, proof} => JChange::BlockReward{id: id.into(), proof: proof.into()},
-            Change::Event{id, tick, event} => JChange::Event{id, tick, event: event.into()},
+            Change::PlotEvent(e) => JChange::PlotEvent(e.into()),
             Change::NewValidator{pub_key} => JChange::NewValidator{pub_key: pub_key.into()},
             Change::Slash{id, amount, proof} => JChange::Slash{id: id.into(), amount, proof: proof.into()}
         }
@@ -117,7 +130,7 @@ impl Into<Change> for JChange {
         match self {
             JChange::Admin{key, value} => Change::Admin{key: key.into(), value: value.map(Into::into)},
             JChange::BlockReward{id, proof} => Change::BlockReward{id: id.into(), proof: proof.into()},
-            JChange::Event{id, tick, event} => Change::Event{id, tick, event: event.into()},
+            JChange::PlotEvent(e) => Change::PlotEvent(e.into()),
             JChange::NewValidator{pub_key} => Change::NewValidator{pub_key: pub_key.into()},
             JChange::Slash{id, amount, proof} => Change::Slash{id: id.into(), amount, proof: proof.into()}
         }
