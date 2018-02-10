@@ -104,6 +104,17 @@ pub struct JsonRpcResponse {
     id: u64
 }
 
+impl JsonRpcResponse {
+    pub fn get_exit_code(&self) -> i64 {
+        if let Some(ref e) = self.error {
+            e.code
+        }
+        else {
+            0
+        }
+    }
+}
+
 impl fmt::Display for JsonRpcResponse {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if let Some(ref err) = self.error {

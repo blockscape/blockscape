@@ -262,7 +262,7 @@ pub fn make_rpc(cmdline: &ArgMatches, ctx: Rc<Context>) -> RPC {
     RPC::run(bind_addr, ctx)
 }
 
-pub fn call_rpc(cmdline: &ArgMatches) -> bool {
+pub fn call_rpc(cmdline: &ArgMatches) -> i32 {
 
     use rpc::client::JsonRpcRequest;
 
@@ -295,11 +295,12 @@ pub fn call_rpc(cmdline: &ArgMatches) -> bool {
     if res.is_err() {
         println!("RPC Error: {}", res.err().unwrap());
 
-        false
+        1
     }
     else {
-        println!("{}", res.unwrap());
+        let r = res.unwrap();
+        println!("{}", r);
 
-        true
+        r.get_exit_code() as i32
     }
 }

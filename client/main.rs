@@ -73,14 +73,7 @@ fn main() {
 
     // are we to be executing an RPC command on a running instance?
     if cmdline.is_present("rpccmd") {
-        if call_rpc(&cmdline) {
-            return;
-        }
-        else {
-            println!("Exiting with Failure");
-
-            std::process::exit(1);
-        }
+        std::process::exit(call_rpc(&cmdline));
     }
 
     // Ready to boot
