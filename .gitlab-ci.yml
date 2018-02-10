@@ -43,12 +43,12 @@ build_arm:
     paths:
       - cargo/
       - target/
-    script:
-      - cargo build --release 2>&1 | tee log.txt
-    artifacts:
-      paths:
-        - target/arm-unknown-linux-musleabi/release/blockscape
-      expire_in: 2 days
+  script:
+    - cargo build --release 2>&1 | tee log.txt
+  artifacts:
+    paths:
+      - target/arm-unknown-linux-musleabi/release/blockscape
+    expire_in: 2 days
 
 
 #pages:
