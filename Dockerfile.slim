@@ -1,0 +1,9 @@
+FROM scratch
+
+ENV HOME=/
+
+ENTRYPOINT [ "/blockscape" ]
+
+ARG RELEASE=debug
+
+ADD target/${RELEASE}/blockscape /blockscape

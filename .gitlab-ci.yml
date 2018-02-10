@@ -4,6 +4,7 @@ image: dcr.buyme360.com/plu-capstone/rust:latest
 
 variables:
   IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+  ARM_IMAGE_TAG: $CI_REGISTRY_IMAGE/arm:$CI_COMMIT_REF_SLUG
   DOCKER_HOST: tcp://localhost:2375
   CARGO_HOME: $CI_PROJECT_DIR/cargo
 
@@ -33,6 +34,22 @@ build:
     expire_in: 2 days
 
   # depending on your build setup it's most likely a good idea to cache outputs to reduce the build time
+
+build_arm:
+  image: dcr.buyme360.com/plu-capstone/rust:arm
+  stage: build
+  cache:
+    key: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME-arm"
+    paths:
+      - cargo/
+      - target/
+    script:
+      - cargo build --release 2>&1 | tee log.txt
+    artifacts:
+      paths:
+        - target/arm-unknown-linux-musleabi/release/blockscape
+      expire_in: 2 days
+
 
 #pages:
 #  stage: deploy
@@ -72,6 +89,16 @@ package:
     - docker push $IMAGE_TAG
   dependencies:
     - build
+
+package_arm:
+  image: dcr.buyme360.com/devops/docker:latest
+  stage: package
+  script:
+    - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
+    - docker build -t $IMAGE_TAG -f Dockerfile.slim --build-arg RELEASE=arm-unknown-linux-musleabi/release .
+    - docker push $ARM_IMAGE_TAG
+  dependencies:
+    - build_arm
     
 deploy:
   image: dcr.buyme360.com/devops/kube-deploy:latest
