@@ -97,7 +97,7 @@ package_arm:
   stage: package
   script:
     - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
-    - docker build -t $IMAGE_TAG -f Dockerfile.slim --build-arg RELEASE=arm-unknown-linux-musleabi/release .
+    - docker build -t $ARM_IMAGE_TAG -f Dockerfile.slim --build-arg RELEASE=arm-unknown-linux-musleabi/release .
     - docker push $ARM_IMAGE_TAG
   dependencies:
     - build_arm
