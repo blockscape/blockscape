@@ -13,6 +13,7 @@ extern crate serde_json;
 extern crate serde;
 extern crate time as timelib;
 extern crate tokio_core;
+extern crate parking_lot;
 
 #[macro_use]
 extern crate serde_derive;

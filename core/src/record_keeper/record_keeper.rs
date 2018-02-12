@@ -2,7 +2,7 @@ use bin::Bin;
 use primitives::{U256, U160, U160_ZERO, Txn, Block, BlockHeader, Change, ListenerPool};
 use std::collections::{HashMap, BTreeSet};
 use std::path::PathBuf;
-use std::sync::{RwLock, Mutex};
+use parking_lot::{RwLock, Mutex};
 use primitives::{RawEvents, event};
 use super::{Error, RecordEvent, PlotEvent, PlotID};
 use super::{NetState, NetDiff};
@@ -63,7 +63,7 @@ impl RecordKeeper {
         let rk: RecordKeeper = Self::new(db, rules);
         
         { // Handle Genesis
-            let mut db = rk.db.write().unwrap();
+            let mut db = rk.db.write();
             if db.is_empty() { // add genesis
                 debug!("Loaded DB is empty, adding genesis block...");
                 for ref txn in genesis.1 {
@@ -92,8 +92,8 @@ impl RecordKeeper {
     /// 1. The proof of work/proof of stake mechanism has not been completed
     /// 2. The signature has not been applied to the block
     pub fn create_block(&self) -> Result<Block, Error> {
-        let pending_txns = self.pending_txns.read().unwrap();
-        let db = self.db.read().unwrap();
+        let pending_txns = self.pending_txns.read();
+        let db = self.db.read();
 
         let cbh = db.get_current_block_header()?;
         let cbh_h = cbh.calculate_hash();
@@ -123,8 +123,8 @@ impl RecordKeeper {
     pub fn add_block(&self, block: &Block, fresh: bool) -> Result<bool, Error> {
         self.is_valid_block(block)?;
 
-        let mut pending_txns = self.pending_txns.write().unwrap();
-        let mut db = self.db.write().unwrap();
+        let mut pending_txns = self.pending_txns.write();
+        let mut db = self.db.write();
 
         // we know it is a valid block, so go ahead and add it's transactions, and then it.
         for txn_hash in block.txns.iter() {
@@ -162,7 +162,7 @@ impl RecordKeeper {
             ));
 
             // send out events as needed
-            let mut record_listeners = self.record_listeners.lock().unwrap();
+            let mut record_listeners = self.record_listeners.lock();
             if invalidated > 0 {
                 record_listeners.notify(&RecordEvent::StateInvalidated{
                     new_height: db.get_current_block_height(),
@@ -183,8 +183,8 @@ impl RecordKeeper {
     pub fn add_pending_txn(&self, txn: Txn, fresh: bool) -> Result<bool, Error> {
         let hash = txn.calculate_hash();
 
-        let mut txns = self.pending_txns.write().unwrap();
-        let db = self.db.read().unwrap();
+        let mut txns = self.pending_txns.write();
+        let db = self.db.read();
         
         // check if it is already pending
         if txns.contains_key(&hash) {
@@ -205,8 +205,8 @@ impl RecordKeeper {
         txns.insert(hash, txn.clone());
 
         // notify listeners
-        self.record_listeners.lock().unwrap().notify(&RecordEvent::NewTxn{fresh, txn: txn.clone() });
-        let mut game_listeners = self.game_listeners.lock().unwrap();
+        self.record_listeners.lock().notify(&RecordEvent::NewTxn{fresh, txn: txn.clone() });
+        let mut game_listeners = self.game_listeners.lock();
         for change in txn.mutation.changes.iter() {  match change {
             &Change::PlotEvent(ref e) => {
                 game_listeners.notify(e);
@@ -242,32 +242,32 @@ impl RecordKeeper {
     /// validator.
     /// TODO: Handle shard-based reputations
     pub fn get_validator_key(&self, id: &U160) -> Result<Bin, Error> {
-        self.db.read().unwrap()
+        self.db.read()
             .get_validator_key(*id)
     }
 
     /// Get the reputation of a validator given their ID.
     /// TODO: Handle shard-based reputations
     pub fn get_validator_rep(&self, id: &U160) -> Result<i64, Error> {
-        self.db.read().unwrap()
+        self.db.read()
             .get_validator_rep(*id)
     }
 
     /// Retrieve the current block hash which the network state represents.
     pub fn get_current_block_hash(&self) -> U256 {
-        self.db.read().unwrap().get_current_block_hash()
+        self.db.read().get_current_block_hash()
     }
 
     /// Retrieve the header of the current block which the network state represents.
     pub fn get_current_block_header(&self) -> Result<BlockHeader, Error> {
-        let db = self.db.read().unwrap();
+        let db = self.db.read();
         let hash = db.get_current_block_hash();
         db.get_block_header(&hash)
     }
 
     /// Retrieve the current block which the network state represents.
     pub fn get_current_block(&self) -> Result<Block, Error> {
-        let db = self.db.read().unwrap();
+        let db = self.db.read();
         let hash = db.get_current_block_hash();
         db.get_block(&hash)
     }
@@ -275,21 +275,21 @@ impl RecordKeeper {
     /// Calculate the height of a given block. It will follow the path until it finds the genesis
     /// block which is denoted by having a previous block reference of 0.
     pub fn get_block_height(&self, hash: &U256) -> Result<u64, Error> {
-        let db = self.db.read().unwrap();
+        let db = self.db.read();
         db.get_block_height(*hash)
     }
 
     /// Return a list of **known** blocks which have a given height. If the block has not been added
     /// to the database, then it will not be included.
     pub fn get_blocks_of_height(&self, height: u64) -> Result<Vec<U256>, Error> {
-        let db = self.db.read().unwrap();
+        let db = self.db.read();
         db.get_blocks_of_height(height)
     }
 
     /// Get a list of the last `count` block headers. If `count` is one, then it will return only
     /// the most recent block.
     pub fn get_latest_blocks(&self, count: usize) -> Result<Vec<BlockHeader>, Error> {
-        let db = self.db.read().unwrap();
+        let db = self.db.read();
         db.get_latest_blocks(count)
     }
     
@@ -297,7 +297,7 @@ impl RecordKeeper {
     /// (last_known, target]. Do not include last-known because it is clearly already in the system,
     /// but do include the target block since it has not yet been accepted into the database.
     pub fn get_blocks_between(&self, last_known: &U256, target: &U256, limit: usize) -> Result<BlockPackage, Error> {
-        let db = self.db.read().unwrap();
+        let db = self.db.read();
         debug!("Packaging blocks between {} and {}", last_known, target);
         BlockPackage::blocks_between(&*db, last_known, target, limit)
     }
@@ -308,11 +308,11 @@ impl RecordKeeper {
     /// yet been removed from the cache.
     pub fn get_plot_events(&self, plot_id: PlotID, from_tick: u64) -> Result<RawEvents, Error> {
         let mut events: RawEvents = {
-            let db = self.db.read().unwrap();
+            let db = self.db.read();
             db.get_plot_events(plot_id, from_tick)?
         };
         
-        let txns = self.pending_txns.read().unwrap();
+        let txns = self.pending_txns.read();
         for txn in txns.values() {
             for change in &txn.mutation.changes {
                 if let &Change::PlotEvent(ref e) = change {
@@ -329,26 +329,26 @@ impl RecordKeeper {
     /// Add a new listener for events such as new blocks. This will also take a moment to remove any
     /// listeners which no longer exist.
     pub fn register_record_listener(&self, listener: Sender<RecordEvent>) {
-        self.record_listeners.lock().unwrap().register(listener);
+        self.record_listeners.lock().register(listener);
     }
 
     /// Add a new listener for plot events. This will also take a moment to remove any listeners
     /// which no longer exist.
     pub fn register_game_listener(&self, listener: Sender<PlotEvent>) {
-        self.game_listeners.lock().unwrap().register(listener);
+        self.game_listeners.lock().register(listener);
     }
 
     /// Add a new rule to the database regarding what network mutations are valid. This will only
     /// impact things which are mutated through the `mutate` function.
     pub fn add_rule(&mut self, rule: Box<MutationRule>) {
-        let mut rules_lock = self.rules.write().unwrap();
+        let mut rules_lock = self.rules.write();
         rules_lock.push_back(rule);
     }
 
     /// Add a list of new rules to the database regarding what network mutations are valid. These
     /// will only impact things which are mutated through the `mutate` function.
     pub fn add_rules(&mut self, rules: MutationRules) {
-        let mut rules_lock = self.rules.write().unwrap();
+        let mut rules_lock = self.rules.write();
         for rule in rules {
             rules_lock.push_back(rule);
         }
@@ -356,7 +356,7 @@ impl RecordKeeper {
 
     /// Check if a block is valid and all its components.
     pub fn is_valid_block(&self, block: &Block) -> Result<(), Error> {
-        let db = self.db.read().unwrap();
+        let db = self.db.read();
         let state = NetState::new(
             &*db, db.get_diff(&db.get_current_block_hash(), &block.prev)?
         );
@@ -366,32 +366,32 @@ impl RecordKeeper {
     /// Check if a txn is valid given the current network state: PlotID, to: &BTreeSet<PlotID>,
     /// tick: u64, event: &RawEventte. Use this to validate pending txns.
     pub fn is_valid_txn(&self, txn: &Txn) -> Result<(), Error> {
-        let pending = self.pending_txns.read().unwrap();
-        let db = self.db.read().unwrap();
+        let pending = self.pending_txns.read();
+        let db = self.db.read();
         self.is_valid_txn_given_lock(&*db, &*pending, txn)
     }
 
     /// Retrieve a block header from the database.
     pub fn get_block_header(&self, hash: &U256) -> Result<BlockHeader, Error> {
-        let db = self.db.read().unwrap();
+        let db = self.db.read();
         db.get_block_header(hash)
     }
 
     /// Get a block including its list of transactions from the database.
     pub fn get_block(&self, hash: &U256) -> Result<Block, Error> {
-        let db = self.db.read().unwrap();
+        let db = self.db.read();
         db.get_block(hash)
     }
 
     pub fn complete_block(&self, header: BlockHeader) -> Result<Block, Error> {
-        let db = self.db.read().unwrap();
+        let db = self.db.read();
         db.complete_block(header)
     }
 
     /// Get a transaction from the database.
     pub fn get_txn(&self, hash: &U256) -> Result<Txn, Error> {
-        let pending = self.pending_txns.read().unwrap();
-        let db = self.db.read().unwrap();
+        let pending = self.pending_txns.read();
+        let db = self.db.read();
         match pending.get(&hash) {
             Some(txn) => Ok(txn.clone()),
             None => db.get_txn(*hash)
@@ -400,7 +400,7 @@ impl RecordKeeper {
 
     /// Whether or not the block is part of the longest chain, and therefore influences the history
     pub fn is_block_in_current_chain(&self, hash: &U256) -> Result<bool, Error> {
-        let db = self.db.read().unwrap();
+        let db = self.db.read();
         db.is_part_of_current_chain(*hash)
     }
 
@@ -410,12 +410,12 @@ impl RecordKeeper {
     /// Err(..) if anything goes wrong or it is not found.
     pub fn get_txn_block(&self, hash: U256) -> Result<Option<U256>, Error> {
         // check pending txns
-        for (h, _t) in self.pending_txns.read().unwrap().iter() {
+        for (h, _t) in self.pending_txns.read().iter() {
             if *h == hash { return Ok(None) }
         }
 
         // check DB
-        self.db.read().unwrap().get_txn_block(hash).map(|h| Some(h))
+        self.db.read().get_txn_block(hash).map(|h| Some(h))
     }
 
     /// Internal use function to check if a block and all its sub-components are valid.
@@ -473,7 +473,7 @@ impl RecordKeeper {
 
         // user-added rules
         cache = Bin::new();
-        let rules = self.rules.read().unwrap();
+        let rules = self.rules.read();
         for rule in &*rules {
             // verify all rules are satisfied and return, propagate error if not
             rule.is_valid(state, mutation, &mut cache)?;
@@ -482,7 +482,7 @@ impl RecordKeeper {
     }
 
     fn get_txn_given_lock(&self, db: &Database, hash: &U256) -> Result<Txn, Error> {
-        if let Some(txn) = self.pending_txns.read().unwrap().get(hash) {
+        if let Some(txn) = self.pending_txns.read().get(hash) {
             Ok(txn.clone())
         } else {
             db.get_txn(*hash)
