@@ -39,6 +39,7 @@ mod game;
 mod rpc;
 
 mod checkers;
+mod blockscape;
 
 use std::sync::Arc;
 use std::thread;
