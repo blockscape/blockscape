@@ -20,8 +20,39 @@ pub struct BlockchainRPC {
 }
 
 #[derive(Serialize)]
+struct BlockHeaderRPC {
+    version: u16,
+
+    timestamp: Time,
+
+    shard: JU256,
+
+    prev: JU256,
+
+    merkle_root: JU256,
+
+    creator: JU160,
+
+    hash: JU256
+}
+
+impl BlockHeaderRPC {
+    pub fn new(header: &BlockHeader) -> BlockHeaderRPC {
+        BlockHeaderRPC {
+            version: header.version,
+            timestamp: header.timestamp.into(),
+            shard: header.shard.into(),
+            prev: header.prev.into(),
+            merkle_root: header.merkle_root.into(),
+            creator: header.creator.into(),
+            hash: header.calculate_hash().into()
+        }
+    }
+}
+
+#[derive(Serialize)]
 struct BlockRPC {
-    header: JBlockHeader,
+    header: BlockHeaderRPC,
 
     txns: Vec<JU256>,
 
@@ -47,7 +78,7 @@ impl BlockRPC {
         };
 
         BlockRPC {
-            header: block.get_header().clone().into(),
+            header: BlockHeaderRPC::new(block.get_header()),
             txns: block.txns.into_iter().map(|n| n.into()).collect(),
             height: h,
             status: status.into(),
@@ -58,6 +89,7 @@ impl BlockRPC {
 
 #[derive(Serialize)]
 struct TxnRPC {
+    hash: JU256,
     timestamp: Time,
     creator: JU160,
     mutation: JMutation,
@@ -67,6 +99,7 @@ struct TxnRPC {
 impl TxnRPC {
     pub fn new(txn: Txn, _rk: &Arc<RecordKeeper>) -> TxnRPC {
         TxnRPC {
+            hash: txn.calculate_hash().into(),
             timestamp: txn.timestamp,
             creator: txn.creator.into(),
             mutation: txn.mutation.into(),
@@ -154,7 +187,7 @@ impl BlockchainRPC {
         else {
             to_rpc_res(
                 self.rk.get_latest_blocks(count)
-                .map(|v| v.into_iter().map(Into::into).collect::<Vec<JBlockHeader>>())
+                .map(|v| v.into_iter().map(|h| BlockHeaderRPC::new(&h)).collect::<Vec<BlockHeaderRPC>>())
             )
         }
     }
