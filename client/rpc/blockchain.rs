@@ -33,11 +33,16 @@ struct BlockHeaderRPC {
 
     creator: JU160,
 
-    hash: JU256
+    hash: JU256,
+
+    height: u64,
 }
 
 impl BlockHeaderRPC {
-    pub fn new(header: &BlockHeader) -> BlockHeaderRPC {
+    pub fn new(header: &BlockHeader, rk: &Arc<RecordKeeper>) -> BlockHeaderRPC {
+        let block_hash = header.calculate_hash();
+        let h = rk.get_block_height(&block_hash).expect("Could not load current block height from database!");
+
         BlockHeaderRPC {
             version: header.version,
             timestamp: header.timestamp.into(),
@@ -45,7 +50,8 @@ impl BlockHeaderRPC {
             prev: header.prev.into(),
             merkle_root: header.merkle_root.into(),
             creator: header.creator.into(),
-            hash: header.calculate_hash().into()
+            hash: block_hash.into(),
+            height: h
         }
     }
 }
@@ -55,8 +61,6 @@ struct BlockRPC {
     header: BlockHeaderRPC,
 
     txns: Vec<JU256>,
-
-    height: u64,
 
     status: String,
 
@@ -68,8 +72,8 @@ impl BlockRPC {
 
         let block_hash = block.calculate_hash();
 
-        let h = rk.get_block_height(&block_hash).expect("Could not load current block height from database!");
-        let nh = rk.get_blocks_of_height(h + 1).expect("Blocks of height not available").first().unwrap_or(&U256_ZERO).clone();
+        let bh = BlockHeaderRPC::new(block.get_header(), rk);
+        let nh = rk.get_blocks_of_height(bh.height + 1).expect("Blocks of height not available").first().unwrap_or(&U256_ZERO).clone();
 
         let status = match rk.is_block_in_current_chain(&block_hash) {
             Ok(true) => "Mainchain",
@@ -78,9 +82,8 @@ impl BlockRPC {
         };
 
         BlockRPC {
-            header: BlockHeaderRPC::new(block.get_header()),
+            header: bh,
             txns: block.txns.into_iter().map(|n| n.into()).collect(),
-            height: h,
             status: status.into(),
             next: nh.into()
         }
@@ -187,7 +190,7 @@ impl BlockchainRPC {
         else {
             to_rpc_res(
                 self.rk.get_latest_blocks(count)
-                .map(|v| v.into_iter().map(|h| BlockHeaderRPC::new(&h)).collect::<Vec<BlockHeaderRPC>>())
+                .map(|v| v.into_iter().map(|h| BlockHeaderRPC::new(&h, &self.rk)).collect::<Vec<BlockHeaderRPC>>())
             )
         }
     }
