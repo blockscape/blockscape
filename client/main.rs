@@ -7,6 +7,7 @@ extern crate futures;
 extern crate hyper;
 extern crate tokio_core;
 extern crate tokio_signal;
+extern crate parking_lot;
 
 #[macro_use]
 extern crate serde_derive;

@@ -9,7 +9,7 @@ use std::error::Error as BaseError;
 use std::net::{SocketAddr,IpAddr};
 use std::path::*;
 use std::sync::Arc;
-use std::sync::RwLock;
+use parking_lot::RwLock;
 use std::str::FromStr;
 
 use env::get_storage_dir;
@@ -162,11 +162,11 @@ impl NodeRepository {
     /// # Panics
     /// * If the repository is empty (i.e. has 0 nodes to connect to). You should check this on your end.
     pub fn get_nodes(&self, idx: usize) -> Arc<Node> {
-        Arc::new(self.available_nodes.get(&self.sorted_nodes[idx % self.sorted_nodes.len()]).map(|n| n.read().unwrap().clone()).unwrap().node)
+        Arc::new(self.available_nodes.get(&self.sorted_nodes[idx % self.sorted_nodes.len()]).map(|n| n.read().clone()).unwrap().node)
     }
 
     pub fn get(&self, node: &U160) -> Option<Arc<Node>> {
-        self.available_nodes.get(node).map(|n| Arc::new(n.read().unwrap().node.clone()))
+        self.available_nodes.get(node).map(|n| Arc::new(n.read().node.clone()))
     }
 
     /// Notify the repository of updated or new node information. Will automatically add or change an existing node as appropriate based on the key in the repository
@@ -175,7 +175,7 @@ impl NodeRepository {
         {
             if let Some(n) = self.available_nodes.get(&hpk) {
 
-                let mut myn = n.write().unwrap();
+                let mut myn = n.write();
                 if myn.node != node {
                     myn.node = node;
                     self.changes += 1;
@@ -219,7 +219,7 @@ impl NodeRepository {
     /// Returns whether or not a change was made to the repo
     pub fn up_score(&mut self, node: &U160) -> bool {
         if let Some(n) = self.available_nodes.get(&node) {
-            let mut n2 = n.write().unwrap();
+            let mut n2 = n.write();
             n2.score = n2.score + 1;
         }
         else {
@@ -236,7 +236,7 @@ impl NodeRepository {
     /// Returns whether or not a change was made to the repo
     pub fn down_score(&mut self, node: &U160) -> bool {
         if let Some(n) = self.available_nodes.get(&node) {
-            let mut n2 = n.write().unwrap();
+            let mut n2 = n.write();
             if n2.score > 0 {
                 n2.score /= 2;
             }
@@ -282,7 +282,7 @@ impl NodeRepository {
 
     pub fn trim(&mut self) {
         debug!("Trimming saved nodes to {}", NodeRepository::SAVED_NODES_COUNT);
-        let nodes: Vec<LocalNode> = self.available_nodes.values().take(NodeRepository::SAVED_NODES_COUNT).map(|n| n.read().unwrap().clone()).collect();
+        let nodes: Vec<LocalNode> = self.available_nodes.values().take(NodeRepository::SAVED_NODES_COUNT).map(|n| n.read().clone()).collect();
         self.build(&nodes);
     }
 
@@ -293,7 +293,7 @@ impl NodeRepository {
             return Ok(self.sorted_nodes.len() as u32);
         }
 
-        let saved: Vec<LocalNode> = self.available_nodes.values().map(|n| n.read().unwrap().clone()).collect();
+        let saved: Vec<LocalNode> = self.available_nodes.values().map(|n| n.read().clone()).collect();
         
         let serialized = serde_json::to_string_pretty(&saved).unwrap();
 
@@ -346,7 +346,7 @@ impl NodeRepository {
 
         let an = &self.available_nodes;
         self.sorted_nodes.sort_by(
-            |a,b| an.get(b).unwrap().read().unwrap().score.cmp(&an.get(a).unwrap().read().unwrap().score)
+            |a,b| an.get(b).unwrap().read().score.cmp(&an.get(a).unwrap().read().score)
         )
     }
 }

@@ -14,6 +14,7 @@ extern crate serde;
 extern crate time as timelib;
 extern crate tokio_core;
 extern crate num_cpus;
+extern crate parking_lot;
 
 #[macro_use]
 extern crate serde_derive;

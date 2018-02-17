@@ -212,6 +212,7 @@ impl Deref for Board {
 }
 
 impl Board {
+    #[allow(dead_code)]
     pub fn new() -> Board {
         Board([[Tile::None; 8]; 8])
     }

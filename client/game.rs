@@ -1,5 +1,6 @@
 use checkers;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use parking_lot::RwLock;
 use blockscape_core::record_keeper::{RecordKeeper, GameStateCache, Error, PlotID, PlotEvent};
 use blockscape_core::primitives::{Txn, Mutation, Change};
 use std::collections::BTreeSet;
@@ -30,7 +31,7 @@ impl CheckersGame {
     /// the latest board. If it is None, it will simply get the latest known state. If no game has
     /// been started on the given plot, it will return the default starting board.
     pub fn get_board(&self, location: PlotID, tick: Option<u64>) -> Result<checkers::Board, Error> {
-        let (actual_tick, mut board) = self.cache.read().unwrap().latest(location, tick)
+        let (actual_tick, mut board) = self.cache.read().latest(location, tick)
             .map(|(t, b)| (t, b.clone()))
             .unwrap_or((0, checkers::Board::default()));
         debug_assert!(!tick.is_some() || actual_tick <= tick.unwrap());

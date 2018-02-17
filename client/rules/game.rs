@@ -4,7 +4,8 @@ use blockscape_core::bin::*;
 use std::error::Error as StdErr;
 use checkers;
 use bincode;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use parking_lot::RwLock;
 
 use game::GameCache;
 
@@ -22,17 +23,13 @@ impl Game {
     pub fn new(cache: GameCache) -> Game {
         Game(cache)
     }
-
-    pub fn get_cache(&self) -> GameCache {
-        Arc::clone(&self.0)
-    }
 }
 
 impl MutationRule for Game {
     fn is_valid(&self, net_state: &NetState, mutation: &Vec<(Change, U160)>, _cache: &mut Bin) -> Result<(), Error> {
         let events = super::get_events(mutation)?;
 
-        let mut cache = self.0.write().unwrap();
+        let mut cache = self.0.write();
         for (event, _player) in events {
             let (start_tick, mut board) =
                 if event.tick == 0 {
