@@ -3,7 +3,7 @@ use bincode;
 use hash::hash_pub_key;
 use primitives::{U256, U160, Mutation, Change, Block, BlockHeader, Txn, RawEvent, RawEvents};
 use primitives::event;
-use rocksdb::{DB, Options, IteratorMode};
+use rocksdb::{DB, Options, IteratorMode, DBCompressionType};
 use rocksdb::Error as RocksDBError;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use super::{PlotID, NetDiff, PlotEvent};
 use super::error::*;
 use super::key::*;
+use num_cpus;
 
 
 /// The reward bestowed for backing the correct block
@@ -55,7 +56,7 @@ pub struct Database {
 
 impl Database {    
     /// Create a new Database from a RocksDB instance
-    pub fn new(db: DB) -> Database {
+    fn new(db: DB) -> Database {
         let head = //attempt to read the current block
             if let Ok(value) = Self::get_raw_data_static(&db, CacheEntry::CurrentHead.into()) {
                 bincode::deserialize(&value).unwrap_or(HeadRef::default())
@@ -73,7 +74,8 @@ impl Database {
     pub fn open(path: PathBuf) -> Result<Database, RocksDBError> {
         let mut options = Options::default();
         options.create_if_missing(true);
-
+        options.set_compression_type(DBCompressionType::Lz4hc);
+        options.increase_parallelism(num_cpus::get() as i32);
         Ok(
             DB::open_default(path)
             .map(|db| Self::new(db))?
