@@ -501,7 +501,7 @@ impl RecordKeeper {
     pub fn get_stats(&self) -> Result<RecordKeeperStatistics, Error> {
         let current_block = self.get_current_block_hash();
 
-        let ptxns = self.pending_txns.read().unwrap();
+        let ptxns = self.pending_txns.read();
 
         Ok(RecordKeeperStatistics {
             height: self.get_block_height(&current_block)?,
