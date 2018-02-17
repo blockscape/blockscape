@@ -12,6 +12,8 @@ metadata:
 spec:
   tls:
   - secretName: daniel-spike-certs
+    hosts:
+    - explorer-${CI_COMMIT_REF_SLUG}.blockscape.xram.co
   rules:
   - host: explorer-${CI_COMMIT_REF_SLUG}.blockscape.xram.co
     http:
