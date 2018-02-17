@@ -150,26 +150,45 @@ impl Module {
 
 /// A set of modules which modify the statistics of agents.
 #[derive(Debug, Clone)]
-pub struct ModuleList(HashMap<Module, u16>);
+pub struct ModuleList{
+    /// The list of modules present and the number of each of them.
+    modules: HashMap<Module, u16>,
+    /// The percent change and the incrimental change. Note the percent should be correct for direct
+    /// multiplication, that is, a -5% change will have been converted to 0.95.
+    effects: HashMap<BaseStat, (f64, i64)>
+}
 
 impl Deref for ModuleList {
     type Target = HashMap<Module, u16>;
 
     #[inline]
     fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for ModuleList {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        &self.modules
     }
 }
 
 impl ModuleList {
     fn module_count(&self) -> u16 {
-        self.iter().fold(0u16, |acc, (_, &c)| acc + c)
+        self.modules.iter().fold(0u16, |acc, (_, &c)| acc + c)
+    }
+
+    fn add_module(&mut self, module: Module) {
+        let count = self.modules.get(&module)
+            .cloned()
+            .unwrap_or(0);
+        self.modules.insert(module, count + 1);
+        for (stat, pct, inc) in module.get_effects() {
+            let (l_pct, l_inc) = self.effects.get(&stat)
+                .cloned()
+                .unwrap_or((1.0f64, 0i64));
+            self.effects.insert(
+                stat,
+                (l_pct * (1.0f64 + pct as f64), l_inc + inc)
+            );
+        }
+    }
+
+    fn effects(&self) -> &HashMap<BaseStat, (f64, i64)> {
+        &self.effects
     }
 }
