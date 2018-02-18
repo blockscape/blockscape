@@ -7,7 +7,7 @@ use rocksdb::{DB, Options, IteratorMode, DBCompressionType};
 use rocksdb::Error as RocksDBError;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use std::collections::{HashMap, BTreeMap};
+use std::collections::{HashMap, HashSet, BTreeMap};
 use std::path::PathBuf;
 use super::{PlotID, NetDiff, PlotEvent};
 use super::error::*;
@@ -160,6 +160,9 @@ impl Database {
         // cache the block
         self.add_block_to_height(height, &hash)?;
         self.add_height_for_block(height, hash)?;
+        for txn in block.txns.iter() {
+            self.add_block_for_txn(hash, *txn)?;
+        }
 
         Ok(true)
     }
@@ -204,10 +207,13 @@ impl Database {
         self.get(BlockchainEntry::Txn(hash).into())
     }
 
-    /// Get the block a txn is part of. **Warning:** this will scan the blockchain and should only
-    /// be used for debugging at the moment. We can add caching if this is useful for some reason.
-    pub fn get_txn_block(&self, hash: U256) -> Result<U256, Error> {
-        // verify we know of the txn so it is not a wild goose chase, will return NotFound error if
+    /// Get the block(s) a txn is part of.
+    pub fn get_txn_blocks(&self, hash: U256) -> Result<HashSet<U256>, Error> {
+        let blocks: HashSet<U256> = self.get(CacheEntry::BlocksByTxn(hash).into())?;
+        Ok(blocks)
+
+        // Scanning method
+        /*// verify we know of the txn so it is not a wild goose chase, will return NotFound error if
         // it is not in the DB.
         self.get_txn(hash)?;
 
@@ -222,7 +228,7 @@ impl Database {
             }
         }
 
-        unreachable!()
+        unreachable!() */
     }
 
     /// Get the public key of a validator given their ID.
@@ -765,6 +771,14 @@ impl Database {
     /// Cache the height of a block so it can be easily looked up later on.
     fn add_height_for_block(&mut self, height: u64, block: U256) -> Result<(), Error> {
         self.put(CacheEntry::HeightByBlock(block).into(), &height, Some(8))
+    }
+
+    fn add_block_for_txn(&mut self, block: U256, txn: U256) -> Result<(), Error> {
+        let mut blocks = map_not_found(self.get_txn_blocks(txn), HashSet::new())?;
+        if blocks.contains(&block) { return Ok(()); }
+        blocks.insert(block);
+
+        self.put(CacheEntry::BlocksByTxn(txn).into(), &blocks, None)
     }
 
     /// Construct a mutation given a block and its transactions by querying the DB for the txns and

@@ -1,6 +1,6 @@
 use bin::Bin;
 use primitives::{JU256, U256, U160, U160_ZERO, Txn, Block, BlockHeader, Change, ListenerPool};
-use std::collections::{HashMap, BTreeSet};
+use std::collections::{HashMap, BTreeSet, HashSet};
 use std::path::PathBuf;
 use parking_lot::{RwLock, Mutex};
 use primitives::{RawEvents, event};
@@ -13,6 +13,17 @@ use time::Time;
 
 use futures::sync::mpsc::Sender;
 use futures_cpupool;
+
+#[derive(Debug, Serialize)]
+/// RK Stats which can be sent via JSON on request.
+pub struct RecordKeeperStatistics {
+    height: u64,
+    current_block_hash: JU256,
+
+    pending_txns_count: u64,
+    pending_txns_size: u64,
+}
+
 
 /// An abstraction on the concept of states and state state data. Builds higher-lsuperevel functionality
 /// On top of the database. The implementation uses RwLocks to provide many read, single write
@@ -35,15 +46,6 @@ pub struct RecordKeeper {
 
     /// A larger work queue designed for smaller, time sensitive jobs
     priority_worker: futures_cpupool::CpuPool
-}
-
-#[derive(Debug, Serialize)]
-pub struct RecordKeeperStatistics {
-    height: u64,
-    current_block_hash: JU256,
-
-    pending_txns_count: u64,
-    pending_txns_size: u64,
 }
 
 impl RecordKeeper {
@@ -413,18 +415,15 @@ impl RecordKeeper {
         db.is_part_of_current_chain(*hash)
     }
 
-    /// Get the block a txn is part of. **Warning:** this will scan the blockchain and should only
-    /// be used for debugging at the moment. We can add caching if this is useful for some reason.
-    /// Will return Ok(Some(Block_hash)) if it is found on a block, Ok(None) if it is pending, and
-    /// Err(..) if anything goes wrong or it is not found.
-    pub fn get_txn_block(&self, hash: U256) -> Result<Option<U256>, Error> {
+    /// Get the block a txn is part of.
+    pub fn get_txn_blocks(&self, hash: U256) -> Result<Option<HashSet<U256>>, Error> {
         // check pending txns
         for (h, _t) in self.pending_txns.read().iter() {
             if *h == hash { return Ok(None) }
         }
 
         // check DB
-        self.db.read().get_txn_block(hash).map(|h| Some(h))
+        self.db.read().get_txn_blocks(hash).map(|x| Some(x))
     }
 
     /// Internal use function to check if a block and all its sub-components are valid.

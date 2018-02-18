@@ -6,6 +6,7 @@ use serde::Serialize;
 use std::result::Result;
 use std::sync::Arc;
 use openssl::pkey::PKey;
+use std::collections::HashSet;
 
 use blockscape_core::bin::*;
 use blockscape_core::primitives::*;
@@ -124,7 +125,7 @@ struct TxnRPC {
     mutation: JMutation,
     signature: JBin,
     size: u64,
-    block: Option<JU256>
+    block: Option<HashSet<JU256>>
 }
 
 impl TxnRPC {
@@ -134,7 +135,8 @@ impl TxnRPC {
             timestamp: txn.timestamp,
             creator: txn.creator.into(),
             size: txn.calculate_size() as u64,
-            block: rk.get_txn_block(txn.calculate_hash()).map(|o| o.map(|h| h.into()))?,
+            block: rk.get_txn_blocks(txn.calculate_hash())
+                .map(|o| o.map(|h| h.into_iter().map(Into::into).collect()))?,
             mutation: txn.mutation.into(),
             signature: txn.signature.into()
         })
@@ -259,7 +261,13 @@ impl BlockchainRPC {
 
     fn get_txn_block(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
         let hash = expect_one_arg::<JU256>(params)?.into();
-        to_rpc_res(self.rk.get_txn_block(hash).map(|o| o.map(|h| JU256::from(h))))
+        to_rpc_res(self.rk.get_txn_blocks(hash)
+           .map(|o| o.map(|b|
+               b.into_iter()
+               .map(JU256::from)
+               .collect::<HashSet<JU256>>()
+            ))
+        )
     }
 
 

@@ -189,7 +189,7 @@ impl U160 {
 
 
 
-#[derive(PartialOrd, Ord, PartialEq, Eq)]
+#[derive(PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub struct JU160(U160);
 
 impl From<U160> for JU160 {
