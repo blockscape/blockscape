@@ -431,6 +431,11 @@ impl RecordKeeper {
         self.db.read().get_account_txns(account)
     }
 
+    /// Get the time a txn was originally received.
+    pub fn get_txn_receive_time(&self, txn: U256) -> Result<Time, Error> {
+        self.db.read().get_txn_receive_time(txn)
+    }
+
     /// Internal use function to check if a block and all its sub-components are valid.
     fn is_valid_block_given_state(&self, state: &NetState, db: &Database, block: &Block) -> Result<(), Error> {
         rules::block::TimeStamp.is_valid(state, db, block)?;
