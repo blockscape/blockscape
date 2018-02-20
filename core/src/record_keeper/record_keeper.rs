@@ -14,6 +14,8 @@ use time::Time;
 use futures::sync::mpsc::Sender;
 use futures_cpupool;
 
+const MAX_PENDING_TXN_MEM: usize = 128*1024*1024; //128 MB
+
 #[derive(Debug, Serialize)]
 /// RK Stats which can be sent via JSON on request.
 pub struct RecordKeeperStatistics {
@@ -196,6 +198,12 @@ impl RecordKeeper {
 
         let mut txns = self.pending_txns.write();
         let db = self.db.read();
+
+        let pending_size = txns.values()
+            .fold(0, |acc, &(_, ref t)| acc + (t.calculate_size()));
+        if pending_size + txn.calculate_size() > MAX_PENDING_TXN_MEM {
+            return Err(Error::OutOfMemory("Maximum pending txn memory reached.".into()));
+        }
         
         // check if it is already pending
         if txns.contains_key(&hash) {
