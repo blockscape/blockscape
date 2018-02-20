@@ -236,7 +236,8 @@ impl Database {
 
     /// Get the txns created by a given account.
     pub fn get_account_txns(&self, hash: U160) -> Result<HashSet<U256>, Error> {
-        self.get(CacheEntry::TxnsByAccount(hash).into())
+        let res = self.get(CacheEntry::TxnsByAccount(hash).into());
+        map_not_found(res, HashSet::new())
     }
 
     /// Get the time a txn was originally received.
