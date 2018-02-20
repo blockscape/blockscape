@@ -415,15 +415,20 @@ impl RecordKeeper {
         db.is_part_of_current_chain(*hash)
     }
 
-    /// Get the block a txn is part of.
-    pub fn get_txn_blocks(&self, hash: U256) -> Result<Option<HashSet<U256>>, Error> {
+    /// Get the block a txn is part of. It will return None if the txn is found to be pending.
+    pub fn get_txn_blocks(&self, txn: U256) -> Result<Option<HashSet<U256>>, Error> {
         // check pending txns
         for (h, _t) in self.pending_txns.read().iter() {
-            if *h == hash { return Ok(None) }
+            if *h == txn { return Ok(None) }
         }
 
         // check DB
-        self.db.read().get_txn_blocks(hash).map(|x| Some(x))
+        self.db.read().get_txn_blocks(txn).map(|x| Some(x))
+    }
+
+    /// Get the txns which were created by a given account.
+    pub fn get_account_txns(&self, account: U160) -> Result<HashSet<U256>, Error> {
+        self.db.read().get_account_txns(account)
     }
 
     /// Internal use function to check if a block and all its sub-components are valid.

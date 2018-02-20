@@ -133,7 +133,8 @@ impl Database {
     pub fn add_txn(&mut self, txn: &Txn) -> Result<(), Error> {
         let hash = txn.calculate_hash();
         debug!("Adding txn ({}) to database", &hash);
-        self.put(BlockchainEntry::Txn(hash).into(), txn, None)
+        self.put(BlockchainEntry::Txn(hash).into(), txn, None)?;
+        self.add_txn_to_account(txn.creator, hash)
     }
 
     /// Retrieve a block header form the database given a hash.
@@ -161,7 +162,7 @@ impl Database {
         self.add_block_to_height(height, &hash)?;
         self.add_height_for_block(height, hash)?;
         for txn in block.txns.iter() {
-            self.add_block_for_txn(hash, *txn)?;
+            self.add_block_for_txn(*txn, hash)?;
         }
 
         Ok(true)
@@ -229,6 +230,12 @@ impl Database {
         }
 
         unreachable!() */
+    }
+
+    /// Get the txns created by a given account.
+    pub fn get_account_txns(&self, hash: U160) -> Result<HashSet<U256>, Error> {
+        let txns = self.get(CacheEntry::TxnsByAccount(hash).into())?;
+        Ok(txns)
     }
 
     /// Get the public key of a validator given their ID.
@@ -773,12 +780,21 @@ impl Database {
         self.put(CacheEntry::HeightByBlock(block).into(), &height, Some(8))
     }
 
-    fn add_block_for_txn(&mut self, block: U256, txn: U256) -> Result<(), Error> {
+    /// Add a block to the list of blocks containing a given txn.
+    fn add_block_for_txn(&mut self, txn: U256, block: U256) -> Result<(), Error> {
         let mut blocks = map_not_found(self.get_txn_blocks(txn), HashSet::new())?;
-        if blocks.contains(&block) { return Ok(()); }
-        blocks.insert(block);
+        if blocks.insert(block) {
+            self.put(CacheEntry::BlocksByTxn(txn).into(), &blocks, None)
+        } else { Ok(()) }
+    }
 
-        self.put(CacheEntry::BlocksByTxn(txn).into(), &blocks, None)
+    /// Register a txn to a validator account.
+    /// TODO: We will likely need to add some sort of bucket system to this eventually.
+    fn add_txn_to_account(&mut self, account: U160, txn: U256) -> Result<(), Error> {
+        let mut txns: HashSet<U256> = map_not_found(self.get_account_txns(account), HashSet::new())?;
+        if txns.insert(txn) {
+            self.put(CacheEntry::BlocksByTxn(txn).into(), &txns, None)
+        } else { Ok(()) }
     }
 
     /// Construct a mutation given a block and its transactions by querying the DB for the txns and

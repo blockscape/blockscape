@@ -42,6 +42,7 @@ pub enum CacheEntry {
     BlocksByHeight(u64),
     HeightByBlock(U256),
     BlocksByTxn(U256),
+    TxnsByAccount(U160),
     ContraMut(U256),
     CurrentHead
 }
@@ -53,6 +54,7 @@ impl AsBin for CacheEntry {
             &BlocksByHeight(ref h) => prefix(b"HGT", h),
             &HeightByBlock(ref b) => prefix(b"BHT", b),
             &BlocksByTxn(ref h) => prefix(b"TBK", h),
+            &TxnsByAccount(ref h) => prefix(b"ATN", h),
             &ContraMut(ref b) => prefix(b"CMT", b),
             &CurrentHead => Bin::from(b"CHead" as &[u8])
         }
