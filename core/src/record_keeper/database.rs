@@ -3,6 +3,7 @@ use bincode;
 use hash::hash_pub_key;
 use primitives::{U256, U160, Mutation, Change, Block, BlockHeader, Txn, RawEvent, RawEvents};
 use primitives::event;
+use time::Time;
 use rocksdb::{DB, Options, IteratorMode, DBCompressionType};
 use rocksdb::Error as RocksDBError;
 use serde::Serialize;
@@ -130,10 +131,11 @@ impl Database {
 
     /// Add a new transaction to the database.
     #[inline]
-    pub fn add_txn(&mut self, txn: &Txn) -> Result<(), Error> {
+    pub fn add_txn(&mut self, txn: &Txn, receive_time: Time) -> Result<(), Error> {
         let hash = txn.calculate_hash();
         debug!("Adding txn ({}) to database", &hash);
         self.put(BlockchainEntry::Txn(hash).into(), txn, None)?;
+        self.add_receive_time(hash, receive_time)?;
         self.add_txn_to_account(txn.creator, hash)
     }
 
@@ -234,8 +236,12 @@ impl Database {
 
     /// Get the txns created by a given account.
     pub fn get_account_txns(&self, hash: U160) -> Result<HashSet<U256>, Error> {
-        let txns = self.get(CacheEntry::TxnsByAccount(hash).into())?;
-        Ok(txns)
+        self.get(CacheEntry::TxnsByAccount(hash).into())
+    }
+
+    /// Get the time a txn was originally received.
+    pub fn get_txn_receive_time(&self, txn: U256) -> Result<Time, Error> {
+        self.get(CacheEntry::TxnReceiveTime(txn).into())
     }
 
     /// Get the public key of a validator given their ID.
@@ -795,6 +801,11 @@ impl Database {
         if txns.insert(txn) {
             self.put(CacheEntry::BlocksByTxn(txn).into(), &txns, None)
         } else { Ok(()) }
+    }
+
+    /// Cache the time at which a txn was first recieved.
+    fn add_receive_time(&mut self, txn: U256, time: Time) -> Result<(), Error> {
+        self.put(CacheEntry::TxnReceiveTime(txn).into(), &time, Some(8))
     }
 
     /// Construct a mutation given a block and its transactions by querying the DB for the txns and
