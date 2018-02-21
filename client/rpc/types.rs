@@ -114,6 +114,7 @@ pub fn map_rk_err(e: RKErr) -> Error {
         RKErr::DB(..) => Error::internal_error(),
         RKErr::Deserialize(msg) => Error::invalid_params(msg),
         RKErr::Logic(err) => Error::invalid_params(format!("{:?}", err)),
+		RKErr::OutOfMemory(msg) => Error::invalid_params(msg),
         RKErr::NotFound(..) => Error::invalid_request()
     }
 }

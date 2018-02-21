@@ -6,6 +6,7 @@ use serde::Serialize;
 use std::result::Result;
 use std::sync::Arc;
 use openssl::pkey::PKey;
+use std::collections::HashSet;
 
 use blockscape_core::bin::*;
 use blockscape_core::primitives::*;
@@ -124,7 +125,7 @@ struct TxnRPC {
     mutation: JMutation,
     signature: JBin,
     size: u64,
-    block: Option<JU256>
+    block: Option<HashSet<JU256>>
 }
 
 impl TxnRPC {
@@ -134,7 +135,8 @@ impl TxnRPC {
             timestamp: txn.timestamp,
             creator: txn.creator.into(),
             size: txn.calculate_size() as u64,
-            block: rk.get_txn_block(txn.calculate_hash()).map(|o| o.map(|h| h.into()))?,
+            block: rk.get_txn_blocks(txn.calculate_hash())
+                .map(|o| o.map(|h| h.into_iter().map(Into::into).collect()))?,
             mutation: txn.mutation.into(),
             signature: txn.signature.into()
         })
@@ -161,7 +163,9 @@ impl BlockchainRPC {
         d.add_method_with_meta("get_block_header", Self::get_block_header);
         d.add_method_with_meta("get_block", Self::get_block);
         d.add_method_with_meta("get_txn", Self::get_txn);
-        d.add_method_with_meta("get_txn_block", Self::get_txn_block);
+        d.add_method_with_meta("get_txn_blocks", Self::get_txn_blocks);
+        d.add_method_with_meta("get_account_txns", Self::get_account_txns);
+        d.add_method_with_meta("get_txn_receive_time", Self::get_txn_receive_time);
 
         d.add_method_with_meta("sign_txn", Self::sign_txn);
         d.add_method_with_meta("sign_block", Self::sign_block);
@@ -257,9 +261,29 @@ impl BlockchainRPC {
         into_rpc_res::<_, TxnRPC>(self.rk.get_txn(&hash).map(|t| TxnRPC::new(t, &self.rk)).unwrap_or_else(|e| Err(e)))
     }
 
-    fn get_txn_block(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
+    fn get_txn_blocks(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
         let hash = expect_one_arg::<JU256>(params)?.into();
-        to_rpc_res(self.rk.get_txn_block(hash).map(|o| o.map(|h| JU256::from(h))))
+        to_rpc_res(self.rk.get_txn_blocks(hash)
+           .map(|o| o.map(|b|
+               b.into_iter()
+               .map(JU256::from)
+               .collect::<HashSet<JU256>>()
+            ))
+        )
+    }
+
+    fn get_account_txns(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
+        let hash = expect_one_arg::<JU160>(params)?.into();
+        to_rpc_res(self.rk.get_account_txns(hash).map(|k|
+            k.into_iter()
+           .map(JU256::from)
+           .collect::<HashSet<JU256>>()
+        ))
+    }
+
+    fn get_txn_receive_time(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
+        let hash = expect_one_arg::<JU256>(params)?.into();
+        to_rpc_res(self.rk.get_txn_receive_time(hash))
     }
 
 

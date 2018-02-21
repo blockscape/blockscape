@@ -10,6 +10,7 @@ pub enum Error {
     DB(RocksDBError), // when there is an error working with the database itself
     NotFound(DBKey), // when data is not found in the database (prefix, key, postfix).
     Deserialize(String), // when data cannot be deserialized
+    OutOfMemory(String),
     Logic(LogicError), // When something is wrong with a block, txn, or mutation
 }
 
@@ -19,6 +20,7 @@ impl StdErr for Error {
             Error::DB(_) => "RocksDB error: aka, not my fault ☺",
             Error::NotFound(_) => "Could not find the data requested at that Hash (may not be an issue).",
             Error::Deserialize(ref e) => e,
+            Error::OutOfMemory(_) => "An internal memory limit was reached.",
             Error::Logic(_) => "Something is not right with the block, txn, or mutations."
         }
     }
@@ -28,6 +30,7 @@ impl StdErr for Error {
             Error::DB(ref e) => Some(e),
             Error::NotFound(..) => None,
             Error::Deserialize(_) => None,
+            Error::OutOfMemory(_) => None,
             Error::Logic(ref e) => Some(e),
         }
     }
