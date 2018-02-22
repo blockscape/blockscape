@@ -4,7 +4,7 @@ version = "0.0.1"
 authors = ["Daniel Beal <git@danb.email>", "Matthew Conover <matt@xram.co>"]
 
 [dependencies]
-blockscape_core = { path = "core" }
+blockscape_core = { path = "../core" }
 bincode = "^0.8"
 clap = "2.26.2"
 colored = "1.5.3"
@@ -21,5 +21,5 @@ tokio-signal = "0.1"
 parking_lot = "^0.5"
 
 [[bin]]
-path = "client/main.rs"
+path = "src/main.rs"
 name = "blockscape"
