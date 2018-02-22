@@ -26,7 +26,7 @@ build:
       - target/
   script:
     # Build all deps so we do not count those errors against
-    - cargo build --release 2>&1 | tee log.txt
+    - cargo build --release --manifest-path=checkers/Cargo.toml  2>&1 | tee log.txt
     #- "! grep 'warning' log.txt"
   artifacts:
     paths:
@@ -46,7 +46,7 @@ build_arm:
   script:
     - mkdir -p cargo
     - cp /root/.cargo/config cargo
-    - cargo build --release --verbose 2>&1 | tee log.txt
+    - cargo build --release --verbose --manifest-path=checkers/Cargo.toml 2>&1 | tee log.txt
   artifacts:
     paths:
       - target/arm-unknown-linux-musleabi/release/blockscape
@@ -79,8 +79,8 @@ test:
       - cargo/
       - target/
   script:
-    - cargo test
-    - cargo test -p blockscape_core
+    - cargo test --manifest-path=checkers/Cargo.toml 
+    - cargo test --manifest-path=checkers/Cargo.toml  -p blockscape_core
   
 package:
   image: dcr.buyme360.com/devops/docker:latest
