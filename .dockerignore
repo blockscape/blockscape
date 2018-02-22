@@ -1,5 +1,5 @@
-target/*/deps
-target/*/build
-target/*/*/deps
-target/*/*/build
+checkers/target/*/deps
+checkers/target/*/build
+checkers/target/*/*/deps
+checkers/target/*/*/build
 kube

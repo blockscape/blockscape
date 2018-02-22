@@ -11,7 +11,8 @@ ENV RUST_LOG=info,blockscape=debug,blockscape_core=debug,blockscape::rpc=info \
     RUST_BACKTRACE=full
     
 ARG RELEASE=debug
+ARG PRODUCT=client
 
-ADD target/${RELEASE}/blockscape /
+ADD ${PRODUCT}/target/${RELEASE}/blockscape /
 
 CMD [ "/blockscape", "--help" ]

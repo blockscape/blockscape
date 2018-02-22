@@ -8,4 +8,4 @@ else
     docker run -i --name blockscape_build_arm --sig-proxy=true -v $DIR:/src dcr.buyme360.com/plu-capstone/rust/arm:latest cargo build --manifest-path=/src/checkers/Cargo.toml -j8 --verbose
 fi
 
-docker build -t dcr.buyme360.com/plu-capstone/blockscape:arm ..
+docker build -t dcr.buyme360.com/plu-capstone/blockscape:arm --build-arg PRODUCT=checkers ..

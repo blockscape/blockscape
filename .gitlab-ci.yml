@@ -23,14 +23,14 @@ build:
     key: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME"
     paths:
       - cargo/
-      - target/
+      - checkers/target/
   script:
     # Build all deps so we do not count those errors against
     - cargo build --release --manifest-path=checkers/Cargo.toml  2>&1 | tee log.txt
     #- "! grep 'warning' log.txt"
   artifacts:
     paths:
-      - target/release/blockscape
+      - checkers/target/release/blockscape
     expire_in: 2 days
 
   # depending on your build setup it's most likely a good idea to cache outputs to reduce the build time
@@ -42,14 +42,14 @@ build_arm:
     key: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME-arm"
     paths:
       - cargo/
-      - target/
+      - checkers/target/
   script:
     - mkdir -p cargo
     - cp /root/.cargo/config cargo
     - cargo build --release --verbose --manifest-path=checkers/Cargo.toml 2>&1 | tee log.txt
   artifacts:
     paths:
-      - target/arm-unknown-linux-musleabi/release/blockscape
+      - checkers/target/arm-unknown-linux-musleabi/release/blockscape
     expire_in: 2 days
 
 
@@ -77,7 +77,7 @@ test:
     key: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME"
     paths:
       - cargo/
-      - target/
+      - checkers/target/
   script:
     - cargo test --manifest-path=checkers/Cargo.toml 
     - cargo test --manifest-path=checkers/Cargo.toml  -p blockscape_core
@@ -87,7 +87,7 @@ package:
   stage: package
   script:
     - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
-    - docker build -t $IMAGE_TAG --build-arg RELEASE=release .
+    - docker build -t $IMAGE_TAG --build-arg RELEASE=release --build-arg PRODUCT=checkers
     - docker push $IMAGE_TAG
   dependencies:
     - build
@@ -97,7 +97,7 @@ package_arm:
   stage: package
   script:
     - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
-    - docker build -t $ARM_IMAGE_TAG -f Dockerfile.slim --build-arg RELEASE=arm-unknown-linux-musleabi/release .
+    - docker build -t $ARM_IMAGE_TAG -f Dockerfile.slim --build-arg RELEASE=arm-unknown-linux-musleabi/release --build-arg PRODUCT=checkers .
     - docker push $ARM_IMAGE_TAG
   dependencies:
     - build_arm
