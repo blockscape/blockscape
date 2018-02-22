@@ -8,12 +8,12 @@ use std::sync::Arc;
 use openssl::pkey::PKey;
 use std::collections::HashSet;
 
-use blockscape_core::bin::*;
-use blockscape_core::primitives::*;
-use blockscape_core::time::Time;
-use blockscape_core::record_keeper::RecordKeeper;
-use blockscape_core::record_keeper::Error as RKErr;
-use blockscape_core::hash::hash_pub_key;
+use bin::*;
+use primitives::*;
+use time::Time;
+use record_keeper::RecordKeeper;
+use record_keeper::Error as RKErr;
+use hash::hash_pub_key;
 
 pub struct BlockchainRPC {
     rk: Arc<RecordKeeper>,
@@ -143,11 +143,10 @@ impl TxnRPC {
     }
 }
 
-impl BlockchainRPC {
-    pub fn add(rk: Arc<RecordKeeper>, forge_key: PKey, io: &mut MetaIoHandler<SocketMetadata, LogMiddleware>) -> Arc<BlockchainRPC> {
-        let rpc = Arc::new(BlockchainRPC { rk, forge_key });
+impl RPCHandler for BlockchainRPC {
+    fn add(this: &Arc<BlockchainRPC>, io: &mut MetaIoHandler<SocketMetadata, LogMiddleware>) {
 
-        let mut d = IoDelegate::<BlockchainRPC, SocketMetadata>::new(rpc.clone());
+        let mut d = IoDelegate::<BlockchainRPC, SocketMetadata>::new(this.clone());
         d.add_method_with_meta("get_chain_stats", Self::get_chain_stats);
         d.add_method_with_meta("add_block", Self::add_block);
         d.add_method_with_meta("add_pending_txn", Self::add_pending_txn);
@@ -171,6 +170,14 @@ impl BlockchainRPC {
         d.add_method_with_meta("sign_block", Self::sign_block);
 
         io.extend_with(d);
+    }
+}
+
+impl BlockchainRPC {
+
+    pub fn new(rk: Arc<RecordKeeper>, forge_key: PKey) -> Arc<BlockchainRPC> {
+        let rpc = Arc::new(BlockchainRPC { rk, forge_key });
+
         rpc
     }
 
