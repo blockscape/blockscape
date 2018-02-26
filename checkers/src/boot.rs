@@ -18,8 +18,9 @@ use blockscape_core::signer::generate_private_key;
 use blockscape_core::hash::hash_pub_key;
 use blockscape_core::time::Time;
 use blockscape_core::record_keeper::key::NetworkEntry;
+use blockscape_core::rpc::RPC;
 
-use rpc::RPC;
+use rpc;
 
 use context::Context;
 
@@ -259,12 +260,12 @@ pub fn make_rpc(cmdline: &ArgMatches, ctx: Rc<Context>) -> RPC {
     let bind_addr = SocketAddr::new(cmdline.value_of("rpcbind").unwrap().parse().expect("Invalid RPC bind IP"), 
             cmdline.value_of("rpcport").unwrap().parse::<u16>().expect("Invalid RPC port: must be a number!"));
 
-    RPC::run(bind_addr, ctx)
+    rpc::make_rpc(&ctx, bind_addr)
 }
 
 pub fn call_rpc(cmdline: &ArgMatches) -> i32 {
 
-    use rpc::client::JsonRpcRequest;
+    use blockscape_core::rpc::client::JsonRpcRequest;
 
     let method = cmdline.value_of_lossy("rpccmd").expect("Unknown encoding for RPC command!").into_owned();
     let raw_args = cmdline.values_of_lossy("rpcargs").unwrap_or(Vec::new());

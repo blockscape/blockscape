@@ -13,20 +13,23 @@ use libc::{getpid, kill, SIGTERM};
 pub struct ControlRPC {
 }
 
-impl ControlRPC {
-    pub fn add(io: &mut MetaIoHandler<SocketMetadata, LogMiddleware>) -> Arc<ControlRPC> {
-        let rpc = Arc::new(ControlRPC {
-        });
+impl RPCHandler for ControlRPC {
+    fn add(this: &Arc<ControlRPC>, io: &mut MetaIoHandler<SocketMetadata, LogMiddleware>) {
 
-        let mut d = IoDelegate::<ControlRPC, SocketMetadata>::new(rpc.clone());
+        let mut d = IoDelegate::<ControlRPC, SocketMetadata>::new(this.clone());
         d.add_method_with_meta("stop", ControlRPC::stop);
 
         io.extend_with(d);
+    }
+}
 
+impl ControlRPC {
+
+    pub fn new() -> Arc<ControlRPC> {
+        let rpc = Arc::new(ControlRPC {});
 
         rpc
     }
-
 
     fn stop(&self, _params: Params, _meta: SocketMetadata) -> RpcResult {
         // initiate the stop process

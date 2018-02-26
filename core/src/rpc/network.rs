@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use jsonrpc_core::*;
 
-use blockscape_core::network::client::*;
-use blockscape_core::primitives::u256::*;
+use network::client::*;
+use primitives::u256::*;
 
 use rpc::types::*;
 
@@ -19,20 +19,24 @@ pub struct NetworkRPC {
     net_client: UnboundedSender<ClientMsg>
 }
 
-impl NetworkRPC {
-    pub fn add(client: UnboundedSender<ClientMsg>, io: &mut MetaIoHandler<SocketMetadata, LogMiddleware>) -> Arc<NetworkRPC> {
-        let rpc = Arc::new(NetworkRPC {
-            net_client: client
-        });
-
-        let mut d = IoDelegate::<NetworkRPC, SocketMetadata>::new(rpc.clone());
+impl RPCHandler for NetworkRPC {
+    fn add(this: &Arc<NetworkRPC>, io: &mut MetaIoHandler<SocketMetadata, LogMiddleware>) {
+        let mut d = IoDelegate::<NetworkRPC, SocketMetadata>::new(this.clone());
         d.add_method_with_meta("get_net_stats", NetworkRPC::get_net_stats);
         d.add_method_with_meta("get_peer_info", NetworkRPC::get_peer_info);
         d.add_method_with_meta("attach_network", NetworkRPC::attach_network);
         d.add_method_with_meta("add_node", NetworkRPC::add_node);
 
         io.extend_with(d);
+    }
+}
 
+impl NetworkRPC {
+
+    pub fn new(client: UnboundedSender<ClientMsg>) -> Arc<NetworkRPC> {
+        let rpc = Arc::new(NetworkRPC {
+            net_client: client
+        });
 
         rpc
     }

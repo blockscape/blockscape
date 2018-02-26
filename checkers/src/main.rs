@@ -1,10 +1,8 @@
-extern crate libc;
 extern crate openssl;
 extern crate serde;
 extern crate serde_json;
 
 extern crate futures;
-extern crate hyper;
 extern crate tokio_core;
 extern crate tokio_signal;
 extern crate parking_lot;
@@ -21,10 +19,6 @@ extern crate log;
 extern crate blockscape_core;
 
 extern crate colored;
-
-extern crate jsonrpc_core;
-extern crate jsonrpc_macros;
-extern crate jsonrpc_http_server;
 
 extern crate bincode;
 

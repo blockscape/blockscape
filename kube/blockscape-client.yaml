@@ -76,6 +76,7 @@ spec:
         - /blockscape
         - -b
         - 0.0.0.0
+        - -F
         - -h
         - client-${CI_COMMIT_REF_SLUG}-%%.blockscape
         - --seed-node
@@ -84,6 +85,4 @@ spec:
         - 0.0.0.0
       volumes:
       - name: blockscape-client-data
-        hostPath:
-          type: DirectoryOrCreate
-          path: /var/lib/blockscape/client-${CI_COMMIT_REF_SLUG}-%%
+        emptyDir: {}

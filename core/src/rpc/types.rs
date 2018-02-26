@@ -1,19 +1,24 @@
 use std::net::SocketAddr;
 use std::time::Instant;
 use std::ops::Range;
+use std::sync::Arc;
 
 use jsonrpc_core;
+use jsonrpc_core::MetaIoHandler;
 use jsonrpc_core::futures::Future;
 use jsonrpc_core::error::Error;
-use jsonrpc_core::Params;
+pub use jsonrpc_core::Params;
 use serde_json::{Value, from_value};
 use serde::de::DeserializeOwned;
 
-use blockscape_core::record_keeper::Error as RKErr;
+use record_keeper::Error as RKErr;
 
 pub type RpcResult = Result<jsonrpc_core::Value, jsonrpc_core::Error>;
 pub type RpcFuture = Box<Future<Item=jsonrpc_core::Value, Error=jsonrpc_core::Error> + Send>;
 
+pub trait RPCHandler {
+    fn add(this: &Arc<Self>, io: &mut MetaIoHandler<SocketMetadata, LogMiddleware>);
+}
 
 #[derive(Clone)]
 pub struct SocketMetadata {
