@@ -1,5 +1,5 @@
 use bin::Bin;
-use primitives::{U256, U160, U160_ZERO, Txn, Block, BlockHeader, Change, ListenerPool};
+use primitives::{JU256, U256, U160, U160_ZERO, Txn, Block, BlockHeader, Change, ListenerPool};
 use std::collections::{HashMap, BTreeSet};
 use std::path::PathBuf;
 use parking_lot::{RwLock, Mutex};
@@ -35,6 +35,15 @@ pub struct RecordKeeper {
 
     /// A larger work queue designed for smaller, time sensitive jobs
     priority_worker: futures_cpupool::CpuPool
+}
+
+#[derive(Debug, Serialize)]
+pub struct RecordKeeperStatistics {
+    height: u64,
+    current_block_hash: JU256,
+
+    pending_txns_count: u64,
+    pending_txns_size: u64,
 }
 
 impl RecordKeeper {
@@ -487,5 +496,19 @@ impl RecordKeeper {
         } else {
             db.get_txn(*hash)
         }
+    }
+
+    pub fn get_stats(&self) -> Result<RecordKeeperStatistics, Error> {
+        let current_block = self.get_current_block_hash();
+
+        let ptxns = self.pending_txns.read();
+
+        Ok(RecordKeeperStatistics {
+            height: self.get_block_height(&current_block)?,
+            current_block_hash: current_block.into(),
+
+            pending_txns_count: ptxns.len() as u64,
+            pending_txns_size: ptxns.values().fold(0, |acc, ref ptxn| acc + (ptxn.calculate_size() as u64))
+        })
     }
 }

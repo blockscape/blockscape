@@ -116,6 +116,7 @@ deploy:
     - apply_template blockscape-client-1.yaml
     - apply_template explorer.yaml
     - apply_template ingress.yaml
+    - apply_template certificate.yaml
   environment:
     name: staging/$CI_COMMIT_REF_NAME
     url: https://explore-$CI_COMMIT_REF_SLUG.blockscape.xram.co
