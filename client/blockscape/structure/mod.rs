@@ -28,23 +28,32 @@ pub use self::capacitor::*;
 
 /// Stores a large amount of charge.
 mod battery;
-use self::battery::*;
+pub use self::battery::*;
 
 /// Stores a small amount of data (with electric cost).
 mod ram_card;
-use self::ram_card::*;
+pub use self::ram_card::*;
 
 /// Stores a large amount of data.
-pub struct NANDCard;
+mod nand_card;
+pub use self::nand_card::*;
+
 
 /// Data multiplier, takes data and power to make more data.
-pub struct IntegratedCircuit;
-/// A defense system which
-pub struct FireWall;
+mod integrated_circuit;
+pub use self::integrated_circuit::*;
+
+/// A defense system which blocks enemy units.
+mod fire_wall;
+pub use self::fire_wall::*;
+
 /// Constructs and repairs robots.
-pub struct Assembler;
-/// Allows querying information from other plots and to send active messages.
-pub struct Beacon;
+mod assembler;
+pub use self::assembler::*;
+
+/// Allows querying information from other plots and to send/receive active messages.
+mod beacon;
+pub use self::beacon::*;
 
 /// Capable of using modules to do things (controlled by CPU).
 pub struct Turret;
