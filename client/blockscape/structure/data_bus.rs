@@ -31,7 +31,7 @@ impl Worldly for DataBus {
     fn n_change(&self) -> u64 { 0 }
     fn max_charge(&self) -> u64 { 0 }
     fn charge_rate(&self) -> u64 { 0 }
-    fn passive_cost(&self) -> f32 { 0 } // TODO: Add energy cost
+    fn passive_cost(&self) -> f32 { 0.0 } // TODO: Add energy cost
     fn data(&self) -> u64 { 0 }
     fn max_data(&self) -> u64 { 0 }
     fn transfer_rate(&self) -> u64 { 0 }

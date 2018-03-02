@@ -27,9 +27,13 @@ mod capacitor;
 pub use self::capacitor::*;
 
 /// Stores a large amount of charge.
-pub struct Battery;
+mod battery;
+use self::battery::*;
+
 /// Stores a small amount of data (with electric cost).
-pub struct RAMCard;
+mod ram_card;
+use self::ram_card::*;
+
 /// Stores a large amount of data.
 pub struct NANDCard;
 

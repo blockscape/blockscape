@@ -3,7 +3,7 @@ use super::*;
 /// Allows transfer of data between plots.
 pub struct DataTunnel;
 
-impl Describable for PowerTunnel {
+impl Describable for DataTunnel {
     fn id(&self) -> u8 { 5 }
     fn str_id(&self) -> &'static str { "data_tunnel" }
     fn object_name(&self) -> &'static str { "Data Tunnel" }
@@ -12,7 +12,7 @@ impl Describable for PowerTunnel {
     fn description(&self) -> &'static str { "Allows for the transfer of data between plots." }
 }
 
-impl Worldly for PowerTunnel {
+impl Worldly for DataTunnel {
     fn location(&self) -> Coord {
         unimplemented!()
     }
@@ -40,7 +40,7 @@ impl Worldly for PowerTunnel {
     fn data_cost(&self) -> u64 { 7_000_000 }
 }
 
-impl Structure for PowerTunnel {
+impl Structure for DataTunnel {
     fn category(&self) -> &'static str { "infrastructure" }
     fn blocking(&self) -> bool { true }
     fn xy_len(&self) -> (u32, u32) { (3, 3) }
