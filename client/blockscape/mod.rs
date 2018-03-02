@@ -78,6 +78,10 @@ pub trait Structure: Worldly {
     /// Determines the build menu
     fn category(&self) -> &'static str;
 
+    /// Can things pass over this? If it is non-blocking, then other non-blocking structures or
+    /// agents may occupy the same space. E.g. roads are non-blocking but turrets are blocking.
+    fn blocking(&self) -> bool;
+
     /// The length of this object in the (x-direction, y-direction).
     fn xy_len(&self) -> (u32, u32);
 }
@@ -143,6 +147,7 @@ pub trait Agent<'a>: Worldly {
     fn ranged_data(&self, distance: u32) -> u64;
 }
 
+/// An agent which can move about the world.
 pub trait Mobile<'a>: Agent<'a> {
     /// Direction the agent is currently facing.
     fn orientation(&self) -> Direction;
@@ -161,6 +166,11 @@ pub trait Mobile<'a>: Agent<'a> {
 
     // fn destination(&self) -> (PlotID, Coord);
     // fn path(&self);
+}
+
+/// A controller which is responsible for commanding agents.
+pub trait CPU: Worldly {
+
 }
 
 pub enum Direction {
