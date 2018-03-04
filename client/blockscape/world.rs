@@ -7,9 +7,9 @@ const PLOT_SIZE: usize = 256;
 
 pub struct Plot<'a> {
     height_map: BitVec,
-    structures: HashMap<Coord, Box<Structure>>,
-    agents: HashMap<Coord, Box<Agent<'a>>>,
-    mobs: HashMap<Coord, Box<Mobile<'a>>>
+    structures: Vec<Box<Structure>>, //TODO: VecDeq?
+    agents: Vec<Box<Agent<'a>>>,
+    mobs: Vec<Box<Mobile<'a>>>
 }
 
 impl<'a> Plot<'a> {
@@ -17,9 +17,9 @@ impl<'a> Plot<'a> {
         Plot {
             height_map: BitVec::from_elem(PLOT_SIZE * PLOT_SIZE, false),
             // structures: hashmap!{ coord_to_index(Coord(PLOT_SIZE/2, PLOT_SIZE/2)) =>  }, //TODO: once we have a CPU structure definition, put it in the center of the plot.
-            structures: hashmap!(),
-            agents: HashMap::new(),
-            mobs: HashMap::new()
+            structures: Vec::new(),
+            agents: Vec::new(),
+            mobs: Vec::new()
         }
     }
 

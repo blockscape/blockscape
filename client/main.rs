@@ -8,6 +8,7 @@ extern crate hyper;
 extern crate tokio_core;
 extern crate tokio_signal;
 extern crate parking_lot;
+extern crate pathfinding;
 
 extern crate bit_vec;
 

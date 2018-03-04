@@ -1,6 +1,6 @@
 mod agent;
 mod scripts;
-mod structure;
+mod units;
 mod world;
 mod modules;
 
