@@ -27,8 +27,7 @@ impl Worldly for PowerLine {
     fn max_sp(&self) -> u32 { 0 }
     fn sp_regen_rate(&self) -> u32 { 0 }
     fn sp_regen_cost(&self) -> f32 { 0.0 }
-    fn p_charge(&self) -> u64 { 0 }
-    fn n_change(&self) -> u64 { 0 }
+    fn charge(&self) -> u64 { 0 }
     fn max_charge(&self) -> u64 { 0 }
     fn charge_rate(&self) -> u64 { 0 }
     fn passive_cost(&self) -> f32 { 0.0 }

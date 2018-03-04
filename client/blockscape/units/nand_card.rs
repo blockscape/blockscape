@@ -27,8 +27,7 @@ impl Worldly for NANDCard {
     fn max_sp(&self) -> u32 { 0 }
     fn sp_regen_rate(&self) -> u32 { 0 }
     fn sp_regen_cost(&self) -> f32 { 0.0 }
-    fn p_charge(&self) -> u64 { unimplemented!() }
-    fn n_change(&self) -> u64 { unimplemented!() }
+    fn charge(&self) -> u64 { unimplemented!() }
     fn max_charge(&self) -> u64 { 5_000_000 }
     fn charge_rate(&self) -> u64 { 40_000 }
     fn passive_cost(&self) -> f32 { 10.0 }

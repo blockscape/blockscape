@@ -47,11 +47,8 @@ pub trait Worldly: Describable {
 
 
     /// Current positive charge carried.
-    fn p_charge(&self) -> u64;
-    /// Current negative charge carried.
-    fn n_change(&self) -> u64;
-    /// Maximum charge which can be carried. The following must be true:
-    /// `(p_charge + n_charge) < max_charge.`
+    fn charge(&self) -> u64;
+    /// Maximum charge which can be carried.
     fn max_charge(&self) -> u64;
     /// The maximum amount of charge which may be brought in and or sent out in a tick.
     fn charge_rate(&self) -> u64;
