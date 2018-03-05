@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: client-${CI_COMMIT_REF_SLUG}-0
+  namespace: blockscape
+  annotations:
+    sha: ${CI_COMMIT_SHA}
+spec:
+  type: NodePort
+  ports:
+  - port: 35653
+    name: blockscape-p2p
+    protocol: UDP
+  - port: 8356
+    name: blockscape-rpc
+  selector:
+    app: blockscape-${CI_COMMIT_REF_SLUG}-client
