@@ -1,3 +1,6 @@
+extern crate bit_vec;
+extern crate blockscape_core;
+
 mod agent;
 mod scripts;
 mod units;
@@ -172,4 +175,8 @@ pub trait CPU: Worldly {
 
 pub enum Direction {
     N, NE, E, SE, S, SW, W, NW
+}
+
+fn main() {
+    unimplemented!()
 }

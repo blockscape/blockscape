@@ -1,0 +1,12 @@
+[package]
+name = "blockscape_client"
+version = "0.0.1"
+authors = ["Daniel Beal <git@danb.email>", "Matthew Conover <matt@xram.co>"]
+
+[dependencies]
+blockscape_core = { path = "../core" }
+bit-vec = "0.4.4"
+
+[[bin]]
+path = "src/main.rs"
+name = "blockscape"
