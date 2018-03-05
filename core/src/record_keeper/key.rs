@@ -41,6 +41,9 @@ impl Into<Key> for BlockchainEntry {
 pub enum CacheEntry {
     BlocksByHeight(u64),
     HeightByBlock(U256),
+    BlocksByTxn(U256),
+    TxnsByAccount(U160),
+    TxnReceiveTime(U256),
     ContraMut(U256),
     CurrentHead
 }
@@ -51,6 +54,9 @@ impl AsBin for CacheEntry {
         match self {
             &BlocksByHeight(ref h) => prefix(b"HGT", h),
             &HeightByBlock(ref b) => prefix(b"BHT", b),
+            &BlocksByTxn(ref h) => prefix(b"TBK", h),
+            &TxnsByAccount(ref h) => prefix(b"ATN", h),
+            &TxnReceiveTime(ref h) => prefix(b"RCT", h),
             &ContraMut(ref b) => prefix(b"CMT", b),
             &CurrentHead => Bin::from(b"CHead" as &[u8])
         }

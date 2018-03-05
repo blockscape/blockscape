@@ -1,38 +1,64 @@
-use jsonrpc_core::*;
-use jsonrpc_core::error::Error;
-use jsonrpc_macros::IoDelegate;
-use rpc::types::*;
+use blockscape_core::rpc::*;
+use blockscape_core::rpc::RPC;
 use serde::Serialize;
 use std::result::Result;
 use std::sync::Arc;
+use std::rc::Rc;
+use std::net::SocketAddr;
+
+use serde_json;
+
+use openssl::pkey::PKey;
 
 use blockscape_core::record_keeper::PlotID;
 use blockscape_core::primitives::Coord;
 use blockscape_core::primitives::*;
 
 use game::CheckersGame;
+use context::Context;
 use checkers;
+
+pub fn make_rpc(ctx: &Rc<Context>, bind_addr: SocketAddr) -> RPC {
+
+    let mut handler = RPC::build_handler();
+
+    ControlRPC::add(&ControlRPC::new(), &mut handler);
+
+    if let Some(ref net_client) = ctx.network {
+        NetworkRPC::add(&NetworkRPC::new(net_client.clone()), &mut handler);
+    }
+
+    let forge_key = PKey::private_key_from_der(&ctx.forge_key.private_key_to_der().unwrap()).unwrap();
+    BlockchainRPC::add(&BlockchainRPC::new(ctx.rk.clone(), forge_key), &mut handler);
+
+    RPC::run(bind_addr, handler)
+}
 
 pub struct CheckersRPC {
     game: Arc<CheckersGame>,
     my_player: U160
 }
 
-impl CheckersRPC {
-    pub fn add(game: Arc<CheckersGame>, my_player: U160, io: &mut MetaIoHandler<SocketMetadata, LogMiddleware>) -> Arc<CheckersRPC> {
-        let rpc = Arc::new(CheckersRPC {
-            game,
-            my_player
-        });
+impl RPCHandler for CheckersRPC {
+    fn add(this: &Arc<CheckersRPC>, io: &mut MetaIoHandler<SocketMetadata, LogMiddleware>) {
 
-        let mut d = IoDelegate::<CheckersRPC, SocketMetadata>::new(rpc.clone());
+        let mut d = IoDelegate::<CheckersRPC, SocketMetadata>::new(this.clone());
         d.add_method_with_meta("get_checkers_board", Self::get_checkers_board);
         d.add_method_with_meta("play_checkers", Self::play_checkers);
         d.add_method_with_meta("new_checkers_game", Self::new_checkers_game);
         d.add_method_with_meta("get_my_player", Self::get_my_player);
 
         io.extend_with(d);
-        rpc
+    }
+}
+
+impl CheckersRPC {
+
+    fn new(game: Arc<CheckersGame>, my_player: U160) -> Arc<CheckersRPC> { 
+        Arc::new(CheckersRPC {
+            game,
+            my_player
+        })
     }
 
     fn get_checkers_board(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
@@ -135,5 +161,5 @@ fn read_direction(p: &String) -> Result<checkers::Direction, Error> {
 
 #[inline]
 fn to_rpc_res<T: Serialize>(r: Result<T, Error>) -> RpcResult {
-    r.map(|v| to_value(v).unwrap())
+    r.map(|v| serde_json::to_value(v).unwrap())
 }

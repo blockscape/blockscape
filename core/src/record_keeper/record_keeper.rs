@@ -1,6 +1,6 @@
 use bin::Bin;
 use primitives::{JU256, U256, U160, U160_ZERO, Txn, Block, BlockHeader, Change, ListenerPool};
-use std::collections::{HashMap, BTreeSet};
+use std::collections::{HashMap, BTreeSet, HashSet};
 use std::path::PathBuf;
 use parking_lot::{RwLock, Mutex};
 use primitives::{RawEvents, event};
@@ -14,6 +14,19 @@ use time::Time;
 use futures::sync::mpsc::Sender;
 use futures_cpupool;
 
+const MAX_PENDING_TXN_MEM: usize = 128*1024*1024; //128 MB
+
+#[derive(Debug, Serialize)]
+/// RK Stats which can be sent via JSON on request.
+pub struct RecordKeeperStatistics {
+    height: u64,
+    current_block_hash: JU256,
+
+    pending_txns_count: u64,
+    pending_txns_size: u64,
+}
+
+
 /// An abstraction on the concept of states and state state data. Builds higher-lsuperevel functionality
 /// On top of the database. The implementation uses RwLocks to provide many read, single write
 /// thread safety.
@@ -24,7 +37,7 @@ use futures_cpupool;
 pub struct RecordKeeper {
     db: RwLock<Database>,
     rules: RwLock<MutationRules>,
-    pending_txns: RwLock<HashMap<U256, Txn>>,
+    pending_txns: RwLock<HashMap<U256, (Time, Txn)>>,
 
     record_listeners: Mutex<ListenerPool<RecordEvent>>,
     game_listeners: Mutex<ListenerPool<PlotEvent>>,
@@ -35,15 +48,6 @@ pub struct RecordKeeper {
 
     /// A larger work queue designed for smaller, time sensitive jobs
     priority_worker: futures_cpupool::CpuPool
-}
-
-#[derive(Debug, Serialize)]
-pub struct RecordKeeperStatistics {
-    height: u64,
-    current_block_hash: JU256,
-
-    pending_txns_count: u64,
-    pending_txns_size: u64,
 }
 
 impl RecordKeeper {
@@ -76,7 +80,7 @@ impl RecordKeeper {
             if db.is_empty() { // add genesis
                 debug!("Loaded DB is empty, adding genesis block...");
                 for ref txn in genesis.1 {
-                    db.add_txn(txn)?;
+                    db.add_txn(txn, genesis.0.timestamp)?;
                 }
                 db.add_block(&genesis.0)?;
                 db.walk_to_head()?;
@@ -137,8 +141,8 @@ impl RecordKeeper {
 
         // we know it is a valid block, so go ahead and add it's transactions, and then it.
         for txn_hash in block.txns.iter() {
-            if let Some(txn) = pending_txns.remove(txn_hash) { // we will need to add it 
-                db.add_txn(&txn)?;
+            if let Some((recv_time, txn)) = pending_txns.remove(txn_hash) { // we will need to add it
+                db.add_txn(&txn, recv_time)?;
             } else {
                 // should already be in the DB then because otherwise is_valid_block should give an
                 // error, so use an assert check
@@ -194,6 +198,12 @@ impl RecordKeeper {
 
         let mut txns = self.pending_txns.write();
         let db = self.db.read();
+
+        let pending_size = txns.values()
+            .fold(0, |acc, &(_, ref t)| acc + (t.calculate_size()));
+        if pending_size + txn.calculate_size() > MAX_PENDING_TXN_MEM {
+            return Err(Error::OutOfMemory("Maximum pending txn memory reached.".into()));
+        }
         
         // check if it is already pending
         if txns.contains_key(&hash) {
@@ -211,7 +221,7 @@ impl RecordKeeper {
 
         // add the event
         self.is_valid_txn_given_lock(&*db, &*txns, &txn)?;
-        txns.insert(hash, txn.clone());
+        txns.insert(hash, (Time::current(), txn.clone()));
 
         // notify listeners
         self.record_listeners.lock().notify(&RecordEvent::NewTxn{fresh, txn: txn.clone() });
@@ -322,7 +332,7 @@ impl RecordKeeper {
         };
         
         let txns = self.pending_txns.read();
-        for txn in txns.values() {
+        for &(_, ref txn) in txns.values() {
             for change in &txn.mutation.changes {
                 if let &Change::PlotEvent(ref e) = change {
                     if e.tick >= from_tick && (e.from == plot_id) || (e.to.contains(&plot_id)) {
@@ -402,7 +412,7 @@ impl RecordKeeper {
         let pending = self.pending_txns.read();
         let db = self.db.read();
         match pending.get(&hash) {
-            Some(txn) => Ok(txn.clone()),
+            Some(&(_, ref txn)) => Ok(txn.clone()),
             None => db.get_txn(*hash)
         }
     }
@@ -413,18 +423,34 @@ impl RecordKeeper {
         db.is_part_of_current_chain(*hash)
     }
 
-    /// Get the block a txn is part of. **Warning:** this will scan the blockchain and should only
-    /// be used for debugging at the moment. We can add caching if this is useful for some reason.
-    /// Will return Ok(Some(Block_hash)) if it is found on a block, Ok(None) if it is pending, and
-    /// Err(..) if anything goes wrong or it is not found.
-    pub fn get_txn_block(&self, hash: U256) -> Result<Option<U256>, Error> {
+    /// Get the block a txn is part of. It will return None if the txn is found to be pending.
+    pub fn get_txn_blocks(&self, txn: U256) -> Result<Option<HashSet<U256>>, Error> {
         // check pending txns
         for (h, _t) in self.pending_txns.read().iter() {
-            if *h == hash { return Ok(None) }
+            if *h == txn { return Ok(None) }
         }
 
         // check DB
-        self.db.read().get_txn_block(hash).map(|h| Some(h))
+        self.db.read().get_txn_blocks(txn).map(|x| Some(x))
+    }
+
+    /// Get the txns which were created by a given account.
+    pub fn get_account_txns(&self, account: U160) -> Result<HashSet<U256>, Error> {
+        let mut txns = HashSet::new();
+        for (txn_hash, &(_, ref txn)) in self.pending_txns.read().iter() {
+            if txn.creator == account { txns.insert(txn_hash.clone()); }
+        }
+        for txn in self.db.read().get_account_txns(account)? {
+            txns.insert(txn);
+        } Ok(txns)
+    }
+
+    /// Get the time a txn was originally received.
+    pub fn get_txn_receive_time(&self, txn: U256) -> Result<Time, Error> {
+        if let Some(&(time, _)) = self.pending_txns.read().get(&txn) {
+            return Ok(time);
+        }
+        self.db.read().get_txn_receive_time(txn)
     }
 
     /// Internal use function to check if a block and all its sub-components are valid.
@@ -447,11 +473,11 @@ impl RecordKeeper {
 
     /// Check if a txn is valid given access to the database and pending txns. Will construct a
     /// network state.
-    fn is_valid_txn_given_lock(&self, db: &Database, pending: &HashMap<U256, Txn>, txn: &Txn) -> Result<(), Error> {
+    fn is_valid_txn_given_lock(&self, db: &Database, pending: &HashMap<U256, (Time, Txn)>, txn: &Txn) -> Result<(), Error> {
         let state = {
             let cur = db.get_current_block_hash();
             let mut diff = NetDiff::new(cur, cur);
-            for mutation in pending.values().map(|txn| txn.mutation.clone()) {
+            for mutation in pending.values().map(|&(_, ref txn)| txn.mutation.clone()) {
                 diff.apply_mutation(mutation);
             }
             NetState::new(&*db, diff)
@@ -491,7 +517,7 @@ impl RecordKeeper {
     }
 
     fn get_txn_given_lock(&self, db: &Database, hash: &U256) -> Result<Txn, Error> {
-        if let Some(txn) = self.pending_txns.read().get(hash) {
+        if let Some(&(_, ref txn)) = self.pending_txns.read().get(hash) {
             Ok(txn.clone())
         } else {
             db.get_txn(*hash)
@@ -508,7 +534,7 @@ impl RecordKeeper {
             current_block_hash: current_block.into(),
 
             pending_txns_count: ptxns.len() as u64,
-            pending_txns_size: ptxns.values().fold(0, |acc, ref ptxn| acc + (ptxn.calculate_size() as u64))
+            pending_txns_size: ptxns.values().fold(0, |acc, &(_, ref ptxn)| acc + (ptxn.calculate_size() as u64))
         })
     }
 }

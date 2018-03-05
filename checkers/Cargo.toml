@@ -4,17 +4,12 @@ version = "0.0.1"
 authors = ["Daniel Beal <git@danb.email>", "Matthew Conover <matt@xram.co>"]
 
 [dependencies]
-blockscape_core = { path = "core" }
+blockscape_core = { path = "../core" }
 bincode = "^0.8"
 clap = "2.26.2"
 colored = "1.5.3"
 futures = "0.1"
-hyper = "0.11"
 isatty = "0.1"
-jsonrpc-core = "^8.0.0"
-jsonrpc-http-server = "^8.0.0"
-jsonrpc-macros = "^8.0.0"
-libc = "0.2.31"
 log = "0.3"
 openssl = "^0.9"
 pretty_env_logger = "0.1.1"
@@ -29,5 +24,5 @@ maplit = "1.0.1"
 pathfinding = "^0.6.11"
 
 [[bin]]
-path = "client/main.rs"
+path = "src/main.rs"
 name = "blockscape"
