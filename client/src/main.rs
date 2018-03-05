@@ -1,4 +1,5 @@
 extern crate bit_vec;
+extern crate pathfinding;
 extern crate blockscape_core;
 
 mod agent;
@@ -7,7 +8,7 @@ mod units;
 mod world;
 mod modules;
 
-use blockscape_core::primitives::Coord;
+use blockscape_core::primitives::{Coord, Direction};
 use self::modules::ModuleList;
 
 /// Something all things should implement if information about them can be displayed in a UI.
@@ -171,10 +172,6 @@ pub trait Mobile<'a>: Agent<'a> {
 /// A controller which is responsible for commanding agents.
 pub trait CPU: Worldly {
 
-}
-
-pub enum Direction {
-    N, NE, E, SE, S, SW, W, NW
 }
 
 fn main() {

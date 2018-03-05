@@ -2,7 +2,7 @@ pub mod flower_picking;
 
 use futures::prelude::*;
 
-use primitives::block::Block;
+use primitives::Block;
 
 #[derive(Debug)]
 pub struct Error(String);

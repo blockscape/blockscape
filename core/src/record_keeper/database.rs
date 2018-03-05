@@ -30,7 +30,7 @@ struct HeadRef {
 
 impl Default for HeadRef {
     fn default() -> HeadRef {
-        use primitives::u256::U256_ZERO;
+        use primitives::U256_ZERO;
         HeadRef{block: U256_ZERO, height: 0}
     }
 }

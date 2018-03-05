@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 use bin::*;
 use bincode;
+use super::Direction;
 
 /// Square an integer
 #[inline(always)]
@@ -11,12 +12,6 @@ fn sq(x: i32) -> u64 {
 /// A signed (x, y) coordinate. This can be used as a PlotID.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Coord(pub i32, pub i32);
-
-impl Coord {
-    pub fn bytes(&self) -> Vec<u8> {
-        bincode::serialize(&self, bincode::Bounded(8)).unwrap()
-    }
-}
 
 impl PartialOrd for Coord {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
@@ -37,6 +32,17 @@ impl Ord for Coord {
 
 impl AsBin for Coord {
     fn as_bin(&self) -> Bin { bincode::serialize(self, bincode::Bounded(8)).unwrap() }
+}
+
+impl Coord {
+    /// Get the coordinate a given number of "steps" in a specified direction.
+    pub fn move_in_dir(self, dir: Direction, steps: usize) -> Coord {
+        let (dx, dy) = dir.dx_dy();
+        Coord(
+            self.0 + dx as i32 * steps as i32,
+            self.1 + dy as i32 * steps as i32
+        )
+    }
 }
 
 

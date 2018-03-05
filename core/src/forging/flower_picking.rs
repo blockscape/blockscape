@@ -9,7 +9,7 @@ use bincode;
 
 use forging::{BlockForger, Error};
 use record_keeper::RecordKeeper;
-use primitives::block::Block;
+use primitives::Block;
 
 pub struct FlowerPicking {
     /// A reference to RecordKeeper so block generation/preparation can happen
