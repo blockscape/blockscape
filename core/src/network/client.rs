@@ -47,8 +47,8 @@ const NODE_CHECK_INTERVAL: u64 = 5000; // every 5 seconds
 //const NODE_NTP_INTERVAL: u64 = 20 * 60000; // every 20 minutes
 
 /// The maximum amount of data that can be in a single message object (the object itself can still be in split into pieces at the datagram level)
-/// Right now it is set to 10MB
-pub const MAX_PACKET_SIZE: usize = 10 * 1024 * 1024;
+/// Right now it is set to 64k, which is the highest number supported by kernel fragmentation right now.
+pub const MAX_PACKET_SIZE: usize = 64 * 1000;
 
 //#[derive(Debug)]
 pub struct ClientConfig {
