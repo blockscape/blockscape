@@ -34,8 +34,33 @@ impl<'a> Plot<'a> {
 
     /// Returns the neighboring coordinates to a given coordinate and the cost to get there. Will
     /// not include coordinates which are not traversable (i.e. height map is 1).
-    pub fn neighboring_paths(loc: Coord) -> Vec<(Coord, usize)> {
-        unimplemented!()
+    pub fn neighboring_paths(&self, loc: Coord) -> Vec<(Coord, usize)> {
+        let mut neighbors = Vec::new();
+        for dir in Direction::iterator() {
+            let n_loc = loc.move_in_dir(*dir, 1);
+            if n_loc.0 >= PLOT_SIZE as i32 || n_loc.0 < 0 || n_loc.1 >= PLOT_SIZE as i32 || n_loc.1 < 0 {
+                // we have gone past the edge, don't add it as an option
+                // TODO: handle inter-plot pathfinding
+                continue;
+            }
+
+            let i = Self::coord_to_index(n_loc);
+
+            // If we cannot move onto this tile, don't add it as an option
+            if !self.height_map[i] { continue; }
+
+            let cost = if self.roads[i] {
+                if dir.is_cardinal() { ROAD_TRAVEL_COST }
+                else { DIAGONAL_ROAD_TRAVEL_COST }
+            } else {
+                if dir.is_cardinal() { NON_ROAD_TRAVEL_COST }
+                else { DIAGONAL_NON_ROAD_TRAVEL_COST }
+            };
+
+            neighbors.push((n_loc, cost))
+        }
+
+        neighbors
     }
 
     /// Convert a coordinate into an index for a 1D array representation of the 2D data.

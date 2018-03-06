@@ -14,6 +14,7 @@ impl Direction {
     }
 
     /// Retrieve the change in x and change in y which represent the direction specified.
+    #[inline]
     pub fn dx_dy(self) -> (i8, i8) {
         use self::Direction::*;
         match self {
@@ -25,6 +26,16 @@ impl Direction {
             SW => (-1, -1),
             W => (-1, 0),
             NW => (-1, 1)
+        }
+    }
+
+    /// Returns true if the direction is a cardinal direction, (i.e. N, E, S, or W).
+    #[inline]
+    pub fn is_cardinal(self) -> bool {
+        use self::Direction::*;
+        match self {
+            N | E | S | W => true,
+            _ => false
         }
     }
 }
