@@ -13,6 +13,7 @@ use openssl::pkey::PKey;
 use blockscape_core::record_keeper::PlotID;
 use blockscape_core::primitives::Coord;
 use blockscape_core::primitives::*;
+use blockscape_core::hash::hash_pub_key;
 
 use game::CheckersGame;
 use context::Context;
@@ -30,6 +31,7 @@ pub fn make_rpc(ctx: &Rc<Context>, bind_addr: SocketAddr) -> RPC {
 
     let forge_key = PKey::private_key_from_der(&ctx.forge_key.private_key_to_der().unwrap()).unwrap();
     BlockchainRPC::add(&BlockchainRPC::new(ctx.rk.clone(), forge_key), &mut handler);
+    CheckersRPC::add(&CheckersRPC::new(ctx.game.clone(), hash_pub_key(&ctx.forge_key.public_key_to_der().unwrap())), &mut handler);
 
     RPC::run(bind_addr, handler)
 }
