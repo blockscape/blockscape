@@ -258,11 +258,7 @@ impl Session {
 
         // connection could have been acquitted while handling the introduce.
         if sess.done.get().is_none() {
-            actions.send_packets.push(sess.build_packet(Message::Introduce {
-                    node: sess.context.my_node.clone(),
-                    port: local_port,
-                    network_id: network_id
-                }, None, true));
+            sess.send_introduce(actions);
         }
 
         sess
@@ -299,6 +295,15 @@ impl Session {
         else {
             panic!("Received non-introduce packet for session init");
         }
+    }
+
+    #[inline]
+    pub fn send_introduce(&self, actions: &mut NetworkActions) {
+        actions.send_packets.push(self.build_packet(Message::Introduce {
+                    node: self.context.my_node.clone(),
+                    port: self.local_port,
+                    network_id: self.network_id
+                }, None, true));
     }
 
     #[inline]
@@ -348,7 +353,13 @@ impl Session {
             // handle all of the different packet types
             match packet.msg {
                 Message::Introduce { .. } => {
-                    unreachable!();
+                    if !self.remote_peer.borrow().key.is_empty() && !packet.check_sig(&self.remote_peer.borrow()) {
+                        self.done.set(Some(ByeReason::ExitPermanent));
+                        return;
+                    }
+
+                    // reply to the introduce since sometimes the 
+                    self.send_introduce(actions);
                 }
 
                 Message::Ping(time) => {

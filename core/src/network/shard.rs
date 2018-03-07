@@ -215,7 +215,12 @@ impl ShardInfo {
         if let Some(addr) = saddr {
 
             if self.sessions.borrow().contains_key(&addr) {
-                return Err(()); // already connected
+
+                // Sometimes this can happen if the remote peer shuts down briefly and comes back up.
+                // Route the packet through to the session handler so it can send 
+                self.sessions.borrow().get(&addr);
+
+                return Ok(addr);
             }
 
             //debug!("New session: {:?}", peer.endpoint);
