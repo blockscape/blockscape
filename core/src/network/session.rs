@@ -24,6 +24,8 @@ use record_keeper::key::*;
 use futures::prelude::*;
 use futures::future;
 
+use hash::hash_bytes;
+
 pub const PROTOCOL_VERSION: u16 = 1;
 
 /// How much of the ping value to retain. The current value keeps a weighted average over 10 minutes
@@ -162,6 +164,10 @@ pub enum Message {
     /// Sent by reliable flooding to indicClientate that a new block has entered the network and should be propogated
     NewBlock(Block),
 
+    /// Sent by reliable flooding to send messages between all connected nodes of the DApp.
+    /// NOTE: Please do not use this to settle any consensus! That should be placed in a txn in the blockchain. It is only a tool to *lead to* consensus (ex. to pass signatures/secrets).
+    Broadcast(u8, Vec<u8>),
+
     /// Request block synchronization data, starting from the given block hash, proceeding to the last block hash
     SyncBlocks { last_block_hash: U256, target_block_hash: U256 },
     /// Request specific block or transaction data as indicated by the list of hashes given
@@ -231,6 +237,9 @@ pub struct Session {
     /// Used to help discern the number of failed replies. When this number exceeds a threshold,
     /// the connection is considered dropped
     strikes: Cell<u32>,
+
+    /// Used to track the number of times the node has misbehaved/sent bogus data over the last time period. Too many abuses leads to blacklisting.
+    abuses: Cell<u32>
 }
 
 impl Session {
@@ -250,6 +259,7 @@ impl Session {
             current_seq: Cell::new(0),
             current_job: Cell::new(None),
             strikes: Cell::new(0),
+            abuses: Cell::new(0)
         };
 
         if let Some(p) = introduce {
@@ -483,6 +493,12 @@ impl Session {
 
                         Ok::<(), ()>(())
                     }));
+                },
+
+                Message::Broadcast(ref id, ref payload) => {
+                    if !self.context.handle_broadcast(&self.network_id, *id, payload) {
+                        self.abuses.set(self.abuses.get() + 1)
+                    }
                 },
 
                 Message::SyncBlocks { ref last_block_hash, ref target_block_hash } => {

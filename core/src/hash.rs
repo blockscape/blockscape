@@ -8,7 +8,7 @@ use primitives::{U256, U160};
 
 /// Hash bytes of data and then return the result as a U256.
 /// This uses a double sha3-256 hash.
-fn hash_bytes(bytes: &[u8]) -> U256 {
+pub fn hash_bytes(bytes: &[u8]) -> U256 {
     let mut buf = [0u8; 32];
     let mut hasher = Sha3::sha3_256();
 

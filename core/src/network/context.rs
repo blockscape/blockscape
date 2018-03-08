@@ -86,6 +86,9 @@ pub struct NetworkContext {
     /// A place to chain data which should be retrieved. The second value in the tuple, a hash, is used to
     /// identify a possible augmentation. In this case, it is always the previous
     pub job_targets: unsync::mpsc::UnboundedSender<(Rc<NetworkJob>, Option<U256>)>,
+
+    /// List of received broadcast hashes
+    pub received_broadcasts: RefCell<HashMap<U256, Time>>
 }
 
 impl NetworkContext {
@@ -96,6 +99,24 @@ impl NetworkContext {
             // TODO: Try to eliminate call to wait! Typically it should not be an issue, but
             // it would be more future-ist to provide some way to react upon future availability
             self.sink.set(Some(st.forward(self.sink.replace(None).unwrap()).wait().unwrap().1));
+        }
+    }
+
+    /// Forwards the received broadcast to the appropriate handler, or returns false if the handler does not exist or if the hash has alraedy been received
+    pub fn handle_broadcast(&self, network_id: &U256, id: u8, payload: &Vec<u8>) -> bool {
+        let incoming_hash = hash_bytes(payload[..]);
+
+        if self.received_broadcasts.borrow().contains(&incoming_hash) {
+            // should not be propogating broadcasts multiple times
+            return false
+        }
+
+        if let Some(receiver) = self.config.broadcast_receivers[id] {
+            self.received_broadcasts.borrow().insert(incoming_hash);
+            receiver.receive_broadcast(network_id, payload)
+        }
+        else {
+            false
         }
     }
 }
