@@ -1,7 +1,8 @@
-use std::cell::Cell;
+use std::cell::*;
 use std::sync::Arc;
 use std::io;
 use std::rc::Rc;
+use std::collections::HashMap;
 
 use futures::prelude::*;
 use futures::stream;
@@ -13,6 +14,8 @@ use tokio_core::reactor::*;
 use record_keeper::RecordKeeper;
 
 use primitives::U256;
+use time::Time;
+use hash::hash_bytes;
 
 use network::session::SocketPacket;
 use network::client::ClientConfig;
@@ -104,15 +107,15 @@ impl NetworkContext {
 
     /// Forwards the received broadcast to the appropriate handler, or returns false if the handler does not exist or if the hash has alraedy been received
     pub fn handle_broadcast(&self, network_id: &U256, id: u8, payload: &Vec<u8>) -> bool {
-        let incoming_hash = hash_bytes(payload[..]);
+        let incoming_hash = hash_bytes(&payload[..]);
 
-        if self.received_broadcasts.borrow().contains(&incoming_hash) {
+        if self.received_broadcasts.borrow().contains_key(&incoming_hash) {
             // should not be propogating broadcasts multiple times
             return false
         }
 
-        if let Some(receiver) = self.config.broadcast_receivers[id] {
-            self.received_broadcasts.borrow().insert(incoming_hash);
+        if let Some(ref receiver) = self.config.broadcast_receivers[id as usize] {
+            self.received_broadcasts.borrow_mut().insert(incoming_hash, Time::current_local());
             receiver.receive_broadcast(network_id, payload)
         }
         else {

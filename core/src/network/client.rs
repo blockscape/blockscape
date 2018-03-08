@@ -1,6 +1,7 @@
 use bincode;
 use openssl::pkey::PKey;
 use std::cell::*;
+
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
@@ -50,14 +51,13 @@ const NODE_CHECK_INTERVAL: u64 = 5000; // every 5 seconds
 /// Right now it is set to 64k, which is the highest number supported by kernel fragmentation right now.
 pub const MAX_PACKET_SIZE: usize = 64 * 1000;
 
-#[derive(Send, Sync)]
 pub trait BroadcastReceiver {
     /// Returns a unique identifier to separate events for this broadcast ID. Must be unique per application.
-    pub get_broadcast_id();
+    fn get_broadcast_id(&self);
 
     /// Called when a broadcast is received. If the broadcast is to be propogated, the broadcast event must be re-called.
     /// Internally, network automatically handles duplicate events as a result of the reliable flood, so that can be safely ignored
-    pub receive_broadcast(network_id: &U256, payload: &Vec<u8>) -> bool;
+    fn receive_broadcast(&self, network_id: &U256, payload: &Vec<u8>) -> bool;
 }
 
 //#[derive(Debug)]
@@ -87,7 +87,7 @@ pub struct ClientConfig {
     pub private_key: PKey,
 
     /// Receivers which are registered to receive events; any payloads not fitting to this list will be dropped.
-    pub broadcast_receivers: [Option<Arc<BroadcastReceiver>>; 256]
+    pub broadcast_receivers: [Option<Arc<BroadcastReceiver + Send + Sync>>; 256]
 }
 
 impl ClientConfig {
@@ -119,11 +119,11 @@ impl ClientConfig {
             hostname: String::from(""),
             port: ClientConfig::DEFAULT_PORT,
             bind_addr: SocketAddr::new("0.0.0.0".parse().unwrap(), ClientConfig::DEFAULT_PORT),
-            broadcast_receivers: init_array!(Option<Arc<BroadcastReceiver>>, 256, None)
+            broadcast_receivers: init_array!(Option<Arc<BroadcastReceiver + Send + Sync>>, 256, None)
         }
     }
 
-    pub fn register_broadcast_receiver(&mut self, id: u8, receiver: Arc<BroadcastReceiver>) {
+    pub fn register_broadcast_receiver(&mut self, id: u8, receiver: Arc<BroadcastReceiver + Send + Sync>) {
         self.broadcast_receivers[id as usize] = Some(receiver);
     }
 }
@@ -139,7 +139,7 @@ pub enum ClientMsg {
 
     ShouldForge(U256, oneshot::Sender<bool>),
 
-    SendBroadcast(u8, Vec<u8>)
+    SendBroadcast(U256, u8, Vec<u8>)
 }
 
 /// Statistical information which can be queried from the network client
@@ -248,6 +248,7 @@ impl Client {
                 event_loop: core.handle(), 
                 sink: Cell::new(None),
                 job_targets: chain_tx,
+                received_broadcasts: RefCell::new(HashMap::new())
             }),
             shards: init_array!(RefCell<Option<ShardInfo>>, 255, RefCell::new(None)),
             jobs: RefCell::new(Vec::new()),
@@ -460,6 +461,17 @@ impl Client {
 
                     ClientMsg::SendBroadcast(network_id, id, payload) => {
 
+                        let msg = Message::Broadcast(id, payload);
+
+                        // get shard of ID
+                        let p = this.resolve_port(&network_id);
+                        if p < 255 {
+                            let mut actions = NetworkActions::new(this.as_ref());
+                            this.shards[p as usize].borrow().as_ref().unwrap().reliable_flood(msg, &mut actions);
+                            this.context.send_packets(actions.send_packets);
+                        }
+
+                        future::ok(())
                     }
                 };
 

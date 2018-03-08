@@ -24,8 +24,6 @@ use record_keeper::key::*;
 use futures::prelude::*;
 use futures::future;
 
-use hash::hash_bytes;
-
 pub const PROTOCOL_VERSION: u16 = 1;
 
 /// How much of the ping value to retain. The current value keeps a weighted average over 10 minutes
