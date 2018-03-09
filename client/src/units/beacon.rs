@@ -1,4 +1,5 @@
-use super::*;
+use blockscape_core::primitives::Coord;
+use definitions::*;
 
 /// Allows querying information from other plots and to send/receive active messages.
 pub struct Beacon;

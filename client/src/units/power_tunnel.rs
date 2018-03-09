@@ -1,4 +1,5 @@
-use super::*;
+use blockscape_core::primitives::Coord;
+use definitions::*;
 
 /// Allows transfer of energy between plots.
 pub struct PowerTunnel;

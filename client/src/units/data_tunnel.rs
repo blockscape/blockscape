@@ -1,4 +1,5 @@
-use super::*;
+use blockscape_core::primitives::Coord;
+use definitions::*;
 
 /// Allows transfer of data between plots.
 pub struct DataTunnel;

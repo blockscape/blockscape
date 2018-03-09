@@ -1,4 +1,5 @@
-use super::*;
+use blockscape_core::primitives::Coord;
+use definitions::*;
 
 /// Stores a small amount of charge.
 pub struct Capacitor;

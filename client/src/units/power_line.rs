@@ -1,4 +1,5 @@
-use super::*;
+use blockscape_core::primitives::Coord;
+use definitions::*;
 
 /// Transfers +/- charge between buildings.
 pub struct PowerLine;

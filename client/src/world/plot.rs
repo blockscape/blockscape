@@ -1,7 +1,9 @@
-use std::collections::HashMap;
+use definitions::*;
+use blockscape_core::primitives::{Coord, Direction};
 use bit_vec::BitVec;
-use blockscape_core::primitives::Coord;
-use super::*;
+
+use std;
+
 
 const PLOT_SIZE: usize = 256;
 
@@ -13,6 +15,8 @@ const DIAGONAL_NON_ROAD_TRAVEL_COST: usize = (NON_ROAD_TRAVEL_COST as f64 * std:
 pub struct Plot<'a> {
     height_map: BitVec,
     roads: BitVec,
+//    power_grids: ,
+//    data_grids: ,
 
     structures: Vec<Box<Structure>>, //TODO: VecDeq?
     agents: Vec<Box<Agent<'a>>>,
@@ -51,10 +55,10 @@ impl<'a> Plot<'a> {
 
             let cost = if self.roads[i] {
                 if dir.is_cardinal() { ROAD_TRAVEL_COST }
-                else { DIAGONAL_ROAD_TRAVEL_COST }
+                    else { DIAGONAL_ROAD_TRAVEL_COST }
             } else {
                 if dir.is_cardinal() { NON_ROAD_TRAVEL_COST }
-                else { DIAGONAL_NON_ROAD_TRAVEL_COST }
+                    else { DIAGONAL_NON_ROAD_TRAVEL_COST }
             };
 
             neighbors.push((n_loc, cost))

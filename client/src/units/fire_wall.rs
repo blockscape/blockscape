@@ -1,4 +1,5 @@
-use super::*;
+use blockscape_core::primitives::Coord;
+use definitions::*;
 
 /// A defense system which blocks enemy units
 pub struct FireWall;

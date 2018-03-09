@@ -1,4 +1,5 @@
-use super::*;
+use blockscape_core::primitives::Coord;
+use definitions::*;
 
 /// Data multiplier, takes data and power to make more data.
 pub struct IntegratedCircuit;
