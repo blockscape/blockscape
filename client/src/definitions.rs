@@ -20,7 +20,7 @@ pub trait Describable {
 // Something all things in Blockscape should implement if they can exist in the world.
 pub trait Worldly: Describable {
     /// Location of this worldly object on it's plot. If it occupies multiple tiles on a plot, this
-    /// will be the top-left corner.
+    /// will be the bottom-left corner.
     fn location(&self) -> Coord;
 
     /// Current number of hit-points the object has.

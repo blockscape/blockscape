@@ -7,6 +7,7 @@ authors = ["Daniel Beal <git@danb.email>", "Matthew Conover <matt@xram.co>"]
 blockscape_core = { path = "../core" }
 bit-vec = "^0.4.4"
 pathfinding = "^0.6.11"
+maplit = "^1.0.1"
 
 [[bin]]
 path = "src/main.rs"

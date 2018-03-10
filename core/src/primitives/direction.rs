@@ -13,6 +13,12 @@ impl Direction {
         DIRECTIONS.into_iter()
     }
 
+    pub fn cardinal_iterator() -> Iter<'static, Direction> {
+        use self::Direction::*;
+        static DIRECTIONS: [Direction; 4] = [N, E, S, W];
+        DIRECTIONS.into_iter()
+    }
+
     /// Retrieve the change in x and change in y which represent the direction specified.
     #[inline]
     pub fn dx_dy(self) -> (i8, i8) {
