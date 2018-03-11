@@ -1,6 +1,8 @@
 use definitions::*;
 use blockscape_core::primitives::{Coord, Direction};
 use bit_vec::BitVec;
+use super::power_grid::Grid;
+use std::rc::{Rc, Weak};
 
 use std;
 
@@ -15,12 +17,12 @@ const DIAGONAL_NON_ROAD_TRAVEL_COST: usize = (NON_ROAD_TRAVEL_COST as f64 * std:
 pub struct Plot<'a> {
     height_map: BitVec,
     roads: BitVec,
-//    power_grids: ,
-//    data_grids: ,
+    power_grids: Vec<Grid>,
+    data_grids: Vec<Grid>,
 
-    structures: Vec<Box<Structure>>, //TODO: VecDeq?
-    agents: Vec<Box<Agent<'a>>>,
-    mobs: Vec<Box<Mobile<'a>>>
+    structures: Vec<Rc<Structure>>, //TODO: VecDeq?
+    agents: Vec<Rc<Agent<'a>>>,
+    mobs: Vec<Rc<Mobile<'a>>>
 }
 
 impl<'a> Plot<'a> {
@@ -28,11 +30,13 @@ impl<'a> Plot<'a> {
         Plot {
             height_map: BitVec::from_elem(PLOT_SIZE * PLOT_SIZE, false),
             // structures: hashmap!{ coord_to_index(Coord(PLOT_SIZE/2, PLOT_SIZE/2)) =>  }, //TODO: once we have a CPU structure definition, put it in the center of the plot.
-            structures: Vec::new(),
-            agents: Vec::new(),
-            mobs: Vec::new(),
+            roads: BitVec::from_elem(PLOT_SIZE * PLOT_SIZE, false),
+            power_grids: vec![],
+            data_grids: vec![],
 
-            roads: BitVec::from_elem(PLOT_SIZE * PLOT_SIZE, false)
+            structures: vec![],
+            agents: vec![],
+            mobs: vec![]
         }
     }
 
