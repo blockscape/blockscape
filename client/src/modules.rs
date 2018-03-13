@@ -1,4 +1,4 @@
-use std::ops::{Deref, DerefMut};
+use std::ops::Deref;
 use std::collections::HashMap;
 
 /// The individual statistics which may be modified. This way we can simply include a list of the

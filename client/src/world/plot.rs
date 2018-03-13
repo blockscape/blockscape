@@ -2,7 +2,7 @@ use definitions::*;
 use blockscape_core::primitives::{Coord, Direction};
 use bit_vec::BitVec;
 use super::power_grid::Grid;
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 
 use std;
 
