@@ -10,9 +10,9 @@ pub trait Describable {
     /// Human-readable name of the defined type, such as "Data Processor".
     fn object_name(&self) -> &'static str;
     /// Name of this worldly instance if relevant.
-    fn instance_name(&self) -> Option<String>;
+    fn instance_name(&self) -> Option<&str>;
     /// A message about what it is currently doing or what state it is in.
-    fn status(&self) -> Option<String>;
+    fn status(&self) -> Option<&str>;
     /// A description of what this object is.
     fn description(&self) -> &'static str;
 }
@@ -62,6 +62,12 @@ pub trait Worldly: Describable {
     fn energy_cost(&self) -> u64;
     /// Data cost to build this object.
     fn data_cost(&self) -> u64;
+
+
+//    /// Construct this object using an agent. Returns true if construction was completed.
+//    fn construct(&mut self, agent: &mut Agent) -> bool;
+//    /// Attack this object using an agent. Returns true if this worldy object was destroyed.
+//    fn attack(&mut self, agent: &mut Agent) -> bool;
 }
 
 /// An object which is stationary.

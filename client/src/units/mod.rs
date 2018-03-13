@@ -1,3 +1,23 @@
+static STATUS_UNBUILT: &str = "Under Construction";
+static STATUS_IDLE: &str = "Idle";
+static STATUS_WORKING: &str = "Working";
+static STATUS_MOVING: &str = "Traveling";
+static STATUS_TRANSFER_ENERGY: &str = "Transferring Energy";
+static STATUS_TRANSFER_DATA: &str = "Transferring Data";
+
+struct UnitBasics {
+    status: Option<String>,
+    name: Option<String>,
+    hp: u32,
+    sp: u32,
+    c: u64,
+    d: u64
+}
+
+mod construction_site;
+pub use self::construction_site::*;
+
+
 /// Pathways which aid in bot movement.
 mod road;
 pub use self::road::*;
