@@ -53,7 +53,7 @@ pub const MAX_PACKET_SIZE: usize = 64 * 1000;
 
 pub trait BroadcastReceiver {
     /// Returns a unique identifier to separate events for this broadcast ID. Must be unique per application.
-    fn get_broadcast_id(&self);
+    fn get_broadcast_id(&self) -> u8;
 
     /// Called when a broadcast is received. If the broadcast is to be propogated, the broadcast event must be re-called.
     /// Internally, network automatically handles duplicate events as a result of the reliable flood, so that can be safely ignored

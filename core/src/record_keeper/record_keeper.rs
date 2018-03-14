@@ -435,14 +435,20 @@ impl RecordKeeper {
     }
 
     /// Get the txns which were created by a given account.
-    pub fn get_account_txns(&self, account: U160) -> Result<HashSet<U256>, Error> {
+    pub fn get_account_txns(&self, account: &U160) -> Result<HashSet<U256>, Error> {
         let mut txns = HashSet::new();
         for (txn_hash, &(_, ref txn)) in self.pending_txns.read().iter() {
-            if txn.creator == account { txns.insert(txn_hash.clone()); }
+            if txn.creator == *account { txns.insert(txn_hash.clone()); }
         }
         for txn in self.db.read().get_account_txns(account)? {
             txns.insert(txn);
         } Ok(txns)
+    }
+
+    /// Returns the amount of shares associated with an account, a basic operation sometimes required for forging
+    /// TODO: Fill in
+    pub fn get_account_value(&self, _account: &U160) -> Result<u64, Error> {
+        Ok(1)
     }
 
     /// Get the time a txn was originally received.
