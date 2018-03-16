@@ -93,7 +93,7 @@ fn main() {
     let rk = Arc::new(
         RecordKeeper::open(
             {let mut p = env::get_storage_dir().unwrap(); p.push("db"); p},
-            Some(rules::build_rules(Arc::clone(&game_cache))),
+            make_rk_config(&cmdline, &game_cache),
             genesis
         ).expect("Record Keeper was not able to initialize!")
     );

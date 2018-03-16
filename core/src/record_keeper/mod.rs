@@ -15,7 +15,7 @@ pub use self::error::*;
 pub use self::events::{PlotEvent, JPlotEvent, RecordEvent, DePlotEvent};
 pub use self::net_dif::*;
 pub use self::net_state::*;
-pub use self::record_keeper::{RecordKeeper};
+pub use self::record_keeper::{RecordKeeper, RecordKeeperConfig, RecordKeeperStatistics, RecordKeeperIndexingStrategy};
 pub use self::rules::*;
 pub use self::key::*;
 pub use self::game_state::GameStateCache;

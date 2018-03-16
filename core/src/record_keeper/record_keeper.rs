@@ -16,6 +16,30 @@ use futures_cpupool;
 
 const MAX_PENDING_TXN_MEM: usize = 128*1024*1024; //128 MB
 
+#[derive(Debug)]
+pub struct RecordKeeperConfig {
+    /// Maximum size in bytes of the pending transaction pool before transactions are dropped, one way or another.
+    pub pending_txn_limit: u64,
+
+    /// To what extent should data be stored by record keeper?
+    pub index_strategy: RecordKeeperIndexingStrategy,
+
+    /// The custom mutation rules which record keeper should use to validate txns
+    pub rules: MutationRules,
+}
+
+#[derive(Debug)]
+pub enum RecordKeeperIndexingStrategy {
+    /// Full indexing capability, including all data needed for 
+    Full,
+
+    /// Minimum number of indexes required to fully validate and participate in regular blockchain operations
+    Standard,
+
+    /// Slimmed down database, not storing all blockchain data, just a minimum amount to be somewhat informed
+    Light
+}
+
 #[derive(Debug, Serialize)]
 /// RK Stats which can be sent via JSON on request.
 pub struct RecordKeeperStatistics {
@@ -35,8 +59,10 @@ pub struct RecordKeeperStatistics {
 /// TODO: Also allow for reaching out to the network to request missing information.
 /// TODO: Allow removing state data for shards which are not being processed.
 pub struct RecordKeeper {
+
+    config: RecordKeeperConfig,
+
     db: RwLock<Database>,
-    rules: RwLock<MutationRules>,
     pending_txns: RwLock<HashMap<U256, (Time, Txn)>>,
 
     record_listeners: Mutex<ListenerPool<RecordEvent>>,
@@ -53,10 +79,10 @@ pub struct RecordKeeper {
 impl RecordKeeper {
     /// Construct a new RecordKeeper from an already opened database and possibly an existing set of
     /// rules.
-    fn new(db: Database, rules: Option<MutationRules>) -> RecordKeeper {
+    fn new(db: Database, config: RecordKeeperConfig) -> RecordKeeper {
         RecordKeeper {
+            config: config,
             db: RwLock::new(db),
-            rules: RwLock::new(rules.unwrap_or(MutationRules::new())),
             pending_txns: RwLock::new(HashMap::new()),
             record_listeners: Mutex::new(ListenerPool::new()),
             game_listeners: Mutex::new(ListenerPool::new()),
@@ -70,10 +96,10 @@ impl RecordKeeper {
     /// # Warning
     /// Any database which is opened, is assumed to contain data in a certain way, any outside
     /// modifications can cause undefined behavior.
-    pub fn open(path: PathBuf, rules: Option<MutationRules>, genesis: (Block, Vec<Txn>)) -> Result<RecordKeeper, Error> {
+    pub fn open(path: PathBuf, config: RecordKeeperConfig, genesis: (Block, Vec<Txn>)) -> Result<RecordKeeper, Error> {
         info!("Opening a RecordKeeper object with path '{:?}'", path);
         let db = Database::open(path)?;
-        let rk: RecordKeeper = Self::new(db, rules);
+        let rk: RecordKeeper = Self::new(db, config);
         
         { // Handle Genesis
             let mut db = rk.db.write();
@@ -357,22 +383,6 @@ impl RecordKeeper {
         self.game_listeners.lock().register(listener);
     }
 
-    /// Add a new rule to the database regarding what network mutations are valid. This will only
-    /// impact things which are mutated through the `mutate` function.
-    pub fn add_rule(&mut self, rule: Box<MutationRule>) {
-        let mut rules_lock = self.rules.write();
-        rules_lock.push_back(rule);
-    }
-
-    /// Add a list of new rules to the database regarding what network mutations are valid. These
-    /// will only impact things which are mutated through the `mutate` function.
-    pub fn add_rules(&mut self, rules: MutationRules) {
-        let mut rules_lock = self.rules.write();
-        for rule in rules {
-            rules_lock.push_back(rule);
-        }
-    }
-
     /// Check if a block is valid and all its components.
     pub fn is_valid_block(&self, block: &Block) -> Result<(), Error> {
         let db = self.db.read();
@@ -435,14 +445,20 @@ impl RecordKeeper {
     }
 
     /// Get the txns which were created by a given account.
-    pub fn get_account_txns(&self, account: U160) -> Result<HashSet<U256>, Error> {
+    pub fn get_account_txns(&self, account: &U160) -> Result<HashSet<U256>, Error> {
         let mut txns = HashSet::new();
         for (txn_hash, &(_, ref txn)) in self.pending_txns.read().iter() {
-            if txn.creator == account { txns.insert(txn_hash.clone()); }
+            if txn.creator == *account { txns.insert(txn_hash.clone()); }
         }
         for txn in self.db.read().get_account_txns(account)? {
             txns.insert(txn);
         } Ok(txns)
+    }
+
+    /// Returns the amount of shares associated with an account, a basic operation sometimes required for forging
+    /// TODO: Fill in
+    pub fn get_account_value(&self, _account: &U160) -> Result<u64, Error> {
+        Ok(1)
     }
 
     /// Get the time a txn was originally received.
@@ -508,7 +524,7 @@ impl RecordKeeper {
 
         // user-added rules
         cache = Bin::new();
-        let rules = self.rules.read();
+        let rules = &self.config.rules;
         for rule in &*rules {
             // verify all rules are satisfied and return, propagate error if not
             rule.is_valid(state, mutation, &mut cache)?;

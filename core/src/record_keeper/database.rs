@@ -136,7 +136,7 @@ impl Database {
         debug!("Adding txn ({}) to database", &hash);
         self.put(BlockchainEntry::Txn(hash).into(), txn, None)?;
         self.add_receive_time(hash, receive_time)?;
-        self.add_txn_to_account(txn.creator, hash)
+        self.add_txn_to_account(&txn.creator, hash)
     }
 
     /// Retrieve a block header form the database given a hash.
@@ -235,8 +235,8 @@ impl Database {
     }
 
     /// Get the txns created by a given account.
-    pub fn get_account_txns(&self, hash: U160) -> Result<HashSet<U256>, Error> {
-        let res = self.get(CacheEntry::TxnsByAccount(hash).into());
+    pub fn get_account_txns(&self, hash: &U160) -> Result<HashSet<U256>, Error> {
+        let res = self.get(CacheEntry::TxnsByAccount(*hash).into());
         map_not_found(res, HashSet::new())
     }
 
@@ -797,7 +797,7 @@ impl Database {
 
     /// Register a txn to a validator account.
     /// TODO: We will likely need to add some sort of bucket system to this eventually.
-    fn add_txn_to_account(&mut self, account: U160, txn: U256) -> Result<(), Error> {
+    fn add_txn_to_account(&mut self, account: &U160, txn: U256) -> Result<(), Error> {
         let mut txns: HashSet<U256> = map_not_found(self.get_account_txns(account), HashSet::new())?;
         if txns.insert(txn) {
             self.put(CacheEntry::BlocksByTxn(txn).into(), &txns, None)

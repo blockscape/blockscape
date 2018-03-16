@@ -95,6 +95,12 @@ impl From<u64> for U256 {
         U256([v, 0, 0, 0])
     }
 }
+impl Into<u64> for U256 {
+    /// Returns a u64 truncated from the least significant position.
+    fn into(self) -> u64 {
+        self.0[0]
+    }
+}
 
 
 impl Hash for U256 {
@@ -270,6 +276,13 @@ fn from_u64() {
     let a = 986543u64;
     let b = U256([a, 0u64, 0u64, 0u64]);
     assert_eq!(U256::from(a), b);
+}
+
+#[test]
+fn to_u64() {
+    let a = U256([12345,6789,101112,131415]);
+    let b: u64 = a.into();
+    assert_eq!(b, 12345);
 }
 
 #[test]
