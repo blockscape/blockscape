@@ -86,41 +86,58 @@ impl BoundingBox {
         )
     }
 
-    pub fn area(&self) -> u64 {
-        (((self.1).0 - (self.0).0) as u64) * (((self.1).1 - (self.1).0) as u64)
+    /// The area included in the box. Note: because the boundaries are part of the box, the area
+    /// includes the edges.
+    #[inline]
+    pub fn area(self) -> u64 {
+        self.width() as u64 * self.height() as u64
     }
 
+    /// The top left corner of the box.
+    #[inline]
     pub fn top_left(self) -> Coord {
         Coord((self.0).0, (self.1).1)
     }
 
+    /// The top right corner of the box.
+    #[inline(always)]
     pub fn top_right(self) -> Coord {
         self.1
     }
 
+    /// The bottom left corner of the box.
+    #[inline(always)]
     pub fn bottom_left(self) -> Coord {
         self.0
     }
 
+    /// The bottom right corner of the box.
+    #[inline]
     pub fn bottom_right(self) -> Coord {
         Coord((self.1).0, (self.0).1)
     }
 
+    /// The width of the box.
+    #[inline]
     pub fn width(self) -> u32 {
-        ((self.1).0 - (self.0).0) as u32
+        ((self.1).0 - (self.0).0) as u32 + 1
     }
 
+    /// The height of the box.
+    #[inline]
     pub fn height(self) -> u32 {
-        ((self.1).1 - (self.0).1) as u32
+        ((self.1).1 - (self.0).1) as u32 + 1
     }
 
     /// Checks if the point is within this box.
+    #[inline]
     pub fn contains(self, point: Coord) -> bool {
         point.0 >= (self.0).0 && point.0 <= (self.1).0 &&
         point.1 >= (self.0).1 && point.1 <= (self.1).1
     }
 
     /// Checks if the other box is completely within this box.
+    #[inline]
     pub fn contains_box(self, other: BoundingBox) -> bool {
         self.contains(other.0) &&
         self.contains(other.1)
@@ -134,18 +151,151 @@ impl BoundingBox {
 
     /// Checks if any of the area of this box is within the other box.
     pub fn overlaps(self, other: BoundingBox) -> bool {
-        self.contains(other.0) ||
-        self.contains(other.1)
+        self.contains(other.top_left()) ||
+        self.contains(other.top_right()) ||
+        self.contains(other.bottom_left()) ||
+        self.contains(other.bottom_right()) ||
+        other.contains(self.top_left()) ||
+        other.contains(self.top_right()) ||
+        other.contains(self.bottom_left()) ||
+        other.contains(self.bottom_right())
     }
 
     /// Calculates the intersection of two boxes and returns the resulting box which is equal to the
-    /// overlapping area.
-    pub fn intersection(self, other: BoundingBox) -> BoundingBox {
+    /// overlapping area. This requires that the two bounding boxes overlap.
+    pub fn intersect(self, other: BoundingBox) -> Option<BoundingBox> {
+        if !self.overlaps(other) { return None; }
+
         use std::cmp::{min, max};
         // construct a bounding box with the maximum of the minimum and the minimum of the maximum.
-        BoundingBox(
+        Some( BoundingBox(
             Coord(max((self.0).0, (other.0).0), max((self.0).1, (other.0).1)),
             Coord(min((self.1).0, (other.1).0), min((self.1).1, (other.1).1))
-        )
+        ))
     }
+}
+
+
+
+#[test]
+fn sq_dist() {
+    assert_eq!(Coord(0, 0).sq_dist(Coord(5, 5)), 50);
+    assert_eq!(Coord(-1, 0).sq_dist(Coord(5, 5)), 61);
+    assert_eq!(Coord(-5, 8).sq_dist(Coord(7, -1)), 225);
+}
+
+#[test]
+fn bounding_box_new() {
+    assert_eq!(
+        BoundingBox::new(Coord(0, 0), Coord(5, 5)),
+        BoundingBox(Coord(0, 0), Coord(5, 5))
+    );
+
+    assert_eq!(
+        BoundingBox::new(Coord(-3, 0), Coord(5, 0)),
+        BoundingBox(Coord(-3, 0), Coord(5, 0))
+    );
+
+    assert_eq!(
+        BoundingBox::new(Coord(8, -3), Coord(-1, 3)),
+        BoundingBox(Coord(-1, -3), Coord(8, 3))
+    );
+}
+
+#[test]
+fn area() {
+    assert_eq!(BoundingBox(Coord(0, 0), Coord(4, 4)).area(), 25);
+    assert_eq!(BoundingBox(Coord(0, 0), Coord(0, 0)).area(), 1);
+    assert_eq!(BoundingBox(Coord(0, 0), Coord(4, 16)).area(), 85);
+    assert_eq!(BoundingBox(Coord(-1, 3), Coord(1, 3)).area(), 3);
+}
+
+#[test]
+fn top_left() {
+    assert_eq!(BoundingBox(Coord(0, 0), Coord(3, 3)).top_left(), Coord(0, 3));
+    assert_eq!(BoundingBox(Coord(-2, 4), Coord(2, 10)).top_left(), Coord(-2, 10));
+}
+
+#[test]
+fn top_right() {
+    assert_eq!(BoundingBox(Coord(0, 0), Coord(3, 3)).top_right(), Coord(3, 3));
+    assert_eq!(BoundingBox(Coord(-2, 4), Coord(2, 10)).top_right(), Coord(2, 10));
+}
+
+#[test]
+fn bottom_left() {
+    assert_eq!(BoundingBox(Coord(0, 0), Coord(3, 3)).bottom_left(), Coord(0, 0));
+    assert_eq!(BoundingBox(Coord(-2, 4), Coord(2, 10)).bottom_left(), Coord(-2, 4));
+}
+
+#[test]
+fn bottom_right() {
+    assert_eq!(BoundingBox(Coord(0, 0), Coord(3, 3)).bottom_right(), Coord(3, 0));
+    assert_eq!(BoundingBox(Coord(-2, 4), Coord(2, 10)).bottom_right(), Coord(2, 4));
+}
+
+#[test]
+fn width() {
+    assert_eq!(BoundingBox(Coord(0, 0), Coord(5, 3)).width(), 6);
+    assert_eq!(BoundingBox(Coord(-2, 5), Coord(5, 7)).width(), 8);
+}
+
+#[test]
+fn height() {
+    assert_eq!(BoundingBox(Coord(0, 0), Coord(5, 3)).height(), 4);
+    assert_eq!(BoundingBox(Coord(-2, 5), Coord(5, 7)).height(), 3);
+}
+
+#[test]
+fn contains() {
+    let bb = BoundingBox(Coord(-2, 0), Coord(3, 3));
+    assert!(bb.contains(Coord(0, 0)));
+    assert!(bb.contains(Coord(3, 3)));
+    assert!(bb.contains(Coord(-2, 0)));
+    assert!(bb.contains(Coord(-1, 2)));
+    assert!(!bb.contains(Coord(-3, -1)));
+    assert!(!bb.contains(Coord(4, 0)));
+}
+
+#[test]
+fn contains_box() {
+    let a = BoundingBox(Coord(-2, 0), Coord(3, 3));
+    let b = BoundingBox(Coord(-1, 0), Coord(2, 1));
+    let c = BoundingBox(Coord(0, 0), Coord(10, 10));
+    assert!(a.contains_box(b));
+    assert!(!b.contains_box(a));
+    assert!(a.contains_box(a));
+    assert!(b.contains_box(b));
+    assert!(!a.contains_box(c));
+    assert!(!c.contains_box(a));
+}
+
+#[test]
+fn overlaps() {
+    let a = BoundingBox(Coord(-2, 0), Coord(3, 3));
+    let b = BoundingBox(Coord(0, 0), Coord(10, 10));
+    let c = BoundingBox(Coord(5, 0), Coord(7, 1));
+    assert!(a.overlaps(b));
+    assert!(b.overlaps(a));
+    assert!(a.overlaps(a));
+    assert!(b.overlaps(b));
+    assert!(!a.overlaps(c));
+    assert!(!c.overlaps(a));
+    assert!(b.overlaps(c));
+    assert!(c.overlaps(b));
+    assert!(a.overlaps(BoundingBox(Coord(0, -2), Coord(5, 1)))); // top left and bottom right corner overlap
+    assert!(a.overlaps(BoundingBox(Coord(-3, -1), Coord(4, 4)))); // second box is completely surrounding A
+}
+
+#[test]
+fn intersect() {
+    let a = BoundingBox(Coord(-2, 0), Coord(3, 3));
+    let b = BoundingBox(Coord(0, 0), Coord(10, 10));
+    let c = BoundingBox(Coord(0, -2), Coord(5, 1));
+    assert_eq!(a.intersect(b).unwrap(), BoundingBox(Coord(0, 0), Coord(3, 3)));
+    assert_eq!(b.intersect(a).unwrap(), BoundingBox(Coord(0, 0), Coord(3, 3)));
+    assert_eq!(a.intersect(c).unwrap(), BoundingBox(Coord(0, 0), Coord(3, 1)));
+    assert_eq!(a.intersect(BoundingBox(Coord(-3, -1), Coord(4, 4))).unwrap(), a);
+    assert_eq!(c.intersect(c).unwrap(), c);
+    assert_eq!(a.intersect(BoundingBox(Coord(5, 0), Coord(7, 1))), None);
 }
