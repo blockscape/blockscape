@@ -120,13 +120,8 @@ pub fn start_forging(context: &Rc<Context>, handler: &Handle, _network_id: U256)
         };
 
         let (tx, rx) = oneshot::channel();
-        if let Some(ref n) = context2.network {
-            n.unbounded_send(ClientMsg::ShouldForge(U256_ZERO, tx)).expect("Could not send message to network");
-            handler2.spawn(rx.into_future().then(fun));
-        }
-        else {
-            handler2.spawn(future::ok(true).then(fun));
-        }
+        context2.network.unbounded_send(ClientMsg::ShouldForge(U256_ZERO, tx)).expect("Could not send message to network");
+        handler2.spawn(rx.into_future().then(fun));
 
         Box::new(future::ok::<(), ()>(()))
 

@@ -1,9 +1,12 @@
-use std::cmp::min;
+use std::cmp::{min,max};
 use std::sync::{Arc, Mutex};
+use std::mem;
+use std::time::Duration;
 use std::collections::HashSet;
 use futures::prelude::*;
 use futures::sync::*;
-use tokio_core::reactor::Handle;
+use futures::sync::mpsc::UnboundedSender;
+use tokio_core::reactor::{Remote,Timeout};
 use bincode;
 use crypto::sha3::Sha3;
 use crypto::digest::Digest;
@@ -12,8 +15,9 @@ use openssl::pkey::PKey;
 use forging::{BlockForger, ForgeError};
 use record_keeper::RecordKeeper;
 use network::client::BroadcastReceiver;
+use network::client::ClientMsg;
 use primitives::block::{Block, BlockHeader};
-use primitives::{U256, U160};
+use primitives::{U256, U256_ZERO, U160};
 use time::Time;
 use signer;
 use hash;
@@ -23,26 +27,26 @@ const EPOS_BROADCAST_ID: u8 = 0;
 /// Configuration for the proof of stake algorithm
 pub struct EPoSConfig {
     /// The number of milliseconds between blocks to aim for. The difficulty adjusts around this value
-    rate_target: u64,
+    pub rate_target: u64,
 
     /// How often to recalculate the difficulty, in number of blocks
-    recalculate_blocks: u64,
+    pub recalculate_blocks: u64,
 
     /// The number of blocks to scan to count "active" validators, used as result for validators_count_base below
-    validators_scan: u64,
+    pub validators_scan: u64,
 
     /// The number of validator keys include in the hash "random" source for validator selection
     //hash_compounds: u64,
 
     /// The base of an exponential function to determine the number of validators to require. For example, if this number is 10, then 100 validators are needed for 2 signatures required.
     /// A good reasonable value for this is 4.
-    validators_count_base: u64,
+    pub validators_count_base: u64,
 
     /// The number of blocks a validator must wait before participating again. TODO: To what extent should this rule apply?
     //validator_cooldown: u64,
 
     /// Signing private key(s) for us to participate in the forge
-    signing_keys: Vec<Vec<u8>>
+    pub signing_keys: Vec<Vec<u8>>
 }
 
 type EPoSSignature = (Vec<u8>, U256);
@@ -50,7 +54,7 @@ type EPoSSignature = (Vec<u8>, U256);
 /// Data which is associated with signing and blobbing a block
 #[derive(Serialize, Deserialize, Debug)]
 struct EPoSBlockData {
-    sigs: Vec<EPoSSignature>
+    pub sigs: Vec<EPoSSignature>
 }
 
 impl EPoSBlockData {
@@ -61,7 +65,7 @@ impl EPoSBlockData {
         // sign the serialized data of our self
         let mut block_data = if !block.blob.is_empty() {
             bincode::deserialize(&block.blob[..])
-                .map_err(|e| ForgeError(format!("Could not deserialize block blob: {}", e).into()))?
+                .map_err(|e| ForgeError(format!("Could not deserialize block blob (buffer size was {}): {}", block.blob.len(), e).into()))?
         }
         else {
             EPoSBlockData {
@@ -81,7 +85,7 @@ impl EPoSBlockData {
 
     pub fn decode_relevant_validation_data(block: &BlockHeader) -> Result<(U160, U256), ForgeError> {
         let block_data = bincode::deserialize::<EPoSBlockData>(&block.blob[..])
-            .map_err(|e| ForgeError(format!("Could not deserialize block blob: {}", e).into()))?;
+            .map_err(|e| ForgeError(format!("Could not deserialize block blob (buffer size was {}): {}", block.blob.len(), e).into()))?;
 
         Ok((hash::hash_pub_key(&block_data.sigs[block_data.sigs.len() / 2].0), block_data.sigs[block_data.sigs.len() / 2].1))
     }
@@ -91,17 +95,26 @@ impl EPoSBlockData {
     }
 }
 
-/// "Enhanced" Proof of Stake implementation which is a hardened PoS resistant to differential cryptoanalysis and the halting problem
-pub struct EPoS {
+struct EPoSContext {
     /// A reference to RecordKeeper so block generation/preparation can happen
-    rk: Arc<RecordKeeper>,
+    pub rk: Arc<RecordKeeper>,
 
-    /// the sending end of a future dispatch for when a block is found
-    on_block: Mutex<Option<oneshot::Sender<Block>>>,
+    pub net: UnboundedSender<ClientMsg>,
+
+    pub remote: Remote,
 
     /// An internal tracker for the currently known best block we can submit
     /// The first value is the time at which it should be submitted, the second is the block to submit
-    best_block: Arc<Mutex<Option<(u64, Block, u64)>>>,
+    pub best_block: Arc<Mutex<Option<(u64, Block, u64)>>>,
+
+    /// the sending end of a future dispatch for when a block is found
+    on_block: Mutex<Option<oneshot::Sender<Block>>>,
+}
+
+/// "Enhanced" Proof of Stake implementation which is a hardened PoS resistant to differential cryptoanalysis and the halting problem
+pub struct EPoS {
+
+    ctx: Arc<EPoSContext>,
 
     /// OpenSSL private key(s) used for signing blocks
     keys: Vec<(U160, PKey)>,
@@ -111,7 +124,7 @@ pub struct EPoS {
 }
 
 impl EPoS {
-    pub fn new(rk: Arc<RecordKeeper>, _handle: Handle, config: EPoSConfig) -> Result<EPoS, ForgeError> {
+    pub fn new(rk: Arc<RecordKeeper>, net: UnboundedSender<ClientMsg>, remote: Remote, config: EPoSConfig) -> Result<Arc<EPoS>, ForgeError> {
         let keys: Vec<(U160, PKey)> = config.signing_keys.iter().map(|raw_data| {
             let k = PKey::private_key_from_der(raw_data).map_err(|e| ForgeError(format!("Could not decode private key: {:?}", e)))?;
             let d = k.public_key_to_der().unwrap();
@@ -119,16 +132,76 @@ impl EPoS {
             Ok((hash::hash_pub_key(&d), k))
         }).collect::<Result<Vec<_>, ForgeError>>()?;
 
-        Ok(EPoS {
-            rk: rk,
-            on_block: Mutex::new(None),
-            best_block: Arc::new(Mutex::new(None)),
+        let pos = Arc::new(EPoS {
+            ctx: Arc::new(EPoSContext {
+                rk: rk,
+                net: net,
+                remote: remote,
+                best_block: Arc::new(Mutex::new(None)),
+                on_block: Mutex::new(None)
+            }),
             keys: keys,
             config: config,
-        })
+        });
+
+        let pos2 = Arc::clone(&pos);
+
+        // register ourself
+        pos.ctx.net.unbounded_send(ClientMsg::RegisterBroadcastReceiver(EPOS_BROADCAST_ID, pos2)).expect("Could not register EPoS with network");
+
+        Ok(pos)
     }
 
-    /// Calculate how long a node should wait until it propogates a block. This is based on a relationship between the current difficulty and 
+    /// Called when a waiting period has completed and a block should be sent, either as a completed block or as a incomplete block
+    fn propagate_block(ctx: Arc<EPoSContext>) {
+
+        let mut bb = ctx.best_block.lock().unwrap();
+
+        if let Some((ref req_validators, ref block, ref propagate_at)) = *bb {
+
+            if *propagate_at > Time::current().millis() as u64 + 10 {
+                debug!("Skipping block propogate: timeout ({}) is later than current time ({})", propagate_at, Time::current().millis());
+                return; // should not do anything with this yet.
+            }
+
+            // this should technically never fail because propogated blocks should only come from what we have generated internally
+            let block_data = bincode::deserialize::<EPoSBlockData>(&block.blob[..])
+                .expect("Unable to decode generated PoS block info");
+
+            if block_data.sigs.len() < *req_validators as usize {
+                // more signatures neeeded, use the broadcast interface in the network!
+                println!("FORGE: Partial block submitted (have {}, reqd {})", block_data.sigs.len(), req_validators);
+
+                ctx.net.unbounded_send(ClientMsg::SendBroadcast(
+                    block.shard,
+                    EPOS_BROADCAST_ID,
+                    bincode::serialize(block, bincode::Infinite).expect("Could not serialize block!")
+                )).expect("Failed to propagate partial signed block");
+            }
+            else {
+                // block should be submitted!
+                let mut sender = ctx.on_block.lock().unwrap();
+                let mut other = None;
+
+                mem::swap(&mut *sender, &mut other);
+
+                if other.is_some() {
+                    debug!("Submitting block result (reqd {} validators)!", req_validators);
+                    other.unwrap().send(block.clone()).unwrap();
+                }
+                else {
+                    warn!("Could not submit block: submission not available!");
+                }
+
+                *sender = None;
+            }
+        }
+        // else, there is nothing to send, so this is a noop
+
+        *bb = None;
+    }
+
+    /// Calculate how long a node should wait until it propagates a block. This is based on a relationship between the current difficulty and 
     fn gen_wait(&self, diff: u64, stake: u64, target: u64, actual: u64) -> u64 {
 
         if stake == 0 {
@@ -150,9 +223,14 @@ impl EPoS {
         {
             let mut p = *prev;
             for _ in 0..self.config.validators_scan {
-                blocks.push(self.rk.get_block_header(&p).map_err(|e| ForgeError(format!("Could not get a block from db: {}", e).into()))?);
+                blocks.push(self.ctx.rk.get_block_header(&p).map_err(|e| ForgeError(format!("Could not get a block from db: {}", e).into()))?);
 
                 p = blocks[blocks.len() - 1].prev;
+
+                if p == U256_ZERO {
+                    blocks.pop(); // we do not want to include genesis itself
+                    break; // we cannot go back any further, so also we have no need to continue.
+                }
             }
         }
 
@@ -175,12 +253,12 @@ impl EPoS {
         hasher.input(&buf);
         hasher.result(&mut buf);
 
-        Ok((U256::from_big_endian(&mut buf), (validators.len() as f64).log(self.config.validators_count_base as f64).trunc() as u64))
+        Ok((U256::from_big_endian(&mut buf), max((max(validators.len(), 1) as f64).log(self.config.validators_count_base as f64).trunc() as u64, 1)))
     }
 
     /// Calculates the actual block difficulty, taking into account the current level of validators required and etc.
     fn calculate_expected_difficulty(&self, block: &Block) -> Result<u64, ForgeError> {
-        let height = try!(self.rk.get_block_height(&block.header.prev)
+        let height = try!(self.ctx.rk.get_block_height(&block.header.prev)
             .map_err(|e| ForgeError(format!("Could not get a block height: {}", e).into()))) + 1;
         
         let base_diff = if height % self.config.recalculate_blocks != 0 {
@@ -192,7 +270,7 @@ impl EPoS {
             }*/
 
             Ok(bincode::deserialize(
-                &try!(self.rk.get_block(&block.header.prev)
+                &try!(self.ctx.rk.get_block(&block.header.prev)
                     .map_err(|e| ForgeError(format!("Could not get a block from db: {}", e).into()))).header.blob).unwrap())
         }
         else {
@@ -208,18 +286,18 @@ impl EPoS {
             // the best way to find this block is to walk back recalculate_blocks
             let mut hash_cur = block.header.prev;
 
-            let pb = try!(self.rk.get_block(&hash_cur)
+            let pb = try!(self.ctx.rk.get_block(&hash_cur)
                     .map_err(|e| ForgeError(format!("Could not get a block from db: {}", e).into())));
             
             for _ in 1..n {
-                hash_cur = try!(self.rk.get_block(&hash_cur)
+                hash_cur = try!(self.ctx.rk.get_block(&hash_cur)
                     .map_err(|e| ForgeError(format!("Could not get a block from db: {}", e).into()))).header.prev;
             }
 
             // how long *should* it have taken to get to this point?
             let expected: f64 = self.config.rate_target as f64 * n as f64;
 
-            let b = try!(self.rk.get_block(&hash_cur)
+            let b = try!(self.ctx.rk.get_block(&hash_cur)
                     .map_err(|e| ForgeError(format!("Could not get a block from db: {}", e).into())));
 
             let actual = b.header.timestamp.diff(&pb.header.timestamp).millis() as f64;
@@ -271,7 +349,7 @@ impl EPoS {
             let actual = res.unwrap().get_relevant_validation_data().1;
 
             // get the stake of the account we are forging
-            let res = self.rk.get_account_value(&key_id);
+            let res = self.ctx.rk.get_account_value(&key_id);
             if let Err(e) = res {
                 warn!("Could not get value held in account: {:?}", e);
                 return false;
@@ -296,17 +374,63 @@ impl EPoS {
             let disp = block.timestamp.millis() as u64 + best.1;
 
             // update timeouts
-            let mut prev_best = self.best_block.lock().unwrap();
+            let mut prev_best = self.ctx.best_block.lock().unwrap();
 
             if prev_best.is_some() {
                 let pb = prev_best.as_mut().unwrap();
                 if disp < pb.0 {
                     // update block and timeout
-                    *pb = (disp, best.0, req_validators);
+                    *pb = (req_validators, best.0, disp);
+
+                    let ctx = Arc::clone(&self.ctx);
+
+                    let thewait = Duration::from_millis(max(disp as i64 - Time::current().millis(), 10) as u64);
+
+                    debug!("New best block candidate (wait {:?})", thewait);
+
+                    self.ctx.remote.spawn(move |_| {
+
+                        // this is guarenteed to be on the correct thread
+                        let h = ctx.remote.handle().unwrap();
+
+                        Timeout::new(thewait, &h)
+                            .expect("Cannot start PoS propagate timer!")
+                            .and_then(move |_| {
+                                
+                                EPoS::propagate_block(ctx);
+
+                                Ok(())
+                            })
+                            .map_err(|_| ())
+                        
+                        //Ok(())
+                    })
                 }
             }
             else {
-                *prev_best = Some((disp, best.0, req_validators));
+                *prev_best = Some((req_validators, best.0, disp));
+
+                let thewait = Duration::from_millis(max(disp as i64 - Time::current().millis(), 10) as u64);
+
+                debug!("New best block candidate (wait {:?})", thewait);
+
+                let ctx = Arc::clone(&self.ctx);
+                self.ctx.remote.spawn(move |_| {
+                    // this is guarenteed to be on the correct thread
+                    let h = ctx.remote.handle().unwrap();
+
+                    Timeout::new(thewait, &h)
+                        .expect("Cannot start PoS propagate timer!")
+                        .and_then(move |_| {
+                            
+                            EPoS::propagate_block(ctx);
+
+                            Ok(())
+                        })
+                        .map_err(|_| ())
+
+                    //Ok(())
+                })
             }
         }
 
@@ -318,7 +442,7 @@ impl BlockForger for EPoS {
 
     fn create(&self, block: Block) -> Box<Future<Item=Block, Error=ForgeError>> {
         let (tx, rx) = oneshot::channel();
-        *self.on_block.lock().unwrap() = Some(tx);
+        *self.ctx.on_block.lock().unwrap() = Some(tx);
 
         self.evaluate_block(block);
         Box::new(rx.map_err(|_| ForgeError(format!("Cancelled forge!"))))
@@ -353,7 +477,7 @@ impl BroadcastReceiver for EPoS {
         EPOS_BROADCAST_ID
     }
 
-    /// Called when a broadcast is received. If the broadcast is to be propogated, the broadcast event must be re-called.
+    /// Called when a broadcast is received. If the broadcast is to be propagated, the broadcast event must be re-called.
     /// Internally, network automatically handles duplicate events as a result of the reliable flood, so that can be safely ignored
     fn receive_broadcast(&self, _network_id: &U256, payload: &Vec<u8>) -> bool {
         if let Ok(block) = bincode::deserialize(&payload[..]) {
