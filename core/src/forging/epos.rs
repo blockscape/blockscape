@@ -253,7 +253,7 @@ impl EPoS {
         hasher.input(&buf);
         hasher.result(&mut buf);
 
-        Ok((U256::from_big_endian(&mut buf), max((max(validators.len(), 1) as f64).log(self.config.validators_count_base as f64).trunc() as u64, 2)))
+        Ok((U256::from_big_endian(&mut buf), max((max(validators.len(), 1) as f64).log(self.config.validators_count_base as f64).trunc() as u64, 1)))
     }
 
     /// Calculates the actual block difficulty, taking into account the current level of validators required and etc.
