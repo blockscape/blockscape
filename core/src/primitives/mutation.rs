@@ -43,6 +43,19 @@ pub struct Mutation {
     pub changes: Vec<Change>
 }
 
+impl Deref for Mutation {
+    type Target = Vec<Change>;
+    fn deref(&self) -> &Self::Target {
+        &self.changes
+    }
+}
+
+impl DerefMut for Mutation {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.changes
+    }
+}
+
 impl Mutation {
     /// Create a new, empty mutation.
     pub fn new() -> Mutation {
@@ -72,32 +85,43 @@ impl Mutation {
     /// Will merge another mutation into this one.
     pub fn merge(&mut self, mut other: Mutation) {
         assert!(!self.contra && !other.contra); //Could be a bug if merging contras
-        self.changes.append(&mut other.changes);
+        self.append(&mut other.changes);
     }
 
     /// Will merge another mutation into this one.
     pub fn merge_clone(&mut self, other: &Mutation) {
         assert!(!self.contra && !other.contra); //Could be a bug if merging contras
-        self.changes.extend_from_slice(&other.changes)
+        self.extend_from_slice(&other.changes)
     }
 
     /// Calculate the encoded size of this mutation in bytes.
     pub fn calculate_size(&self) -> usize {
         1 + 8 + // contra + changes count
-        self.changes.iter().fold(0, |total, c| total + c.calculate_size())
-    } 
-}
-
-impl Deref for Mutation {
-    type Target = Vec<Change>;
-    fn deref(&self) -> &Self::Target {
-        &self.changes
+        self.iter().fold(0, |total, c| total + c.calculate_size())
     }
-}
 
-impl DerefMut for Mutation {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.changes
+    pub fn earliest_game_event(&self) -> u64 {
+        use std::cmp::min;
+        self.iter()
+            .filter_map(|c|
+                if let &Change::PlotEvent(ref e) = c {
+                    Some(e.tick)
+                } else { None }
+            ).fold(<u64>::max_value(), |earliest, current|
+                min(earliest, current)
+            )
+    }
+
+    pub fn latest_game_event(&self) -> u64 {
+        use std::cmp::max;
+        self.iter()
+            .filter_map(|c|
+                if let &Change::PlotEvent(ref e) = c {
+                    Some(e.tick)
+                } else { None }
+            ).fold(0u64, |latest, current|
+                max(latest, current)
+            )
     }
 }
 

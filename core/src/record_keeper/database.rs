@@ -454,11 +454,15 @@ impl Database {
     }
 
     /// Walk the network state to a given block in the block chain. Returns the number of blocks
-    /// which were invalidated in the walking process (if any). E.g., if it returns 5, then the 5
-    /// latest blocks were undone and are no longer part of the network state.
-    pub fn walk(&mut self, b_block: &U256) -> Result<u64, Error> {
+    /// invalidated and the earliest tick which is invalidated because the events changed in the
+    /// walking process. E.g., if it returns (5, 100), then the 5 latest blocks were undone and are
+    /// no longer part of the network state and any cached data at or after tick 100 should be
+    /// thrown out because the events are now different.
+    pub fn walk(&mut self, b_block: &U256) -> Result<(u64, u64), Error> {
+        use std::cmp::min;
+
         let a_block = self.head.block;
-        if a_block == *b_block { return Ok(0); }
+        if a_block == *b_block { return Ok((0, <u64>::max_value())); }
         debug!("Walking the network state from {} to {}.", a_block, b_block);
         assert!(!b_block.is_zero(), "Cannot walk to nothing");
 
@@ -468,6 +472,8 @@ impl Database {
         
         // the number of blocks invalidated is equal to the number of blocks we are going to undo.
         let invalidated_blocks = a_heights.len() as u64;
+        // TODO: we may be able to speed things up if we keep track of which txns where re-applied when walking up.
+        let mut earliest_invalidated_tick = 0u64;
 
         // go down `a` chain and then go up `b` chain.
         for (h, b) in a_heights.into_iter().rev() {
@@ -475,6 +481,7 @@ impl Database {
             debug_assert!(self.head.block == b);
             let header = self.get_block_header(&b)?;
             let contra = self.get_contra(b)?;
+            earliest_invalidated_tick = min(earliest_invalidated_tick, contra.earliest_game_event());
             self.undo_mutate(contra)?;
             self.update_current_block(header.prev, Some(h - 1))?;
         }
@@ -483,20 +490,23 @@ impl Database {
             let block = self.get_block(&b)?;
             debug_assert!(block.prev == self.head.block);
             let mutation = self.get_mutation(&block)?;
+            earliest_invalidated_tick = min(earliest_invalidated_tick, mutation.earliest_game_event());
             let contra = self.mutate(&mutation)?;
             self.add_contra(b, &contra)?;
             self.update_current_chain(h, &b)?;
             self.update_current_block(b, Some(h))?;
         }
         
-        Ok(invalidated_blocks)
+        Ok((invalidated_blocks, earliest_invalidated_tick))
     }
 
     /// Find the current head of the block chain and then walk to it. Returns the number of blocks
-    /// which were invalidated in the walking process (if any). E.g., if it returns 5, then the 5
-    /// latest blocks were undone and are no longer part of the network state.
+    /// invalidated and the earliest tick which is invalidated because the events changed in the
+    /// walking process. E.g., if it returns (5, 100), then the 5 latest blocks were undone and are
+    /// no longer part of the network state and any cached data at or after tick 100 should be
+    /// thrown out because the events are now different.
     #[inline]
-    pub fn walk_to_head(&mut self) -> Result<u64, Error> {
+    pub fn walk_to_head(&mut self) -> Result<(u64, u64), Error> {
         if self.head.block.is_zero() { // walk from nothingness to genesis block
             let blocks = self.get_blocks_of_height(1)?;
             assert_eq!(blocks.len(), 1); // should have exactly one entry if in genesis case
@@ -506,7 +516,7 @@ impl Database {
             self.mutate(&mutation)?; // don't need contra for the genesis block
             // or to update current chain since there is only one block
             self.update_current_block(genesis, Some(1))?;
-            Ok(0)
+            Ok( (0, <u64>::max_value()) )
         } else { // normal case
             let head = self.find_chain_head()?;
             self.walk(&head)

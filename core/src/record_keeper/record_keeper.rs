@@ -159,27 +159,28 @@ impl RecordKeeper {
 
             // move the network state
             let initial_height = db.get_current_block_height();
-            let invalidated = db.walk_to_head()?;
+            let (invalidated_blocks, earliest_invalidated_tick) = db.walk_to_head()?;
             let uncled = hash != db.get_current_block_hash();
             
             // couple of quick checks...
             // if uncled, basic verification that we have not moved
             debug_assert!(!uncled || (
-                invalidated == 0 &&
+                invalidated_blocks == 0 &&
                 initial_height == db.get_current_block_height()
             ));
             // if not uncled, do some validity checks to make sure we moved correctly
             debug_assert!(uncled || (
-                initial_height > invalidated &&
+                initial_height > invalidated_blocks &&
                 initial_height < db.get_current_block_height()
             ));
 
             // send out events as needed
             let mut record_listeners = self.record_listeners.lock();
-            if invalidated > 0 {
+            if invalidated_blocks > 0 {
                 record_listeners.notify(&RecordEvent::StateInvalidated{
                     new_height: db.get_current_block_height(),
-                    after_height: initial_height - invalidated
+                    after_height: initial_height - invalidated_blocks,
+                    after_tick: earliest_invalidated_tick
                 });
             }
             record_listeners.notify(&RecordEvent::NewBlock{uncled, fresh, block: block.clone()});
