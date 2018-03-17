@@ -281,7 +281,7 @@ impl BlockchainRPC {
 
     fn get_account_txns(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
         let hash = expect_one_arg::<JU160>(params)?.into();
-        to_rpc_res(self.rk.get_account_txns(hash).map(|k|
+        to_rpc_res(self.rk.get_account_txns(&hash).map(|k|
             k.into_iter()
            .map(JU256::from)
            .collect::<HashSet<JU256>>()

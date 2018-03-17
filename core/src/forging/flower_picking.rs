@@ -7,7 +7,7 @@ use tokio_core::reactor::Timeout;
 use tokio_core::reactor::Handle;
 use bincode;
 
-use forging::{BlockForger, Error};
+use forging::{BlockForger, ForgeError};
 use record_keeper::RecordKeeper;
 use primitives::Block;
 
@@ -44,21 +44,21 @@ impl FlowerPicking {
         }
     }
 
-    fn calculate_expected_difficulty(&self, block: &Block) -> Result<u64, Error> {
+    fn calculate_expected_difficulty(&self, block: &Block) -> Result<u64, ForgeError> {
         let height = try!(self.rk.get_block_height(&block.header.prev)
-            .map_err(|e| Error(format!("Could not get a block height: {}", e).into()))) + 1;
+            .map_err(|e| ForgeError(format!("Could not get a block height: {}", e).into()))) + 1;
         
         if height % self.recalculate_blocks != 0 {
 
             /*let pb = self.rk.get_block(&block.header.prev);
 
             if pb.is_err() {
-                return Box::new(future::err(Error(format!("Could not get a block from db: {}", ph.unwrap_err()).into())));
+                return Box::new(future::err(ForgeError(format!("Could not get a block from db: {}", ph.unwrap_err()).into())));
             }*/
 
             Ok(bincode::deserialize(
                 &try!(self.rk.get_block(&block.header.prev)
-                    .map_err(|e| Error(format!("Could not get a block from db: {}", e).into()))).header.blob).unwrap())
+                    .map_err(|e| ForgeError(format!("Could not get a block from db: {}", e).into()))).header.blob).unwrap())
         }
         else {
 
@@ -74,18 +74,18 @@ impl FlowerPicking {
             let mut hash_cur = block.header.prev;
 
             let pb = try!(self.rk.get_block(&hash_cur)
-                    .map_err(|e| Error(format!("Could not get a block from db: {}", e).into())));
+                    .map_err(|e| ForgeError(format!("Could not get a block from db: {}", e).into())));
             
             for _ in 1..n {
                 hash_cur = try!(self.rk.get_block(&hash_cur)
-                    .map_err(|e| Error(format!("Could not get a block from db: {}", e).into()))).header.prev;
+                    .map_err(|e| ForgeError(format!("Could not get a block from db: {}", e).into()))).header.prev;
             }
 
             // how long *should* it have taken to get to this point?
             let expected: f64 = self.rate_target as f64 * n as f64;
 
             let b = try!(self.rk.get_block(&hash_cur)
-                    .map_err(|e| Error(format!("Could not get a block from db: {}", e).into())));
+                    .map_err(|e| ForgeError(format!("Could not get a block from db: {}", e).into())));
 
             let actual = b.header.timestamp.diff(&pb.header.timestamp).millis() as f64;
 
@@ -100,7 +100,7 @@ impl FlowerPicking {
 
 impl BlockForger for FlowerPicking {
 
-    fn create(&self, mut block: Block) -> Box<Future<Item=Block, Error=Error>> {
+    fn create(&self, mut block: Block) -> Box<Future<Item=Block, Error=ForgeError>> {
         let diff = tryf!(self.calculate_expected_difficulty(&block));
 
         block.blob = bincode::serialize(&diff, bincode::Bounded(8)).unwrap();
@@ -112,10 +112,10 @@ impl BlockForger for FlowerPicking {
 
         Box::new(Timeout::new(rand_mod, &self.handle).unwrap()
             .map(|_| block)
-            .map_err(|e| Error(format!("Could not set timeout: {}", e))))
+            .map_err(|e| ForgeError(format!("Could not set timeout: {}", e))))
     }
 
-    fn validate(&self, block: &Block) -> Option<Error> {
+    fn validate(&self, block: &Block) -> Option<ForgeError> {
 
         // check that the difficulty matches what we expect
         let diff = self.calculate_expected_difficulty(block).expect("Database not working when validating block!");
@@ -127,6 +127,6 @@ impl BlockForger for FlowerPicking {
         }
 
         // the flower picker always accepts any generated block
-        Some(Error("Block has invalid difficulty blob".into()))
+        Some(ForgeError("Block has invalid difficulty blob".into()))
     }
 }

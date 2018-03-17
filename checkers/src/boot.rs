@@ -3,6 +3,7 @@ use openssl::pkey::PKey;
 use std::collections::BTreeSet;
 use std::str::FromStr;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::rc::Rc;
 
 use serde_json;
@@ -19,8 +20,11 @@ use blockscape_core::hash::hash_pub_key;
 use blockscape_core::time::Time;
 use blockscape_core::record_keeper::key::NetworkEntry;
 use blockscape_core::rpc::RPC;
+use blockscape_core::record_keeper::{RecordKeeperConfig, RecordKeeperIndexingStrategy};
 
 use rpc;
+use rules;
+use game;
 
 use context::Context;
 
@@ -91,6 +95,17 @@ pub fn parse_cmdline<'a>() -> ArgMatches<'a> {
                 .long("forge")
                 .short("F")
                 .help("Run the forging application on all primary shards"))
+        .group(ArgGroup::with_name("blockchain"))
+            .arg(Arg::with_name("mempool-size")
+                .long("mempool-size")
+                .help("The maximum amount of memory reserved for storing pending transactions (i.e. not accepted into a block)")
+                .value_name("BYTES")
+                .default_value("128M"))
+            .arg(Arg::with_name("indexing")
+                .long("indexing")
+                .short("I")
+                .help("The indexing strategy utilized by RecordKeeper, should be modified to your requirements (either 'full', 'standard', or 'light')")
+                .default_value("standard"))
         .group(ArgGroup::with_name("network"))
             .arg(Arg::with_name("hostname")
                 .long("host")
@@ -111,10 +126,6 @@ pub fn parse_cmdline<'a>() -> ArgMatches<'a> {
                 .help("IP address for interface to listen on")
                 .value_name("IP")
                 .default_value("0.0.0.0"))
-            .arg(Arg::with_name("disable-net")
-                .long("disable-net")
-                .help("Disables the entire P2P interface, making the game only available for local play with no updates")
-                .requires("disable-compute"))
             .arg(Arg::with_name("min-nodes")
                 .long("min-nodes")
                 .help("Sets the minimum number of nodes in active connection before stopping node discovery")
@@ -252,6 +263,34 @@ pub fn make_network_config(cmdline: &ArgMatches) -> ClientConfig {
     config.bind_addr = SocketAddr::new(cmdline.value_of("bind").unwrap().parse().expect("Invalid bind IP"), config.port);
 
     config
+}
+
+fn decode_bytes(s: &str) -> u64 {
+    // read the last character, which indicates the representation
+    match s.to_uppercase().chars().last().unwrap() {
+        'K' => s[..s.len() - 1].parse::<u64>().map(|v| v * 1024u64),
+        'M' => s[..s.len() - 1].parse::<u64>().map(|v| v * 1024u64.pow(2)),
+        'G' => s[..s.len() - 1].parse::<u64>().map(|v| v * 1024u64.pow(3)),
+        'T' => s[..s.len() - 1].parse::<u64>().map(|v| v * 1024u64.pow(4)),
+        _ => s.parse::<u64>()
+    }.expect("Bytes must be a number, or end in the appropriate suffix (K, M, G, T)")
+}
+
+/// Generates the record keeper configuration from checkers game rules and the command line arguments
+pub fn make_rk_config(cmdline: &ArgMatches, cache: &game::GameCache) -> RecordKeeperConfig {
+
+    let strategy = match cmdline.value_of_lossy("indexing").unwrap().as_ref() {
+        "full" => RecordKeeperIndexingStrategy::Full,
+        "standard" => RecordKeeperIndexingStrategy::Standard,
+        "light" => RecordKeeperIndexingStrategy::Light,
+        _ => panic!("Invalid indexing strategy (expected 'full', 'standard', or 'light'")
+    };
+
+    RecordKeeperConfig {
+        pending_txn_limit: decode_bytes(&cmdline.value_of_lossy("mempool-size").unwrap()),
+        index_strategy: strategy,
+        rules: rules::build_rules(Arc::clone(cache)),
+    }
 }
 
 /// Starts the JSONRPC server

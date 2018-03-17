@@ -3,7 +3,6 @@ use compress::{compress, decompress};
 use primitives::{Block, BlockHeader, Txn, U256};
 use std::collections::BTreeSet;
 use std::collections::HashMap;
-use std::mem::size_of;
 use super::database::Database;
 use super::Error;
 
@@ -75,7 +74,7 @@ impl BlockPackage {
 
             // size of block header and the txns, add one to list of txns to account for
             // a possible termination deliminer
-            size += size_of::<BlockHeader>() + (block.txns.len() + 1) * 2;
+            size += bincode::serialize(&block.header, bincode::Infinite).unwrap().len() + (block.txns.len() + 1) * 2;
 
             for txn in block.txns {
                 let index = *txns_by_hash.get(&txn).unwrap();
@@ -102,6 +101,7 @@ impl BlockPackage {
     /// transferred or archived.
     pub fn zip(&self) -> Result<Vec<u8>, Error> {
         let raw = bincode::serialize(self, bincode::Infinite).map_err(|_| Error::Deserialize("".into()))?;
+
         compress(&raw).map_err(|_| Error::Deserialize("".into()))
     }
 

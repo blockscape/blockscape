@@ -1,6 +1,7 @@
 use bincode;
 use openssl::pkey::PKey;
 use std::cell::*;
+
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
@@ -47,8 +48,17 @@ const NODE_CHECK_INTERVAL: u64 = 5000; // every 5 seconds
 //const NODE_NTP_INTERVAL: u64 = 20 * 60000; // every 20 minutes
 
 /// The maximum amount of data that can be in a single message object (the object itself can still be in split into pieces at the datagram level)
-/// Right now it is set to 10MB
-pub const MAX_PACKET_SIZE: usize = 10 * 1024 * 1024;
+/// Right now it is set to 64k, which is the highest number supported by kernel fragmentation right now.
+pub const MAX_PACKET_SIZE: usize = 64 * 1000;
+
+pub trait BroadcastReceiver {
+    /// Returns a unique identifier to separate events for this broadcast ID. Must be unique per application.
+    fn get_broadcast_id(&self) -> u8;
+
+    /// Called when a broadcast is received. If the broadcast is to be propogated, the broadcast event must be re-called.
+    /// Internally, network automatically handles duplicate events as a result of the reliable flood, so that can be safely ignored
+    fn receive_broadcast(&self, network_id: &U256, payload: &Vec<u8>) -> bool;
+}
 
 //#[derive(Debug)]
 pub struct ClientConfig {
@@ -119,7 +129,11 @@ pub enum ClientMsg {
     AttachNetwork(U256, ShardMode),
     DetachNetwork(U256),
 
-    ShouldForge(U256, oneshot::Sender<bool>)
+    ShouldForge(U256, oneshot::Sender<bool>),
+
+    SendBroadcast(U256, u8, Vec<u8>),
+
+    RegisterBroadcastReceiver(u8, Arc<BroadcastReceiver + Send + Sync>)
 }
 
 /// Statistical information which can be queried from the network client
@@ -207,7 +221,7 @@ pub struct Client {
 
     curr_port: Cell<u8>,
 
-    num_shards: Cell<u8>
+    num_shards: Cell<u8>,
 }
 
 impl Client {
@@ -228,12 +242,18 @@ impl Client {
                 event_loop: core.handle(), 
                 sink: Cell::new(None),
                 job_targets: chain_tx,
+                received_broadcasts: RefCell::new(HashMap::new()),
+                broadcast_receivers: init_array!(Cell<Option<Arc<BroadcastReceiver + Send + Sync>>>, 256, Cell::new(None))
             }),
             shards: init_array!(RefCell<Option<ShardInfo>>, 255, RefCell::new(None)),
             jobs: RefCell::new(Vec::new()),
             num_shards: Cell::new(0),
-            curr_port: Cell::new(0)
+            curr_port: Cell::new(0),
         }
+    }
+
+    fn register_broadcast_receiver(&self, id: u8, receiver: Arc<BroadcastReceiver + Send + Sync>) {
+        self.context.broadcast_receivers[id as usize].set(Some(receiver));
     }
 
     /// Connect to the specified shard by shard ID. On success, returns the number of pending connections (the number of nodes)
@@ -436,6 +456,33 @@ impl Client {
                     ClientMsg::ShouldForge(_network_id, r) => {
                         this.clear_weak_jobs();
                         future::result(r.send(this.jobs.borrow().is_empty()).map_err(|_| ()))
+                    },
+
+                    ClientMsg::SendBroadcast(network_id, id, payload) => {
+
+                        // also handle the broadcast on ourselves, since broadcasts are supposed to go everywhere, including the local node
+                        // if we receive a duplicate broadcast, it will automatically get stopped here as well, which is convienient
+                        if !this.context.handle_broadcast(&network_id, id, &payload) {
+                            return future::ok(());
+                        }
+
+                        let msg = Message::Broadcast(id, payload);
+
+                        // get shard of ID
+                        let p = this.resolve_port(&network_id);
+                        if p < 255 {
+                            let mut actions = NetworkActions::new(this.as_ref());
+                            this.shards[p as usize].borrow().as_ref().unwrap().reliable_flood(msg, &mut actions);
+                            this.context.send_packets(actions.send_packets);
+                        }
+
+                        future::ok(())
+                    },
+
+                    ClientMsg::RegisterBroadcastReceiver(id, receiver) => {
+                        this.register_broadcast_receiver(id, receiver);
+                        
+                        future::ok(())
                     }
                 };
 

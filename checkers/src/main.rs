@@ -45,7 +45,6 @@ use std::time::Duration;
 use std::rc::Rc;
 
 use futures::prelude::*;
-use futures::sync::mpsc::UnboundedSender;
 use futures::sync::oneshot::channel;
 
 use tokio_core::reactor::*;
@@ -53,7 +52,7 @@ use tokio_core::reactor::*;
 use openssl::pkey::PKey;
 
 use blockscape_core::env;
-use blockscape_core::forging::flower_picking::FlowerPicking;
+use blockscape_core::forging::epos::{EPoS, EPoSConfig};
 use blockscape_core::network::client::*;
 use blockscape_core::record_keeper::{RecordKeeper};
 
@@ -98,30 +97,23 @@ fn main() {
     let rk = Arc::new(
         RecordKeeper::open(
             {let mut p = env::get_storage_dir().unwrap(); p.push("db"); p},
-            Some(rules::build_rules(Arc::clone(&game_cache))),
+            make_rk_config(&cmdline, &game_cache),
             genesis
         ).expect("Record Keeper was not able to initialize!")
     );
-
-    let mut net_client: Option<UnboundedSender<ClientMsg>> = None;
 
     let mut threads: Vec<thread::JoinHandle<()>> = Vec::new();
     let (qs, qr) = channel::<()>();
 
     let quit = Box::new(qr).shared();
 
-    if !cmdline.is_present("disable-net") {
-        // start network
-        let cc = make_network_config(&cmdline);
+    // start network
+    let cc = make_network_config(&cmdline);
+    let (h, t) = Client::run(cc, Arc::clone(&rk), quit.clone()).expect("Could not start network");
 
-        let (mut h, t) = Client::run(cc, Arc::clone(&rk), quit.clone()).expect("Could not start network");
-
-        // must be connected to at least one network in order to do anything, might as well be genesis for now.
-        h = h.send(ClientMsg::AttachNetwork(genesis_net, ShardMode::Primary)).wait().expect("Could not attach to root network!");
-
-        net_client = Some(h);
-        threads.push(t);
-    }
+    // must be connected to at least one network in order to do anything, might as well be genesis for now.
+    let net_client = h.send(ClientMsg::AttachNetwork(genesis_net, ShardMode::Primary)).wait().expect("Could not attach to root network!");
+    threads.push(t);
 
     let checkers_game = Arc::new(CheckersGame{ 
         rk: Arc::clone(&rk), 
@@ -129,14 +121,22 @@ fn main() {
         cache: game_cache 
     });
 
+    let forge_key = PKey::private_key_from_pem(boot::TESTING_PRIVATE).unwrap();
+
     let ctx = Rc::new(Context {
         rk: rk.clone(),
         network: net_client.clone(),
         game: checkers_game,
         // this block forger will be callibrated to mine a block every 10 seconds, with 6 hours before each recalculate
-        forge_algo: Box::new(FlowerPicking::new(rk, core.handle(), 10 * 1000, 2160)),
+        forge_algo: EPoS::new(rk, net_client, core.handle().remote().clone(), EPoSConfig {
+                rate_target: 12 * 1000, // 12 seconds
+                recalculate_blocks: 1800, // 6 hours 
+                validators_scan: 100,
+                validators_count_base: 3,
+                signing_keys: vec![forge_key.private_key_to_der().unwrap()]
+            }).expect("Could not start the proof of stake forger!"),
 
-        forge_key: PKey::private_key_from_pem(boot::TESTING_PRIVATE).unwrap()
+        forge_key: forge_key
     });
 
     // Open RPC interface
