@@ -92,12 +92,19 @@ impl RecordKeeper {
         Ok(rk)
     }
 
-    pub fn get_worker(&self) -> &futures_cpupool::CpuPool {
-        &self.worker
-    }
+    /// Get information about the current status of RK.
+    pub fn get_stats(&self) -> Result<RecordKeeperStatistics, Error> {
+        let current_block = self.get_current_block_hash();
 
-    pub fn get_priority_worker(&self) -> &futures_cpupool::CpuPool {
-        &self.priority_worker
+        let ptxns = self.pending_txns.read();
+
+        Ok(RecordKeeperStatistics {
+            height: self.get_block_height(&current_block)?,
+            current_block_hash: current_block.into(),
+
+            pending_txns_count: ptxns.len() as u64,
+            pending_txns_size: ptxns.values().fold(0, |acc, &(_, ref ptxn)| acc + (ptxn.calculate_size() as u64))
+        })
     }
 
     /// Use pending transactions to create a new block which can then be added to the network.
@@ -258,6 +265,16 @@ impl RecordKeeper {
         Ok(last)
     }
 
+    /// Get the CPU pool worker for normal-priority tasks.
+    pub fn get_worker(&self) -> &futures_cpupool::CpuPool {
+        &self.worker
+    }
+
+    /// Get the CPU pool worker for high-prioirty tasks.
+    pub fn get_priority_worker(&self) -> &futures_cpupool::CpuPool {
+        &self.priority_worker
+    }
+
     /// Find a validator's public key given the hash. If they are not found, then they are not a
     /// validator.
     /// TODO: Handle shard-based reputations
@@ -292,8 +309,8 @@ impl RecordKeeper {
         db.get_block(&hash)
     }
 
-    /// Calculate the height of a given block. It will follow the path until it finds the genesis
-    /// block which is denoted by having a previous block reference of 0.
+    /// Lookup the height of a given block which is in the DB.
+    /// *Note:* This requires the block is in the DB already.
     pub fn get_block_height(&self, hash: &U256) -> Result<u64, Error> {
         let db = self.db.read();
         db.get_block_height(*hash)
@@ -403,6 +420,7 @@ impl RecordKeeper {
         db.get_block(hash)
     }
 
+    /// Convert a block header into a full block.
     pub fn complete_block(&self, header: BlockHeader) -> Result<Block, Error> {
         let db = self.db.read();
         db.complete_block(header)
@@ -523,19 +541,5 @@ impl RecordKeeper {
         } else {
             db.get_txn(*hash)
         }
-    }
-
-    pub fn get_stats(&self) -> Result<RecordKeeperStatistics, Error> {
-        let current_block = self.get_current_block_hash();
-
-        let ptxns = self.pending_txns.read();
-
-        Ok(RecordKeeperStatistics {
-            height: self.get_block_height(&current_block)?,
-            current_block_hash: current_block.into(),
-
-            pending_txns_count: ptxns.len() as u64,
-            pending_txns_size: ptxns.values().fold(0, |acc, &(_, ref ptxn)| acc + (ptxn.calculate_size() as u64))
-        })
     }
 }
