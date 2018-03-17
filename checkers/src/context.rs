@@ -13,10 +13,10 @@ use blockscape_core::primitives::U160;
 use game::CheckersGame;
 
 pub struct Context {
-    pub network: Option<UnboundedSender<ClientMsg>>,
+    pub network: UnboundedSender<ClientMsg>,
     pub rk: Arc<RecordKeeper>,
     pub game: Arc<CheckersGame>,
-    pub forge_algo: Box<BlockForger>,
+    pub forge_algo: Arc<BlockForger>,
 
     pub forge_key: PKey
 }

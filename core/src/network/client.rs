@@ -84,10 +84,7 @@ pub struct ClientConfig {
     pub bind_addr: SocketAddr,
 
     /// A private key used to sign and identify our own node data
-    pub private_key: PKey,
-
-    /// Receivers which are registered to receive events; any payloads not fitting to this list will be dropped.
-    pub broadcast_receivers: [Option<Arc<BroadcastReceiver + Send + Sync>>; 256]
+    pub private_key: PKey
 }
 
 impl ClientConfig {
@@ -118,13 +115,8 @@ impl ClientConfig {
             max_nodes: 16,
             hostname: String::from(""),
             port: ClientConfig::DEFAULT_PORT,
-            bind_addr: SocketAddr::new("0.0.0.0".parse().unwrap(), ClientConfig::DEFAULT_PORT),
-            broadcast_receivers: init_array!(Option<Arc<BroadcastReceiver + Send + Sync>>, 256, None)
+            bind_addr: SocketAddr::new("0.0.0.0".parse().unwrap(), ClientConfig::DEFAULT_PORT)
         }
-    }
-
-    pub fn register_broadcast_receiver(&mut self, id: u8, receiver: Arc<BroadcastReceiver + Send + Sync>) {
-        self.broadcast_receivers[id as usize] = Some(receiver);
     }
 }
 
@@ -139,7 +131,9 @@ pub enum ClientMsg {
 
     ShouldForge(U256, oneshot::Sender<bool>),
 
-    SendBroadcast(U256, u8, Vec<u8>)
+    SendBroadcast(U256, u8, Vec<u8>),
+
+    RegisterBroadcastReceiver(u8, Arc<BroadcastReceiver + Send + Sync>)
 }
 
 /// Statistical information which can be queried from the network client
@@ -227,7 +221,7 @@ pub struct Client {
 
     curr_port: Cell<u8>,
 
-    num_shards: Cell<u8>
+    num_shards: Cell<u8>,
 }
 
 impl Client {
@@ -248,13 +242,18 @@ impl Client {
                 event_loop: core.handle(), 
                 sink: Cell::new(None),
                 job_targets: chain_tx,
-                received_broadcasts: RefCell::new(HashMap::new())
+                received_broadcasts: RefCell::new(HashMap::new()),
+                broadcast_receivers: init_array!(Cell<Option<Arc<BroadcastReceiver + Send + Sync>>>, 256, Cell::new(None))
             }),
             shards: init_array!(RefCell<Option<ShardInfo>>, 255, RefCell::new(None)),
             jobs: RefCell::new(Vec::new()),
             num_shards: Cell::new(0),
-            curr_port: Cell::new(0)
+            curr_port: Cell::new(0),
         }
+    }
+
+    fn register_broadcast_receiver(&self, id: u8, receiver: Arc<BroadcastReceiver + Send + Sync>) {
+        self.context.broadcast_receivers[id as usize].set(Some(receiver));
     }
 
     /// Connect to the specified shard by shard ID. On success, returns the number of pending connections (the number of nodes)
@@ -461,6 +460,12 @@ impl Client {
 
                     ClientMsg::SendBroadcast(network_id, id, payload) => {
 
+                        // also handle the broadcast on ourselves, since broadcasts are supposed to go everywhere, including the local node
+                        // if we receive a duplicate broadcast, it will automatically get stopped here as well, which is convienient
+                        if !this.context.handle_broadcast(&network_id, id, &payload) {
+                            return future::ok(());
+                        }
+
                         let msg = Message::Broadcast(id, payload);
 
                         // get shard of ID
@@ -471,6 +476,12 @@ impl Client {
                             this.context.send_packets(actions.send_packets);
                         }
 
+                        future::ok(())
+                    },
+
+                    ClientMsg::RegisterBroadcastReceiver(id, receiver) => {
+                        this.register_broadcast_receiver(id, receiver);
+                        
                         future::ok(())
                     }
                 };

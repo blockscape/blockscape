@@ -126,10 +126,6 @@ pub fn parse_cmdline<'a>() -> ArgMatches<'a> {
                 .help("IP address for interface to listen on")
                 .value_name("IP")
                 .default_value("0.0.0.0"))
-            .arg(Arg::with_name("disable-net")
-                .long("disable-net")
-                .help("Disables the entire P2P interface, making the game only available for local play with no updates")
-                .requires("disable-compute"))
             .arg(Arg::with_name("min-nodes")
                 .long("min-nodes")
                 .help("Sets the minimum number of nodes in active connection before stopping node discovery")
@@ -291,7 +287,7 @@ pub fn make_rk_config(cmdline: &ArgMatches, cache: &game::GameCache) -> RecordKe
     };
 
     RecordKeeperConfig {
-        pending_txn_limit: decode_bytes(&cmdline.value_of_lossy("mempool-limit").unwrap()),
+        pending_txn_limit: decode_bytes(&cmdline.value_of_lossy("mempool-size").unwrap()),
         index_strategy: strategy,
         rules: rules::build_rules(Arc::clone(cache)),
     }

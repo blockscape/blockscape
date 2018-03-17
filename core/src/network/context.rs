@@ -18,7 +18,7 @@ use time::Time;
 use hash::hash_bytes;
 
 use network::session::SocketPacket;
-use network::client::ClientConfig;
+use network::client::{ClientConfig, BroadcastReceiver};
 use network::node::Node;
 
 /// The amount of data a job is allowed to allocate in memory before it is 
@@ -91,7 +91,10 @@ pub struct NetworkContext {
     pub job_targets: unsync::mpsc::UnboundedSender<(Rc<NetworkJob>, Option<U256>)>,
 
     /// List of received broadcast hashes
-    pub received_broadcasts: RefCell<HashMap<U256, Time>>
+    pub received_broadcasts: RefCell<HashMap<U256, Time>>,
+
+    /// Receivers which are registered to receive events; any payloads not fitting to this list will be dropped.
+    pub broadcast_receivers: [Cell<Option<Arc<BroadcastReceiver + Send + Sync>>>; 256]
 }
 
 impl NetworkContext {
@@ -114,9 +117,13 @@ impl NetworkContext {
             return false
         }
 
-        if let Some(ref receiver) = self.config.broadcast_receivers[id as usize] {
+        if let Some(receiver) = self.broadcast_receivers[id as usize].replace(None) {
             self.received_broadcasts.borrow_mut().insert(incoming_hash, Time::current_local());
-            receiver.receive_broadcast(network_id, payload)
+            let r = receiver.receive_broadcast(network_id, payload);
+
+            self.broadcast_receivers[id as usize].replace(Some(receiver));
+
+            r
         }
         else {
             false

@@ -14,34 +14,30 @@ use futures::sync::oneshot;
 use blockscape_core::network::client::*;
 
 pub fn do_report(context: &Rc<Context>, handler: &Handle) {
-
-    if let Some(ref c) = context.network {
-
-        let (tx, rx) = oneshot::channel();
-        if let Err(e) = c.unbounded_send(ClientMsg::GetStatistics(tx)) {
-            println!("ERROR: Could not collect network stats: {}", e);
-            return;
-        }
-
-
-        let f = rx.and_then(|net_stats| {
-            println!("{}\t{} nets\t{} peers\t{} in\t{} out", 
-                "NET:".bold(),
-                value_print(net_stats.attached_networks, 0, 3),
-                value_print(net_stats.connected_peers, 8 * net_stats.attached_networks as u32, 16 * net_stats.attached_networks as u32),
-                as_bytes(net_stats.rx).yellow(),
-                as_bytes(net_stats.tx).yellow()
-            );
-
-            Ok(())
-        }).or_else(|_| {
-            println!("ERROR: Could not collect network stats: cancelled");
-
-            Err(())  
-        });
-
-        handler.spawn(f);
+    let (tx, rx) = oneshot::channel();
+    if let Err(e) = context.network.unbounded_send(ClientMsg::GetStatistics(tx)) {
+        println!("ERROR: Could not collect network stats: {}", e);
+        return;
     }
+
+
+    let f = rx.and_then(|net_stats| {
+        println!("{}\t{} nets\t{} peers\t{} in\t{} out", 
+            "NET:".bold(),
+            value_print(net_stats.attached_networks, 0, 3),
+            value_print(net_stats.connected_peers, 8 * net_stats.attached_networks as u32, 16 * net_stats.attached_networks as u32),
+            as_bytes(net_stats.rx).yellow(),
+            as_bytes(net_stats.tx).yellow()
+        );
+
+        Ok(())
+    }).or_else(|_| {
+        println!("ERROR: Could not collect network stats: cancelled");
+
+        Err(())  
+    });
+
+    handler.spawn(f);
 }
 
 /// Returns a colored representation of the value, coloring based on the given thresholds.
