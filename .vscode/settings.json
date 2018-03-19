@@ -11,7 +11,9 @@
         "desynchronized",
         "merkle",
         "mutex",
+        "nand",
         "networkstate",
+        "regen",
         "struct",
         "txns",
         "validators"

@@ -2,4 +2,7 @@ target
 *.bk
 core/Cargo.lock
 blockscape.iml
+core.iml
 .idea
+client.iml
+checkers.iml

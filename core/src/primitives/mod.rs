@@ -5,6 +5,7 @@ pub mod coord;
 pub mod txn;
 pub mod u160;
 pub mod u256;
+pub mod direction;
 
 pub use self::block::*;
 pub use self::event::*;
@@ -13,3 +14,4 @@ pub use self::coord::*;
 pub use self::txn::*;
 pub use self::u160::*;
 pub use self::u256::*;
+pub use self::direction::*;
