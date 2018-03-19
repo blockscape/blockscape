@@ -6,9 +6,6 @@ extern crate futures;
 extern crate tokio_core;
 extern crate tokio_signal;
 extern crate parking_lot;
-extern crate pathfinding;
-
-extern crate bit_vec;
 
 #[macro_use]
 extern crate serde_derive;
@@ -18,8 +15,6 @@ extern crate clap;
 extern crate pretty_env_logger;
 #[macro_use]
 extern crate log;
-#[macro_use]
-extern crate maplit;
 
 extern crate blockscape_core;
 
