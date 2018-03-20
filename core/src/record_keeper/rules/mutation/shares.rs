@@ -1,10 +1,8 @@
 use bin::Bin;
-use hash::hash_pub_key;
-use primitives::{Change, RawEvent, RawEvents, U160};
-use record_keeper::{Error, LogicError, NetState, PlotID};
-use primitives::add_event;
+use primitives::{Change, U160};
+use record_keeper::{Error, LogicError, NetState};
 use record_keeper::rules::MutationRule;
-use std::collections::{HashSet, HashMap};
+use std::collections::HashMap;
 use record_keeper::key::NetworkEntry;
 
 /// Make sure there are enough shares for transfers and slash txns. Also make sure
