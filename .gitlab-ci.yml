@@ -6,7 +6,7 @@ variables:
   IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
   ARM_IMAGE_TAG: $CI_REGISTRY_IMAGE/arm:$CI_COMMIT_REF_SLUG
   DOCKER_HOST: tcp://localhost:2375
-  #CARGO_HOME: $CI_PROJECT_DIR/cargo
+  CARGO_HOME: $CI_PROJECT_DIR/cargo
 
 stages:
 - build
@@ -26,11 +26,7 @@ build:
       - checkers/target/
   script:
     # Build all deps so we do not count those errors against
-    #- mkdir -p cargo
-    #- cp -r cargo/registry /root/.cargo/registry || true
     - cargo build --release --manifest-path=checkers/Cargo.toml  2>&1 | tee log.txt
-    #- rm -rf cargo/registry
-    #- cp -r /root/.cargo/registry cargo/registry
     #- "! grep 'warning' log.txt"
   artifacts:
     paths:
@@ -48,12 +44,9 @@ build_arm:
       - cargo/
       - checkers/target/
   script:
-    #- mkdir -p cargo
-    #- cp -r cargo/registry /root/.cargo/registry || true
-    - rustup show # for stupid debugging
+    - mkdir -p cargo
+    - cp /root/.cargo/config cargo
     - cargo build --release --verbose --manifest-path=checkers/Cargo.toml 2>&1 | tee log.txt
-    #- rm -rf cargo/registry
-    #- cp -r /root/.cargo/registry cargo/registry
   artifacts:
     paths:
       - checkers/target/arm-unknown-linux-musleabi/release/blockscape
