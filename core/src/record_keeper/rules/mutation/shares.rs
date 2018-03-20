@@ -22,7 +22,9 @@ impl MutationRule for Shares {
                 let subtotal = to.iter()
                     .fold(0u64, |acc, (_, &v)| acc + v);
                 let prior_balance = senders.get(&from).cloned().unwrap_or(0u64);
-                senders.insert(from, prior_balance + subtotal);
+                let new_subtotal = subtotal.checked_add(prior_balance)
+                    .ok_or(LogicError::InvalidMutation("Overflowing addition".into()))?;
+                senders.insert(from, new_subtotal);
             }
         }
 
