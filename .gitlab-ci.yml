@@ -27,6 +27,7 @@ build:
   script:
     # Build all deps so we do not count those errors against
     - mkdir -p cargo/registry/index/github.com-1ecc6299db9ec823
+    - touch cargo/registry/index/github.com-1ecc6299db9ec823/.cargo-index-lock
     - ln -s cargo/registry /root/.cargo/registry
     - cargo build --release --manifest-path=checkers/Cargo.toml  2>&1 | tee log.txt
     #- "! grep 'warning' log.txt"
@@ -47,6 +48,7 @@ build_arm:
       - checkers/target/
   script:
     - mkdir -p cargo/registry/index/github.com-1ecc6299db9ec823
+    - touch cargo/registry/index/github.com-1ecc6299db9ec823/.cargo-index-lock
     - ln -s cargo/registry /root/.cargo/registry
     - cargo build --release --verbose --manifest-path=checkers/Cargo.toml 2>&1 | tee log.txt
   artifacts:
