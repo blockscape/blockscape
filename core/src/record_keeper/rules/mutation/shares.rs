@@ -19,11 +19,18 @@ impl MutationRule for Shares {
                     return Err(LogicError::InvalidSigner.into())
                 }
 
-                let subtotal = to.iter()
-                    .fold(0u64, |acc, (_, &v)| acc + v);
+                // find the total charge to the sender for this transfer
+                let mut subtotal = 0u64;
+                for (_, &v) in to.iter() {
+                    subtotal = subtotal.checked_add(v)
+                        .ok_or(LogicError::InvalidMutation("Overflowing addition".into()))?;
+                }
+
+                // look up the past amounts sent by this sender and add with new transfers
                 let prior_balance = senders.get(&from).cloned().unwrap_or(0u64);
                 let new_subtotal = subtotal.checked_add(prior_balance)
                     .ok_or(LogicError::InvalidMutation("Overflowing addition".into()))?;
+                
                 senders.insert(from, new_subtotal);
             }
         }
