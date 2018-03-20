@@ -18,7 +18,8 @@ const MAX_PENDING_TXN_MEM: usize = 128*1024*1024; //128 MB
 
 #[derive(Debug)]
 pub struct RecordKeeperConfig {
-    /// Maximum size in bytes of the pending transaction pool before transactions are dropped, one way or another.
+    /// Maximum size in bytes of the pending transaction pool before transactions are dropped, one
+    /// way or another.
     pub pending_txn_limit: u64,
 
     /// To what extent should data be stored by record keeper?
@@ -30,13 +31,16 @@ pub struct RecordKeeperConfig {
 
 #[derive(Debug)]
 pub enum RecordKeeperIndexingStrategy {
-    /// Full indexing capability, including all data needed for 
+    /// Full indexing capability, including all data needed for particapating in regular blockchain
+    /// operations and caches to speed up performace.
     Full,
 
-    /// Minimum number of indexes required to fully validate and participate in regular blockchain operations
+    /// Minimum number of indexes required to fully validate and participate in regular blockchain
+    /// operations
     Standard,
 
-    /// Slimmed down database, not storing all blockchain data, just a minimum amount to be somewhat informed
+    /// Slimmed down database, not storing all blockchain data, just a minimum amount to be somewhat
+    /// informed
     Light
 }
 
@@ -51,9 +55,9 @@ pub struct RecordKeeperStatistics {
 }
 
 
-/// An abstraction on the concept of states and state state data. Builds higher-lsuperevel functionality
-/// On top of the database. The implementation uses RwLocks to provide many read, single write
-/// thread safety.
+/// An abstraction on the concept of states and state state data. Builds higher-lsuperevel
+/// functionality on top of the database. The implementation uses RwLocks to provide many read,
+/// single write thread safety.
 ///
 /// TODO: Also add a block to the known blocks if it is only referenced.
 /// TODO: Also allow for reaching out to the network to request missing information.
@@ -68,8 +72,9 @@ pub struct RecordKeeper {
     record_listeners: Mutex<ListenerPool<RecordEvent>>,
     game_listeners: Mutex<ListenerPool<PlotEvent>>,
 
-    /// A CPU pool of a single thread dedicated to processing work related to RecordKeeper. Work can be passed to it. Future compatible.
-    /// It is reccomended to spawn major work for the DB on this thread; one can also spawn their own thread for smaller, higher priority jobs.
+    /// A CPU pool of a single thread dedicated to processing work related to RecordKeeper. Work can
+    /// be passed to it. Future compatible. It is recommended to spawn major work for the DB on this
+    /// thread; one can also spawn their own thread for smaller, higher priority jobs.
     worker: futures_cpupool::CpuPool,
 
     /// A larger work queue designed for smaller, time sensitive jobs
@@ -303,17 +308,16 @@ impl RecordKeeper {
 
     /// Find a validator's public key given the hash. If they are not found, then they are not a
     /// validator.
-    /// TODO: Handle shard-based reputations
     pub fn get_validator_key(&self, id: &U160) -> Result<Bin, Error> {
         self.db.read()
             .get_validator_key(*id)
     }
 
-    /// Get the reputation of a validator given their ID.
-    /// TODO: Handle shard-based reputations
-    pub fn get_validator_rep(&self, id: &U160) -> Result<i64, Error> {
+    /// Get the shares of a validator given their ID.
+    /// TODO: Handle shard-based shares
+    pub fn get_validator_stake(&self, id: &U160) -> Result<u64, Error> {
         self.db.read()
-            .get_validator_rep(*id)
+            .get_validator_stake(*id)
     }
 
     /// Retrieve the current block hash which the network state represents.

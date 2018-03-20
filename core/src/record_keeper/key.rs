@@ -75,7 +75,7 @@ impl Into<Key> for CacheEntry {
 pub enum NetworkEntry {
     Plot(PlotID, u64),
     ValidatorKey(U160),
-    ValidatorRep(U160),
+    ValidatorStake(U160),
     AdminKeyID,
     Generic(Bin)
 }
@@ -86,7 +86,7 @@ impl AsBin for NetworkEntry {
         match self {
             &Plot(ref id, tick) => prefix(&prefix(b"PLT", id), &(tick / DB::PLOT_EVENT_BUCKET_SIZE)),
             &ValidatorKey(ref k) => prefix(b"VKY", k),
-            &ValidatorRep(ref k) => prefix(b"VRP", k),
+            &ValidatorStake(ref k) => prefix(b"VSK", k),
             &AdminKeyID => Bin::from(b"ADMIN" as &[u8]),
             &Generic(ref b) => b.clone()
         }

@@ -76,6 +76,8 @@ pub enum LogicError {
     MissingPrevious,
     UndoOrigin,
     UnrecognizedCreator,
+    NotEnoughShares,
+    InvalidSigner
 }
 
 impl StdErr for LogicError {
@@ -90,6 +92,8 @@ impl StdErr for LogicError {
             LogicError::MissingPrevious => "The last block this references is not known to us.",
             LogicError::UndoOrigin => "Cannot walk backwards past an origin block.",
             LogicError::UnrecognizedCreator => "The person who created and signed the block is unknown.",
+            LogicError::NotEnoughShares => "The sender is trying to send more shares than he/she owns.",
+            LogicError::InvalidSigner => "This transaction requires a different person to have signed it."
         }
     }
 
