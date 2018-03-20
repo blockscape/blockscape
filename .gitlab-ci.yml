@@ -27,8 +27,10 @@ build:
   script:
     # Build all deps so we do not count those errors against
     - mkdir -p cargo
-    - ln -sf cargo/registry /root/.cargo
+    - cp -r cargo/registry /root/.cargo/registry
     - cargo build --release --manifest-path=checkers/Cargo.toml  2>&1 | tee log.txt
+    - rm -rf cargo/registry
+    - cp -r /root/.cargo/registry cargo/registry
     #- "! grep 'warning' log.txt"
   artifacts:
     paths:
@@ -47,8 +49,10 @@ build_arm:
       - checkers/target/
   script:
     - mkdir -p cargo
-    - ln -sf cargo/registry /root/.cargo
+    - cp -r cargo/registry /root/.cargo/registry
     - cargo build --release --verbose --manifest-path=checkers/Cargo.toml 2>&1 | tee log.txt
+    - rm -rf cargo/registry
+    - cp -r /root/.cargo/registry cargo/registry
   artifacts:
     paths:
       - checkers/target/arm-unknown-linux-musleabi/release/blockscape
