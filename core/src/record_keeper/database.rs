@@ -17,7 +17,7 @@ use num_cpus;
 
 
 /// The reward bestowed for backing the correct block
-pub const BLOCK_REWARD: i64 = 10;
+pub const BLOCK_REWARD: u64 = 10;
 /// The number of ticks grouped together into a "bucket" within the network state.
 pub const PLOT_EVENT_BUCKET_SIZE: u64 = 1000;
 
@@ -254,8 +254,8 @@ impl Database {
     /// Get the reputation of a validator given their ID.
     /// TODO: Handle shard-based reputations
     #[inline]
-    pub fn get_validator_rep(&self, id: U160) -> Result<i64, Error> {
-        self.get(NetworkEntry::ValidatorRep(id).into())
+    pub fn get_validator_stake(&self, id: U160) -> Result<u64, Error> {
+        self.get(NetworkEntry::ValidatorStake(id).into())
     }
 
     /// Return a list of **known** blocks which have a given height. If the block has not been added
@@ -566,10 +566,15 @@ impl Database {
         } Ok(prior)
     }
 
-    /// Change a validator's reputation by the amount indicated.
-    fn change_validator_rep(&mut self, id: U160, amount: i64) -> Result<(), Error> {
-        let db_key: Key = NetworkEntry::ValidatorRep(id).into();
-        let value = map_not_found(self.get::<i64>(db_key.clone()), 0)? + amount;
+    /// Change a validator's stake by the amount indicated.
+    fn change_validator_stake(&mut self, id: U160, amount: i64) -> Result<(), Error> {
+        let db_key: Key = NetworkEntry::ValidatorStake(id).into();
+        let value = map_not_found(self.get::<u64>(db_key.clone()), 0)?;
+        let value = if amount >= 0 {
+            value + amount as u64
+        } else {
+            value - (-amount) as u64
+        };
         self.put(db_key, &value, Some(8))
     }
 
@@ -642,7 +647,7 @@ impl Database {
                 Change::Admin{key: key.clone(), value: prior}
             },
             &Change::BlockReward{id, ..} => {
-                self.change_validator_rep(id, BLOCK_REWARD)?;
+                self.change_validator_stake(id, BLOCK_REWARD as i64)?;
                 Change::BlockReward{id, proof: Bin::new()}
             },
             &Change::PlotEvent(ref e) => {
@@ -656,8 +661,17 @@ impl Database {
                 Change::NewValidator{pub_key: pub_key.clone()}
             },
             &Change::Slash{id, amount, ..} => {
-                self.change_validator_rep(id, -(amount as i64))?;
+                self.change_validator_stake(id, -(amount as i64))?;
                 Change::Slash{id, amount, proof: Bin::new()}
+            },
+            &Change::Transfer{from, ref to} => {
+                let mut sum = 0i64;
+                for (&recipient, &amount) in to.iter() {
+                    self.change_validator_stake(recipient, amount as i64)?;
+                    sum += amount as i64;
+                }
+                self.change_validator_stake(from, -sum)?;
+                Change::Transfer{from, to: to.clone()}
             }
         })}
 
@@ -673,14 +687,22 @@ impl Database {
         // For all changes, undo the described action with the data provided
         for change in mutation.changes { match change {
             Change::Admin{key, value} => { self.set_value(key, &value)?; },
-            Change::BlockReward{id, ..} => { self.change_validator_rep(id, -BLOCK_REWARD)?; },
+            Change::BlockReward{id, ..} => { self.change_validator_stake(id, -(BLOCK_REWARD as i64))?; },
             Change::PlotEvent(e) => { self.remove_events(&e)?; },
             Change::NewValidator{pub_key, ..} => {
                 let id = hash_pub_key(&pub_key);
                 let key: Key = NetworkEntry::ValidatorKey(id).into();
                 self.db.delete(&key.as_bin())?;
             },
-            Change::Slash{id, amount, ..} => { self.change_validator_rep(id, (amount as i64))?; }
+            Change::Slash{id, amount, ..} => { self.change_validator_stake(id, (amount as i64))?; },
+            Change::Transfer{from, to} => {
+                let mut sum = 0i64;
+                for (recipient, amount) in to {
+                    self.change_validator_stake(recipient, -(amount as i64))?;
+                    sum += amount as i64;
+                }
+                self.change_validator_stake(from, sum)?;
+            }
         }}
 
         Ok(())
