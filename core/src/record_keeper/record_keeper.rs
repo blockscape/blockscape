@@ -16,6 +16,7 @@ use futures_cpupool;
 
 const MAX_PENDING_TXN_MEM: usize = 128*1024*1024; //128 MB
 
+
 #[derive(Debug)]
 pub struct RecordKeeperConfig {
     /// Maximum size in bytes of the pending transaction pool before transactions are dropped, one
@@ -28,6 +29,7 @@ pub struct RecordKeeperConfig {
     /// The custom mutation rules which record keeper should use to validate txns
     pub rules: MutationRules,
 }
+
 
 #[derive(Debug)]
 pub enum RecordKeeperIndexingStrategy {
@@ -43,6 +45,7 @@ pub enum RecordKeeperIndexingStrategy {
     /// informed
     Light
 }
+
 
 #[derive(Debug, Serialize)]
 /// RK Stats which can be sent via JSON on request.
@@ -554,6 +557,7 @@ impl RecordKeeper for RecordKeeperImpl {
         self.db.read().get_txn_receive_time(txn)
     }
 }
+
 
 impl RecordKeeperImpl {
     /// Construct a new RecordKeeper from an already opened database and possibly an existing set of
