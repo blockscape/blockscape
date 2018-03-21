@@ -30,7 +30,7 @@ impl<'a> NetState<'a> {
         } else if self.diff.is_value_deleted(&key) {
             Err(Error::NotFound(key))
         } else {
-            self.db.get_raw_data(key)
+            self.db.get(key)
         }
     }
 

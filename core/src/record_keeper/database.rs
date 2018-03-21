@@ -1,13 +1,11 @@
 use bin::{Bin, AsBin};
-use bincode;
+use bincode::{serialize, deserialize, Infinite, Bounded};
 use hash::hash_pub_key;
 use primitives::{U256, U160, Mutation, Change, Block, BlockHeader, Txn, RawEvent, RawEvents};
 use primitives::event;
 use time::Time;
 use rocksdb::{DB, Options, IteratorMode, DBCompressionType};
 use rocksdb::Error as RocksDBError;
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 use std::collections::{HashMap, HashSet, BTreeMap};
 use std::path::PathBuf;
 use super::{PlotID, NetDiff, PlotEvent};
@@ -36,49 +34,31 @@ impl Default for HeadRef {
 }
 
 
-pub trait Database {
+pub trait Database: Send + Sync {
     /// Check if there are no entries in the database.
     fn is_empty(&self) -> bool;
 
     /// Retrieve raw data from the database. Use this for non-storable types (mostly network stuff).
     #[inline]
-    fn get_raw_data(&self, key: Key) -> Result<Bin, Error>;
-
-    /// Get an object form the database.
-    fn get<S: DeserializeOwned>(&self, key: Key) -> Result<S, Error> {
-        let raw = self.get_raw_data(key)?;
-        Ok(bincode::deserialize(&raw)?)
-    }
+    fn get(&self, key: Key) -> Result<Bin, Error>;
 
     /// Put raw data into the database. Should have no uses outside this class.
     #[inline]
-    fn put_raw_data(&mut self, key: Key, data: &[u8]) -> Result<(), Error> {
-        Self::put_raw_data_static(&self.db, key, data)
-    }
-
-    /// Put an object into the database.
-    fn put<S: Serialize>(&mut self, key: Key, object: &S, size: Option<u64>) -> Result<(), Error> {
-        let raw = match size {
-            Some(s) => bincode::serialize(object, bincode::Bounded(s)).unwrap(),
-            None => bincode::serialize(object, bincode::Infinite).unwrap()
-        };
-
-        self.put_raw_data(key, &raw)
-    }
+    fn put(&mut self, key: Key, data: &[u8]) -> Result<(), Error>;
 
     /// Add a new transaction to the database.
     #[inline]
     fn add_txn(&mut self, txn: &Txn, receive_time: Time) -> Result<(), Error> {
         let hash = txn.calculate_hash();
         debug!("Adding txn ({}) to database", &hash);
-        self.put(BlockchainEntry::Txn(hash).into(), txn, None)?;
+        self.put(BlockchainEntry::Txn(hash).into(), &serialize(txn, Infinite).unwrap())?;
         self._add_receive_time(hash, receive_time)?;
         self._add_txn_to_account(&txn.creator, hash)
     }
 
     /// Retrieve a block header form the database given a hash.
     fn get_block_header(&self, hash: &U256) -> Result<BlockHeader, Error> {
-        self.get(BlockchainEntry::BlockHeader(*hash).into())
+        Ok(deserialize(&self.get(BlockchainEntry::BlockHeader(*hash).into())?)?)
     }
 
     /// Adds a block to the database and records it in the height cache.
@@ -90,9 +70,9 @@ pub trait Database {
         if self.get_block_header(&hash).is_ok() { return Ok(false) }
 
         // put the header in the db
-        self.put(BlockchainEntry::BlockHeader(hash).into(), &block.header, None)?;
+        self.put(BlockchainEntry::BlockHeader(hash).into(), &serialize(&block.header, Infinite).unwrap())?;
         // put txns into db under the merkle root
-        self.put(BlockchainEntry::TxnList(block.merkle_root).into(), &block.txns, None)?;
+        self.put(BlockchainEntry::TxnList(block.merkle_root).into(), &serialize(&block.txns, Infinite).unwrap())?;
 
         // add the block to the height cache
         let height = self.get_block_height(block.prev)? + 1;
@@ -116,6 +96,16 @@ pub trait Database {
         self.complete_block(header)
     }
 
+    /// Iterate up the current chain, it will only follow the current chain and will end when either
+    /// it reaches the head, a database error occurs, or a block header is not found for a block we
+    /// know is part of the current chain.
+    fn iter_up<'a>(&'a self, start_height: u64) -> UpIter<'a>;
+
+    /// Iterate down a given chain, it will follow the `prev` references provided by `BlockHeader`s.
+    /// This will end either when it reaches genesis, a database error occurs, or a block header is
+    /// not found for a block we know comes before it.
+    fn iter_down<'a>(&'a self, start_block: U256) -> DownIter<'a>;
+
     /// Get the hash of the current head of the blockchain as it lines up with the network state.
     /// That is, the current head is that which the network state represents.
     #[inline]
@@ -133,19 +123,19 @@ pub trait Database {
 
     /// Retrieve the transactions for a block to complete a `BlockHeader` as a `Block` object.
     fn complete_block(&self, header: BlockHeader) -> Result<Block, Error> {
-        let txns = self.get(BlockchainEntry::TxnList(header.merkle_root).into())?;
+        let txns = deserialize(&self.get(BlockchainEntry::TxnList(header.merkle_root).into())?)?;
         Ok(Block{header, txns})
     }
 
     /// Get a transaction that has been recorded in the database. It will only be recorded in the DB
     /// if it was accepted in a block. Said block may be an uncle.
     fn get_txn(&self, hash: U256) -> Result<Txn, Error> {
-        self.get(BlockchainEntry::Txn(hash).into())
+        Ok(deserialize(&self.get(BlockchainEntry::Txn(hash).into())?)?)
     }
 
     /// Get the block(s) a txn is part of.
     fn get_txn_blocks(&self, hash: U256) -> Result<HashSet<U256>, Error> {
-        let blocks: HashSet<U256> = self.get(CacheEntry::BlocksByTxn(hash).into())?;
+        let blocks: HashSet<U256> = deserialize(&self.get(CacheEntry::BlocksByTxn(hash).into())?)?;
         Ok(blocks)
 
         // Scanning method
@@ -170,38 +160,46 @@ pub trait Database {
     /// Get the txns created by a given account.
     fn get_account_txns(&self, hash: &U160) -> Result<HashSet<U256>, Error> {
         let res = self.get(CacheEntry::TxnsByAccount(*hash).into());
-        map_not_found(res, HashSet::new())
+        let res = match res {
+            Err(Error::NotFound{..}) => return Ok(HashSet::new()),
+            res @ _ => res
+        };
+        Ok(deserialize(&res?)?)
     }
 
     /// Get the time a txn was originally received.
     fn get_txn_receive_time(&self, txn: U256) -> Result<Time, Error> {
-        self.get(CacheEntry::TxnReceiveTime(txn).into())
+        Ok(deserialize(&self.get(CacheEntry::TxnReceiveTime(txn).into())?)?)
     }
 
     /// Get the public key of a validator given their ID.
     /// TODO: Handle shard-based reputations
     fn get_validator_key(&self, id: U160) -> Result<Bin, Error> {
-        self.get_raw_data(NetworkEntry::ValidatorKey(id).into())
+        self.get(NetworkEntry::ValidatorKey(id).into())
     }
 
     /// Get the reputation of a validator given their ID.
     /// TODO: Handle shard-based reputations
     #[inline]
     fn get_validator_stake(&self, id: U160) -> Result<u64, Error> {
-        self.get(NetworkEntry::ValidatorStake(id).into())
+        Ok(deserialize(&self.get(NetworkEntry::ValidatorStake(id).into())?)?)
     }
 
     /// Return a list of **known** blocks which have a given height. If the block has not been added
     /// to the database, then it will not be included.
     fn get_blocks_of_height(&self, height: u64) -> Result<Vec<U256>, Error> {
         let key = CacheEntry::BlocksByHeight(height).into();
-        map_not_found(self.get(key), Vec::new())
+        let res = match self.get(key) {
+            Err(Error::NotFound{..}) => return Ok(Vec::new()),
+            res @ _ => res
+        };
+        Ok(deserialize(&res?)?)
     }
 
     /// Retrieve the block which is part of the current chain at a given height.
     fn get_current_block_of_height(&self, height: u64) -> Result<U256, Error> {
         let key = CacheEntry::BlocksByHeight(height).into();
-        Ok(self.get::<Vec<U256>>(key)?[0])
+        Ok(deserialize::<Vec<_>>(&self.get(key)?)?[0])
     }
 
     /// Check if a block is part of the current chain, that is, check if it is a direct ancestor of
@@ -215,15 +213,15 @@ pub trait Database {
     /// Get the cached height of an existing block.
     fn get_block_height(&self, hash: U256) -> Result<u64, Error> {
         if hash == self.get_current_block_hash() {
-            return Ok(self.head.height);
+            return Ok(self.get_current_block_height());
         }
-        self.get(CacheEntry::HeightByBlock(hash).into())
+        Ok(deserialize(&self.get(CacheEntry::HeightByBlock(hash).into())?)?)
     }
 
     /// Get a list of the last `count` block headers. If `count` is one, then it will return only
     /// the most recent block.
     fn get_latest_blocks(&self, count: usize) -> Result<Vec<BlockHeader>, Error> {
-        let mut iter = DownIter(&self, self.head.block).take(count);
+        let mut iter = self.iter_down(self.get_current_block_hash()).take(count);
         let mut headers = Vec::new();
 
         while let Some(r) = iter.next() {
@@ -242,7 +240,7 @@ pub trait Database {
     /// If the limit is reached, it will prioritize blocks of a lower height, but may have a gap
     /// between the main chain (or start) and what it includes.
     fn _get_blocks_before(&self, target: &U256, last_known: &U256, limit: usize) -> Result<Vec<BlockHeader>, Error> {
-        let mut iter = DownIter(&self, *target)
+        let mut iter = self.iter_down(*target)
             .take(limit)
             .take_while(Result::is_ok)
             .map(Result::unwrap);
@@ -270,7 +268,7 @@ pub trait Database {
             self.get_block_height(ancestor)?
         };
 
-        let mut iter = UpIter(&self, ancestor_height)
+        let mut iter = self.iter_up(ancestor_height)
             .skip(1) // we know they have must have the LCA
             .take(limit) // hard-coded maximum
             .take_while(Result::is_ok) // stop at first error
@@ -341,7 +339,7 @@ pub trait Database {
 
         let (a_hashes, b_hashes, last_a, last_b) =
             self._latest_common_ancestor(a_block, b_block)?;
-        let (a_dist, b_dist) = Self::_intersect_dist(&a_hashes, &b_hashes, &last_a, &last_b);
+        let (a_dist, b_dist) = self::intersect_dist(&a_hashes, &b_hashes, &last_a, &last_b);
 
         let a_height = self.get_current_block_height();
         let b_height = a_height - a_dist + b_dist;
@@ -465,11 +463,13 @@ pub trait Database {
         loop {
             let key: Key = NetworkEntry::Plot(plot_id, tick).into();
 
-            match self.get::<RawEvents>(key.clone()) {
-                Ok(mut l) => event_list.append(&mut l),
+            let raw_list = match self.get(key.clone()) {
+                Ok(l) => l,
                 Err(Error::NotFound(..)) => break,
                 Err(e) => return Err(e)
-            }
+            };
+
+            event_list.append(&mut deserialize::<RawEvents>(&raw_list)?);
 
             tick += PLOT_EVENT_BUCKET_SIZE;
         } Ok(event_list.split_off(&from_tick))
@@ -487,34 +487,30 @@ pub trait Database {
 
     /// Set a value in the network state and return the old value if any. It will delete the key
     /// from the database if value is None.
-    fn _set_value(&mut self, key: Bin, value: &Option<Bin>) -> Result<Option<Bin>, Error> {
-        let db_key = Key::Network(NetworkEntry::Generic(key)).as_bin();
-        let prior = self.db.get(&db_key)?.map(|v| v.to_vec());
-
-        if let Some(ref v) = *value { // set the value if it is some
-            self.db.put(&db_key, v)?;
-        } else if prior.is_some() { // otherwise delete it if there was a value to delete
-            self.db.delete(&db_key)?
-        } Ok(prior)
-    }
+    fn _set_value(&mut self, key: Bin, value: Option<&Bin>) -> Result<Option<Bin>, Error>;
 
     /// Change a validator's stake by the amount indicated.
     fn _change_validator_stake(&mut self, id: U160, amount: i64) -> Result<(), Error> {
         let db_key: Key = NetworkEntry::ValidatorStake(id).into();
-        let value = map_not_found(self.get::<u64>(db_key.clone()), 0)?;
+        let value: u64 = match self.get(db_key.clone()) {
+            Ok(v) => deserialize(&v)?,
+            Err(Error::NotFound(..)) => 0,
+            Err(e) => return Err(e)
+        };
+
         let value = if amount >= 0 {
             value + amount as u64
         } else {
             value - (-amount) as u64
         };
-        self.put(db_key, &value, Some(8))
+        self.put(db_key, &serialize(&value, Bounded(8)).unwrap())
     }
 
     /// Add a new event to the specified plot.
     fn _add_event(&mut self, plot_id: PlotID, tick: u64, event: &RawEvent) -> Result<(), Error> {
         let db_key: Key = NetworkEntry::Plot(plot_id, tick).into();
         let mut event_list = match self.get(db_key.clone()) {
-            Ok(list) => list,
+            Ok(list) => deserialize::<RawEvents>(&list)?,
             Err(Error::NotFound(..)) => {
                 // we need to add empty lists too all prior buckets to make them contiguous
                 self._init_event_buckets(plot_id, tick)?;
@@ -524,27 +520,28 @@ pub trait Database {
         };
 
         event::add_event(&mut event_list, tick, event.clone());
-        self.put(db_key, &event_list, None)
+        self.put(db_key, &serialize(&event_list, Infinite).unwrap())
     }
 
     /// Add an event to all the specified plots (iff they are in this shard).
     /// TODO: verify if a PlotID is in the shard
     fn _add_events(&mut self, e: &PlotEvent) -> Result<(), Error> {
-        self.add_event(e.from, e.tick, &e.event)?;
+        self._add_event(e.from, e.tick, &e.event)?;
         for plot in e.to.iter() {
-            self.add_event(*plot, e.tick, &e.event)?;
+            self._add_event(*plot, e.tick, &e.event)?;
         } Ok(())
     }
 
     /// Remove an event from a plot. Should only be used when undoing a mutation.
     fn _remove_event(&mut self, id: PlotID, tick: u64, event: &RawEvent) -> Result<(), Error> {
         let db_key: Key = NetworkEntry::Plot(id, tick).into();
-        match self.get::<RawEvents>(db_key.clone()) {
-            Ok(mut event_list) => {
+        match self.get(db_key.clone()) {
+            Ok(raw_event_list) => {
+                let mut event_list: RawEvents = deserialize(&raw_event_list)?;
                 if !event::remove_event(&mut event_list, tick, event) {
                     warn!("Unable to remove event because it does not exist! The network state \
                         may be desynchronized.");
-                } else { self.put(db_key, &event_list, None)?; }
+                } else { self.put(db_key, &serialize(&event_list, Infinite).unwrap())?; }
                 Ok(())
             },
             Err(Error::NotFound(..)) => { warn!("Unable to remove event because it does not exist! \
@@ -573,7 +570,7 @@ pub trait Database {
         // for all changes, make the described change and add a contra change for it
         for change in &mutation.changes {   contra.changes.push( match change {
             &Change::Admin{ref key, ref value} => {
-                let prior = self._set_value(key.clone(), value)?;
+                let prior = self._set_value(key.clone(), value.as_ref())?;
                 Change::Admin{key: key.clone(), value: prior}
             },
             &Change::BlockReward{id, ..} => {
@@ -587,7 +584,7 @@ pub trait Database {
             &Change::NewValidator{ref pub_key, ..} => {
                 let id = hash_pub_key(pub_key);
                 let key = NetworkEntry::ValidatorKey(id).into();
-                self.put_raw_data(key, pub_key)?;
+                self.put(key, pub_key)?;
                 Change::NewValidator{pub_key: pub_key.clone()}
             },
             &Change::Slash{id, amount, ..} => {
@@ -616,13 +613,13 @@ pub trait Database {
 
         // For all changes, undo the described action with the data provided
         for change in mutation.changes { match change {
-            Change::Admin{key, value} => { self._set_value(key, &value)?; },
+            Change::Admin{key, value} => { self._set_value(key, value.as_ref())?; },
             Change::BlockReward{id, ..} => { self._change_validator_stake(id, -(BLOCK_REWARD as i64))?; },
             Change::PlotEvent(e) => { self._remove_events(&e)?; },
             Change::NewValidator{pub_key, ..} => {
                 let id = hash_pub_key(&pub_key);
                 let key: Key = NetworkEntry::ValidatorKey(id).into();
-                self.db.delete(&key.as_bin())?;
+                self._set_value(key.as_bin(), None)?;
             },
             Change::Slash{id, amount, ..} => { self._change_validator_stake(id, (amount as i64))?; },
             Change::Transfer{from, to} => {
@@ -690,7 +687,7 @@ pub trait Database {
     /// the chain of the given block until it finds a block it knows is part of the current chain.
     /// Much more efficient than `latest_common_ancestor` in this specific use case.
     fn _latest_common_ancestor_with_current_chain(&self, hash: &U256) -> Result<U256, Error> {
-        let mut iter = DownIter(&self, *hash);
+        let mut iter = self.iter_down(*hash);
         while let Some(r) = iter.next() {
             // check if r is part of the main chain, if it is, we are done
             let h: U256 = r?.0;
@@ -708,7 +705,7 @@ pub trait Database {
         if height_vals.contains(hash) { return Ok(()); }
         height_vals.push(*hash);
 
-        self.put(CacheEntry::BlocksByHeight(height).into(), &height_vals, None)
+        self.put(CacheEntry::BlocksByHeight(height).into(), &serialize(&height_vals, Infinite).unwrap())
     }
 
     /// Update the head reference and save it to the database. This should be used when the network
@@ -719,14 +716,14 @@ pub trait Database {
     /// which indicates that it is part of the current chain.
     fn _update_current_chain(&mut self, height: u64, hash: &U256) -> Result<(), Error> {
         let key: Key = CacheEntry::BlocksByHeight(height).into();
-        let mut height_values: Vec<U256> = self.get(key.clone())?;
+        let mut height_values: Vec<U256> = deserialize(&self.get(key.clone())?)?;
 
         if let Some(index) =
         height_values.iter()
             .position(|h| *h == *hash)
             { // we found the one we want, now swap it with the one in the front and re-save it
                 height_values.swap(0, index);
-                self.put(key, &height_values, None)
+                self.put(key, &serialize(&height_values, Infinite).unwrap())
             }
             else { // It was not in the list
                 Err(Error::NotFound(key))
@@ -735,14 +732,14 @@ pub trait Database {
 
     /// Cache the height of a block so it can be easily looked up later on.
     fn _add_height_for_block(&mut self, height: u64, block: U256) -> Result<(), Error> {
-        self.put(CacheEntry::HeightByBlock(block).into(), &height, Some(8))
+        self.put(CacheEntry::HeightByBlock(block).into(), &serialize(&height, Bounded(8)).unwrap())
     }
 
     /// Add a block to the list of blocks containing a given txn.
     fn _add_block_for_txn(&mut self, txn: U256, block: U256) -> Result<(), Error> {
         let mut blocks = map_not_found(self.get_txn_blocks(txn), HashSet::new())?;
         if blocks.insert(block) {
-            self.put(CacheEntry::BlocksByTxn(txn).into(), &blocks, None)
+            self.put(CacheEntry::BlocksByTxn(txn).into(), &serialize(&blocks, Infinite).unwrap())
         } else { Ok(()) }
     }
 
@@ -751,13 +748,13 @@ pub trait Database {
     fn _add_txn_to_account(&mut self, account: &U160, txn: U256) -> Result<(), Error> {
         let mut txns: HashSet<U256> = map_not_found(self.get_account_txns(account), HashSet::new())?;
         if txns.insert(txn) {
-            self.put(CacheEntry::BlocksByTxn(txn).into(), &txns, None)
+            self.put(CacheEntry::BlocksByTxn(txn).into(), &serialize(&txns, Infinite).unwrap())
         } else { Ok(()) }
     }
 
     /// Cache the time at which a txn was first recieved.
     fn _add_receive_time(&mut self, txn: U256, time: Time) -> Result<(), Error> {
-        self.put(CacheEntry::TxnReceiveTime(txn).into(), &time, Some(8))
+        self.put(CacheEntry::TxnReceiveTime(txn).into(), &serialize(&time, Bounded(8)).unwrap())
     }
 
     /// Construct a mutation given a block and its transactions by querying the DB for the txns and
@@ -773,12 +770,12 @@ pub trait Database {
 
     /// Retrieve the contra from the db to undo the given block
     fn _get_contra(&self, hash: U256) -> Result<Mutation, Error> {
-        self.get(CacheEntry::ContraMut(hash).into())
+        Ok(deserialize(&self.get(CacheEntry::ContraMut(hash).into())?)?)
     }
 
     /// Add a contra for a given block
     fn _add_contra(&mut self, hash: U256, contra: &Mutation) -> Result<(), Error> {
-        self.put(CacheEntry::ContraMut(hash).into(), contra, None)
+        self.put(CacheEntry::ContraMut(hash).into(), &serialize(&contra, Infinite)?)
     }
 
     /// Create empty buckets for all ticks before a given point. It will stop when it reaches an
@@ -789,28 +786,15 @@ pub trait Database {
         loop {
             let key: Key = NetworkEntry::Plot(plot_id, tick).into();
 
-            match self.get::<RawEvents>(key.clone()) {
-                Ok(..) => break,
-                Err(Error::NotFound(..)) => self.put(key, &RawEvents::new(), None)?,
+            match self.get(key.clone()) {
+                Ok(l) => { deserialize::<RawEvents>(&l)?; break },
+                Err(Error::NotFound(..)) => self.put(key, &serialize(&RawEvents::new(), Infinite).unwrap())?,
                 Err(e) => return Err(e)
             }
 
             if tick < PLOT_EVENT_BUCKET_SIZE { break; }
             tick -= PLOT_EVENT_BUCKET_SIZE;
         } Ok(())
-    }
-
-    /// Get the distance of the intersection for the LCA on both paths. Returns
-    /// (distance on path a, distance on path b)
-    /// Note, this assumes there is a single element which is a member of both `a` and `b`.
-    fn _intersect_dist(a: &HashMap<U256, u64>, b: &HashMap<U256, u64>, last_a: &U256, last_b: &U256) -> (u64, u64) {
-        ({ //distance down `a` path to collision
-             if let Some(&d) = a.get(&last_b) { d } // b collided with a
-                 else { *a.get(&last_a).unwrap() } // last added block was collision
-         },{ //distance down `b` path to collision
-             if let Some(&d) = b.get(&last_a) { d }  // a collided with b
-                 else { *b.get(&last_b).unwrap() }  // last added block was collision
-         })
     }
 }
 
@@ -842,14 +826,28 @@ impl Database for DatabaseImpl {
 
     /// Retrieve raw data from the database. Use this for non-storable types (mostly network stuff).
     #[inline]
-    fn get_raw_data(&self, key: Key) -> Result<Bin, Error> {
+    fn get(&self, key: Key) -> Result<Bin, Error> {
         Self::get_raw_data_static(&self.db, key)
     }
 
     /// Put raw data into the database. Should have no uses outside this class.
     #[inline]
-    fn put_raw_data(&mut self, key: Key, data: &[u8]) -> Result<(), Error> {
+    fn put(&mut self, key: Key, data: &[u8]) -> Result<(), Error> {
         Self::put_raw_data_static(&self.db, key, data)
+    }
+
+    /// Iterate up the current chain, it will only follow the current chain and will end when either
+    /// it reaches the head, a database error occurs, or a block header is not found for a block we
+    /// know is part of the current chain.
+    fn iter_up<'a>(&'a self, start_height: u64) -> UpIter<'a> {
+        UpIter(self, start_height)
+    }
+
+    /// Iterate down a given chain, it will follow the `prev` references provided by `BlockHeader`s.
+    /// This will end either when it reaches genesis, a database error occurs, or a block header is
+    /// not found for a block we know comes before it.
+    fn iter_down<'a>(&'a self, start_block: U256) -> DownIter<'a> {
+        DownIter(self, start_block)
     }
 
     /// Get the hash of the current head of the blockchain as it lines up with the network state.
@@ -871,6 +869,19 @@ impl Database for DatabaseImpl {
         self.head.height
     }
 
+    /// Set a value in the network state and return the old value if any. It will delete the key
+    /// from the database if value is None.
+    fn _set_value(&mut self, key: Bin, value: Option<&Bin>) -> Result<Option<Bin>, Error> {
+        let db_key = Key::Network(NetworkEntry::Generic(key)).as_bin();
+        let prior = self.db.get(&db_key)?.map(|v| v.to_vec());
+
+        if let Some(ref v) = value { // set the value if it is some
+            self.db.put(&db_key, v)?;
+        } else if prior.is_some() { // otherwise delete it if there was a value to delete
+            self.db.delete(&db_key)?
+        } Ok(prior)
+    }
+
     /// Update the head reference and save it to the database. This should be used when the network
     /// state is changed to represent the current block the state is at.
     fn _update_current_block(&mut self, hash: U256, height: Option<u64>) -> Result<(), Error> {
@@ -883,7 +894,7 @@ impl Database for DatabaseImpl {
 
         let href = HeadRef{height: h, block: hash};
         self.head = href.clone();
-        self.put(CacheEntry::CurrentHead.into(), &href, Some(40))
+        self.put(CacheEntry::CurrentHead.into(), &serialize(&href, Bounded(40)).unwrap())
     }
 }
 
@@ -893,7 +904,7 @@ impl DatabaseImpl {
     pub fn new(db: DB) -> DatabaseImpl {
         let head = //attempt to read the current block
             if let Ok(value) = Self::get_raw_data_static(&db, CacheEntry::CurrentHead.into()) {
-                bincode::deserialize(&value).unwrap_or(HeadRef::default())
+                deserialize(&value).unwrap_or(HeadRef::default())
             } else { HeadRef::default() };
 
         DatabaseImpl{ db, head }
@@ -905,7 +916,7 @@ impl DatabaseImpl {
     /// # Warning
     /// Any database which is opened, is assumed to contain data in a certain way, any outside
     /// modifications can cause undefined behavior.
-    pub fn open(path: PathBuf) -> Result<Database, RocksDBError> {
+    pub fn open(path: PathBuf) -> Result<DatabaseImpl, RocksDBError> {
         let mut options = Options::default();
         options.create_if_missing(true);
         options.set_compression_type(DBCompressionType::Lz4hc);
@@ -979,4 +990,19 @@ impl<'a> Iterator for DownIter<'a> {
             Some(Err( res.unwrap_err() ))
         }
     }
+}
+
+
+
+/// Get the distance of the intersection for the LCA on both paths. Returns
+/// (distance on path a, distance on path b)
+/// Note, this assumes there is a single element which is a member of both `a` and `b`.
+fn intersect_dist(a: &HashMap<U256, u64>, b: &HashMap<U256, u64>, last_a: &U256, last_b: &U256) -> (u64, u64) {
+    ({ //distance down `a` path to collision
+         if let Some(&d) = a.get(&last_b) { d } // b collided with a
+             else { *a.get(&last_a).unwrap() } // last added block was collision
+     },{ //distance down `b` path to collision
+         if let Some(&d) = b.get(&last_a) { d }  // a collided with b
+             else { *b.get(&last_b).unwrap() }  // last added block was collision
+     })
 }

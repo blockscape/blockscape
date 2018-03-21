@@ -193,10 +193,10 @@ pub trait RecordKeeper: Send + Sync {
 /// TODO: Also add a block to the known blocks if it is only referenced.
 /// TODO: Also allow for reaching out to the network to request missing information.
 /// TODO: Allow removing state data for shards which are not being processed.
-pub struct RecordKeeperImpl {
+pub struct RecordKeeperImpl<DB> {
     config: RecordKeeperConfig,
 
-    db: RwLock<Database>,
+    db: RwLock<DB>,
     pending_txns: RwLock<HashMap<U256, (Time, Txn)>>,
 
     record_listeners: Mutex<ListenerPool<RecordEvent>>,
@@ -211,7 +211,7 @@ pub struct RecordKeeperImpl {
     priority_worker: futures_cpupool::CpuPool
 }
 
-impl RecordKeeper for RecordKeeperImpl {
+impl<DB: Database> RecordKeeper for RecordKeeperImpl<DB> {
     /// Get information about the current status of RK.
     fn get_stats(&self) -> Result<RecordKeeperStatistics, Error> {
         let current_block = self.get_current_block_hash();
@@ -481,7 +481,7 @@ impl RecordKeeper for RecordKeeperImpl {
         let state = NetState::new(
             &*db, db.get_diff(&db.get_current_block_hash(), &block.prev)?
         );
-        self.is_valid_block_given_state(&state, &db, block)
+        self.is_valid_block_given_state(&state, &*db, block)
     }
 
     /// Check if a txn is valid given the current network state. Use this to validate pending txns,
@@ -559,29 +559,15 @@ impl RecordKeeper for RecordKeeperImpl {
 }
 
 
-impl RecordKeeperImpl {
-    /// Construct a new RecordKeeper from an already opened database and possibly an existing set of
-    /// rules.
-    fn new(db: Database, config: RecordKeeperConfig) -> RecordKeeperImpl {
-        RecordKeeperImpl {
-            config: config,
-            db: RwLock::new(db),
-            pending_txns: RwLock::new(HashMap::new()),
-            record_listeners: Mutex::new(ListenerPool::new()),
-            game_listeners: Mutex::new(ListenerPool::new()),
-            worker: futures_cpupool::Builder::new().pool_size(1).create(),
-            priority_worker: futures_cpupool::Builder::new().pool_size(3).create()
-        }
-    }
-
+impl RecordKeeperImpl<DatabaseImpl> {
     /// Construct a new RecordKeeper by opening a database. This will create a new database if the
     /// one specified does not exist.
     /// # Warning
     /// Any database which is opened, is assumed to contain data in a certain way, any outside
     /// modifications can cause undefined behavior.
-    pub fn open(path: PathBuf, config: RecordKeeperConfig, genesis: (Block, Vec<Txn>)) -> Result<RecordKeeperImpl, Error> {
+    pub fn open(path: PathBuf, config: RecordKeeperConfig, genesis: (Block, Vec<Txn>)) -> Result<Self, Error> {
         info!("Opening a RecordKeeper object with path '{:?}'", path);
-        let db = Database::open(path)?;
+        let db = DatabaseImpl::open(path)?;
         let rk = Self::new(db, config);
 
         { // Handle Genesis
@@ -599,6 +585,23 @@ impl RecordKeeperImpl {
         }
 
         Ok(rk)
+    }
+}
+
+
+impl<DB: Database> RecordKeeperImpl<DB> {
+    /// Construct a new RecordKeeper from an already opened database and possibly an existing set of
+    /// rules.
+    fn new(db: DB, config: RecordKeeperConfig) -> RecordKeeperImpl<DB> {
+        RecordKeeperImpl {
+            config: config,
+            db: RwLock::new(db),
+            pending_txns: RwLock::new(HashMap::new()),
+            record_listeners: Mutex::new(ListenerPool::new()),
+            game_listeners: Mutex::new(ListenerPool::new()),
+            worker: futures_cpupool::Builder::new().pool_size(1).create(),
+            priority_worker: futures_cpupool::Builder::new().pool_size(3).create()
+        }
     }
 
     /// Internal use function to check if a block and all its sub-components are valid.
