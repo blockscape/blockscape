@@ -191,7 +191,6 @@ pub trait RecordKeeper: Send + Sync {
 /// TODO: Also allow for reaching out to the network to request missing information.
 /// TODO: Allow removing state data for shards which are not being processed.
 pub struct RecordKeeperImpl {
-
     config: RecordKeeperConfig,
 
     db: RwLock<Database>,
