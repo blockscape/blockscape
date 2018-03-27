@@ -30,7 +30,7 @@ impl<'a> NetState<'a> {
         } else if self.diff.is_value_deleted(&key) {
             Err(Error::NotFound(key))
         } else {
-            self.db.get_raw_data(key)
+            self.db.get(key)
         }
     }
 
@@ -47,10 +47,10 @@ impl<'a> NetState<'a> {
 
     /// Get the reputation of a validator given their ID.
     /// See `get_validator_rep` in `Database`
-    pub fn get_validator_rep(&self, id: U160) -> Result<i64, Error> {
-        let key = NetworkEntry::ValidatorRep(id).into();
+    pub fn get_validator_stake(&self, id: U160) -> Result<u64, Error> {
+        let key = NetworkEntry::ValidatorStake(id).into();
         let raw = self.get_value(key)?;
-        Ok(bincode::deserialize::<i64>(&raw)?)
+        Ok(bincode::deserialize::<u64>(&raw)?)
     }
 
     pub fn get_plot_events(&self, plot_id: PlotID, from_tick: u64) -> Result<RawEvents, Error> {

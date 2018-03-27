@@ -151,7 +151,7 @@ impl RPCHandler for BlockchainRPC {
         d.add_method_with_meta("add_block", Self::add_block);
         d.add_method_with_meta("add_pending_txn", Self::add_pending_txn);
         d.add_method_with_meta("get_validator_key", Self::get_validator_key);
-        d.add_method_with_meta("get_validator_rep", Self::get_validator_rep);
+        d.add_method_with_meta("get_validator_stake", Self::get_validator_stake);
         d.add_method_with_meta("get_current_block_hash", Self::get_current_block_hash);
         d.add_method_with_meta("get_current_block_header", Self::get_current_block_header);
         d.add_method_with_meta("get_current_block", Self::get_current_block);
@@ -200,9 +200,9 @@ impl BlockchainRPC {
         into_rpc_res::<_, JBin>(self.rk.get_validator_key(&id))
     }
 
-    fn get_validator_rep(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
+    fn get_validator_stake(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
         let id = expect_one_arg::<JU160>(params)?.into();
-        to_rpc_res(self.rk.get_validator_rep(&id))
+        to_rpc_res(self.rk.get_validator_stake(&id))
     }
 
     fn get_current_block_hash(&self, _params: Params, _meta: SocketMetadata) -> RpcResult {

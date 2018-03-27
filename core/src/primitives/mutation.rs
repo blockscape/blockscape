@@ -2,17 +2,19 @@ use bin::*;
 use record_keeper::{PlotEvent, JPlotEvent};
 use primitives::{U160, JU160};
 use std::ops::{Deref, DerefMut};
+use std::collections::HashMap;
 
 /// A single change to the database, a mutation may be the composite of multiple changes. This is
 /// designed as a simple structure which the outer world can use to store the changes which should
 /// not know anything about the database.
-#[derive(Debug, Serialize, Deserialize, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum Change {
     Admin { key: Bin, value: Option<Bin> },
     BlockReward { id: U160, proof: Bin },
     PlotEvent(PlotEvent),
     NewValidator { pub_key: Bin },
-    Slash { id: U160, amount: u64, proof: Bin }
+    Slash { id: U160, amount: u64, proof: Bin },
+    Transfer { from: U160, to: HashMap<U160, u64> }
 }
 
 impl Change {
@@ -26,7 +28,8 @@ impl Change {
             &Change::BlockReward{ref proof, ..} => 20 + proof.len() + 1,
             &Change::PlotEvent(ref e) => e.calculate_size(),
             &Change::NewValidator{ref pub_key} => pub_key.len() + 1,
-            &Change::Slash{ref proof, ..} => 20 + 8 + proof.len() + 1
+            &Change::Slash{ref proof, ..} => 28 + proof.len() + 1,
+            &Change::Transfer{ref to, ..} => 20 + to.len() * 28
         }
     }
 }
@@ -41,6 +44,19 @@ impl Change {
 pub struct Mutation {
     contra: bool, // true iff it is a normal mutation, else it is a contra mutation.
     pub changes: Vec<Change>
+}
+
+impl Deref for Mutation {
+    type Target = Vec<Change>;
+    fn deref(&self) -> &Self::Target {
+        &self.changes
+    }
+}
+
+impl DerefMut for Mutation {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.changes
+    }
 }
 
 impl Mutation {
@@ -72,32 +88,43 @@ impl Mutation {
     /// Will merge another mutation into this one.
     pub fn merge(&mut self, mut other: Mutation) {
         assert!(!self.contra && !other.contra); //Could be a bug if merging contras
-        self.changes.append(&mut other.changes);
+        self.append(&mut other.changes);
     }
 
     /// Will merge another mutation into this one.
     pub fn merge_clone(&mut self, other: &Mutation) {
         assert!(!self.contra && !other.contra); //Could be a bug if merging contras
-        self.changes.extend_from_slice(&other.changes)
+        self.extend_from_slice(&other.changes)
     }
 
     /// Calculate the encoded size of this mutation in bytes.
     pub fn calculate_size(&self) -> usize {
         1 + 8 + // contra + changes count
-        self.changes.iter().fold(0, |total, c| total + c.calculate_size())
-    } 
-}
-
-impl Deref for Mutation {
-    type Target = Vec<Change>;
-    fn deref(&self) -> &Self::Target {
-        &self.changes
+        self.iter().fold(0, |total, c| total + c.calculate_size())
     }
-}
 
-impl DerefMut for Mutation {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.changes
+    pub fn earliest_game_event(&self) -> u64 {
+        use std::cmp::min;
+        self.iter()
+            .filter_map(|c|
+                if let &Change::PlotEvent(ref e) = c {
+                    Some(e.tick)
+                } else { None }
+            ).fold(<u64>::max_value(), |earliest, current|
+                min(earliest, current)
+            )
+    }
+
+    pub fn latest_game_event(&self) -> u64 {
+        use std::cmp::max;
+        self.iter()
+            .filter_map(|c|
+                if let &Change::PlotEvent(ref e) = c {
+                    Some(e.tick)
+                } else { None }
+            ).fold(0u64, |latest, current|
+                max(latest, current)
+            )
     }
 }
 
@@ -110,7 +137,8 @@ pub enum JChange {
     BlockReward { id: JU160, proof: JBin },
     PlotEvent(JPlotEvent),
     NewValidator { pub_key: JBin },
-    Slash { id: JU160, amount: u64, proof: JBin }
+    Slash { id: JU160, amount: u64, proof: JBin },
+    Transfer { from: JU160, to: HashMap<JU160, u64> }
 }
 
 impl From<Change> for JChange {
@@ -120,7 +148,8 @@ impl From<Change> for JChange {
             Change::BlockReward{id, proof} => JChange::BlockReward{id: id.into(), proof: proof.into()},
             Change::PlotEvent(e) => JChange::PlotEvent(e.into()),
             Change::NewValidator{pub_key} => JChange::NewValidator{pub_key: pub_key.into()},
-            Change::Slash{id, amount, proof} => JChange::Slash{id: id.into(), amount, proof: proof.into()}
+            Change::Slash{id, amount, proof} => JChange::Slash{id: id.into(), amount, proof: proof.into()},
+            Change::Transfer {from, to} => JChange::Transfer{from: from.into(), to: to.into_iter().map(|(k, v)| (k.into(), v)).collect()}
         }
     }
 }
@@ -132,7 +161,8 @@ impl Into<Change> for JChange {
             JChange::BlockReward{id, proof} => Change::BlockReward{id: id.into(), proof: proof.into()},
             JChange::PlotEvent(e) => Change::PlotEvent(e.into()),
             JChange::NewValidator{pub_key} => Change::NewValidator{pub_key: pub_key.into()},
-            JChange::Slash{id, amount, proof} => Change::Slash{id: id.into(), amount, proof: proof.into()}
+            JChange::Slash{id, amount, proof} => Change::Slash{id: id.into(), amount, proof: proof.into()},
+            JChange::Transfer {from, to} => Change::Transfer{from: from.into(), to: to.into_iter().map(|(k, v)| (k.into(), v)).collect()}
         }
     }
 }

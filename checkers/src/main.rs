@@ -49,7 +49,7 @@ use openssl::pkey::PKey;
 use blockscape_core::env;
 use blockscape_core::forging::epos::{EPoS, EPoSConfig};
 use blockscape_core::network::client::*;
-use blockscape_core::record_keeper::{RecordKeeper};
+use blockscape_core::record_keeper::{RecordKeeper, RecordKeeperImpl};
 
 use game::CheckersGame;
 
@@ -89,8 +89,8 @@ fn main() {
     let genesis_net = genesis.0.calculate_hash();
 
     let game_cache = game::create_cache();
-    let rk = Arc::new(
-        RecordKeeper::open(
+    let rk: Arc<RecordKeeper> = Arc::new(
+        RecordKeeperImpl::open(
             {let mut p = env::get_storage_dir().unwrap(); p.push("db"); p},
             make_rk_config(&cmdline, &game_cache),
             genesis

@@ -7,7 +7,7 @@ use std::fmt;
 
 use futures::prelude::*;
 
-use primitives::block::Block;
+use primitives::Block;
 
 #[derive(Debug)]
 pub struct ForgeError(String);

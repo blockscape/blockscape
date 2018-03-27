@@ -349,7 +349,7 @@ impl EPoS {
             let actual = res.unwrap().get_relevant_validation_data().1;
 
             // get the stake of the account we are forging
-            let res = self.ctx.rk.get_account_value(&key_id);
+            let res = self.ctx.rk.get_validator_stake(&key_id);
             if let Err(e) = res {
                 warn!("Could not get value held in account: {:?}", e);
                 return false;

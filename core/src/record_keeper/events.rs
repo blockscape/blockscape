@@ -20,7 +20,7 @@ pub enum RecordEvent {
     /// A new transaction that has come into the system and is now pending
     NewTxn { fresh: bool, txn: Txn },
     /// The state needs to be transitioned backwards, probably onto a new branch
-    StateInvalidated { new_height: u64, after_height: u64 },
+    StateInvalidated { new_height: u64, after_height: u64, after_tick: u64 },
 }
 impl Event for RecordEvent {}
 
@@ -83,7 +83,7 @@ impl<E> DePlotEvent<E> where E: Event + Serialize {
 pub enum JRecordEvent {
     NewBlock { uncled: bool, fresh: bool, block: JBlock },
     NewTxn { fresh: bool, txn: JTxn },
-    StateInvalidated { new_height: u64, after_height: u64}
+    StateInvalidated { new_height: u64, after_height: u64, after_tick: u64}
 }
 
 impl From<RecordEvent> for JRecordEvent {
@@ -91,7 +91,7 @@ impl From<RecordEvent> for JRecordEvent {
         match e {
             RecordEvent::NewBlock{uncled, fresh, block} => JRecordEvent::NewBlock{uncled, fresh, block: block.into()},
             RecordEvent::NewTxn{fresh, txn} => JRecordEvent::NewTxn{fresh, txn: txn.into()},
-            RecordEvent::StateInvalidated{new_height, after_height} => JRecordEvent::StateInvalidated{new_height, after_height}
+            RecordEvent::StateInvalidated{new_height, after_height, after_tick} => JRecordEvent::StateInvalidated{new_height, after_height, after_tick}
         }
     }
 }
@@ -101,7 +101,7 @@ impl Into<RecordEvent> for JRecordEvent {
         match self {
             JRecordEvent::NewBlock{uncled, fresh, block} => RecordEvent::NewBlock{uncled, fresh, block: block.into()},
             JRecordEvent::NewTxn{fresh, txn} => RecordEvent::NewTxn{fresh, txn: txn.into()},
-            JRecordEvent::StateInvalidated{new_height, after_height} => RecordEvent::StateInvalidated{new_height, after_height}
+            JRecordEvent::StateInvalidated{new_height, after_height, after_tick} => RecordEvent::StateInvalidated{new_height, after_height, after_tick}
         }
     }
 }
