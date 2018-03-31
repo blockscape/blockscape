@@ -5,7 +5,7 @@ use std::time::Duration;
 use std::collections::HashSet;
 use futures::prelude::*;
 use futures::sync::*;
-use futures::sync::mpsc::UnboundedSender;
+use futures::sync::mpsc::{unbounded, UnboundedSender};
 use tokio_core::reactor::{Remote,Timeout};
 use bincode;
 use crypto::sha3::Sha3;
@@ -47,6 +47,19 @@ pub struct EPoSConfig {
 
     /// Signing private key(s) for us to participate in the forge
     pub signing_keys: Vec<Vec<u8>>
+}
+
+impl EPoSConfig {
+    // generate a EPoS config with reasonable defaults from the given keys.
+    pub fn new(signing_keys: Vec<Vec<u8>>) -> EPoSConfig {
+        EPoSConfig {
+            rate_target: 12 * 1000, // 12 seconds
+            recalculate_blocks: 1800, // 6 hours 
+            validators_scan: 100,
+            validators_count_base: 3,
+            signing_keys
+        }
+    }
 }
 
 type EPoSSignature = (Vec<u8>, U256);
@@ -488,12 +501,30 @@ impl BroadcastReceiver for EPoS {
     }
 }
 
+/// Verifies that block data is serialized, deserialized, generated, and verified properly in cycle
 #[test]
 fn block_data() {
+    // generate two keys
+    /*use openssl::rsa::Rsa;
 
+    let k1 = Rsa::generate(2048).unwrap();
+    let k2 = Rsa::generate(2048).unwrap();
+
+    let epos = EPoS::new()*/
 }
 
 #[test]
 fn calculate_difficulty() {
 
+    /*let rk: DummyRecordKeeper = Arc::new(DummyRecordKeeper {
+
+    });
+
+    let c = Core::new().unwrap();
+
+    let epos = EPoS::new(rk, mpsc::unbounded().0, c.handle(), EPoSConfig::new());
+
+    let b = rk.create_block();
+
+    epos.calculate_difficulty()*/
 }

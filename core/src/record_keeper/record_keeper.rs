@@ -1,9 +1,9 @@
 use bin::Bin;
-use primitives::{JU256, U256, U160, U160_ZERO, Txn, Block, BlockHeader, Change, ListenerPool};
-use std::collections::{HashMap, BTreeSet, HashSet};
+use primitives::{JU256, U256, U160, U160_ZERO, U256_ZERO, Txn, Block, BlockHeader, HasBlockHeader, Change, ListenerPool};
+use std::collections::{HashMap, BTreeSet, BTreeMap, HashSet};
 use std::path::PathBuf;
 use parking_lot::{RwLock, Mutex};
-use primitives::{RawEvents, event};
+use primitives::{RawEvents, event, Mutation};
 use super::{Error, RecordEvent, PlotEvent, PlotID};
 use super::{NetState, NetDiff};
 use super::{rules, BlockRule, TxnRule, MutationRule, MutationRules};
@@ -50,33 +50,71 @@ pub enum RecordKeeperIndexingStrategy {
 #[derive(Debug, Serialize)]
 /// RK Stats which can be sent via JSON on request.
 pub struct RecordKeeperStatistics {
-    height: u64,
-    current_block_hash: JU256,
+    pub height: u64,
+    pub current_block_hash: JU256,
 
-    pending_txns_count: u64,
-    pending_txns_size: u64,
+    pub pending_txns_count: u64,
+    pub pending_txns_size: u64,
 }
 
+pub trait PoolHolder {
+    /// Get the CPU pool worker for normal-priority tasks.
+    fn get_worker(&self) -> &futures_cpupool::CpuPool;
 
-pub trait RecordKeeper: Send + Sync {
+    /// Get the CPU pool worker for high-priority tasks.
+    fn get_priority_worker(&self) -> &futures_cpupool::CpuPool;
+}
+
+pub trait RecordKeeper: PoolHolder + Send + Sync {
     /// Get information about the current status of RK.
-    fn get_stats(&self) -> Result<RecordKeeperStatistics, Error>;
+    fn get_stats(&self) -> Result<RecordKeeperStatistics, Error> {
+        Ok(RecordKeeperStatistics {
+            height: 1,
+            current_block_hash: U256_ZERO.into(),
+
+            pending_txns_count: 0,
+            pending_txns_size: 0
+        })
+    }
 
     /// Use pending transactions to create a new block which can then be added to the network.
     /// The block provided is complete except:
     /// 1. The proof of work/proof of stake mechanism has not been completed
     /// 2. The signature has not been applied to the block
-    fn create_block(&self) -> Result<Block, Error>;
+    fn create_block(&self) -> Result<Block, Error> {
+
+        let txns: BTreeSet<U256> = BTreeSet::new();
+
+        let block = Block {
+            header: BlockHeader {
+                version: 1,
+                timestamp: Time::current(),
+                shard: U256_ZERO,
+                prev: U256_ZERO,
+                merkle_root: Block::calculate_merkle_root(&txns),
+                blob: Bin::new(),
+                creator: U160_ZERO,
+                signature: Bin::new()
+            },
+            txns
+        };
+
+        Ok(block)
+    }
 
     /// Add a new block and its associated transactions to the chain state after verifying
     /// it is valid. Also move the network state to be at the new end of the chain.
     /// Returns true if the block was added, false if it was already in the system.
-    fn add_block(&self, block: &Block, fresh: bool) -> Result<bool, Error>;
+    fn add_block(&self, block: &Block, fresh: bool) -> Result<bool, Error> {
+        Ok(true)
+    }
 
     /// Add a new transaction to the pool of pending transactions after validating it. Returns true
     /// if it was added successfully to pending transactions, and returns false if it is already in
     /// the list of pending transactions or accepted into the database..
-    fn add_pending_txn(&self, txn: Txn, fresh: bool) -> Result<bool, Error>;
+    fn add_pending_txn(&self, txn: Txn, fresh: bool) -> Result<bool, Error> {
+        Ok(true)
+    }
 
     /// Import a package of blocks and transactions. Returns the hash of the last block imported.
     fn import_pkg(&self, pkg: BlockPackage) -> Result<U256, Error> {
@@ -99,90 +137,124 @@ pub trait RecordKeeper: Send + Sync {
         Ok(last)
     }
 
-    /// Get the CPU pool worker for normal-priority tasks.
-    fn get_worker(&self) -> &futures_cpupool::CpuPool;
-
-    /// Get the CPU pool worker for high-priority tasks.
-    fn get_priority_worker(&self) -> &futures_cpupool::CpuPool;
-
     /// Find a validator's public key given the hash. If they are not found, then they are not a
     /// validator.
-    fn get_validator_key(&self, id: &U160) -> Result<Bin, Error>;
+    fn get_validator_key(&self, id: &U160) -> Result<Bin, Error> {
+        Ok(Bin::new())
+    }
 
     /// Get the shares of a validator given their ID.
     /// TODO: Handle shard-based shares
-    fn get_validator_stake(&self, id: &U160) -> Result<u64, Error>;
+    fn get_validator_stake(&self, id: &U160) -> Result<u64, Error> {
+        Ok(0)
+    }
 
     /// Retrieve the current block hash which the network state represents.
-    fn get_current_block_hash(&self) -> U256;
+    fn get_current_block_hash(&self) -> U256 {
+        U256_ZERO
+    }
 
     /// Retrieve the header of the current block which the network state represents.
-    fn get_current_block_header(&self) -> Result<BlockHeader, Error>;
+    fn get_current_block_header(&self) -> Result<BlockHeader, Error> {
+        self.create_block().map(|b| b.get_header().clone())
+    }
 
     /// Retrieve the current block which the network state represents.
-    fn get_current_block(&self) -> Result<Block, Error>;
+    fn get_current_block(&self) -> Result<Block, Error> {
+        self.create_block()
+    }
 
     /// Lookup the height of a given block which is in the DB.
     /// *Note:* This requires the block is in the DB already.
-    fn get_block_height(&self, hash: &U256) -> Result<u64, Error>;
+    fn get_block_height(&self, hash: &U256) -> Result<u64, Error> {
+        Ok(1)
+    }
 
     /// Return a list of **known** blocks which have a given height. If the block has not been added
     /// to the database, then it will not be included.
-    fn get_blocks_of_height(&self, height: u64) -> Result<Vec<U256>, Error>;
+    fn get_blocks_of_height(&self, height: u64) -> Result<Vec<U256>, Error> {
+        Ok(Vec::new())
+    }
 
     /// Get a list of the last `count` block headers. If `count` is one, then it will return only
     /// the most recent block.
-    fn get_latest_blocks(&self, count: usize) -> Result<Vec<BlockHeader>, Error>;
+    fn get_latest_blocks(&self, count: usize) -> Result<Vec<BlockHeader>, Error> {
+        Ok(vec![])
+    }
 
     /// This is designed to get blocks between a start and end hash. It will get blocks from
     /// (last_known, target]. Do not include last-known because it is clearly already in the system,
     /// but do include the target block since it has not yet been accepted into the database.
-    fn get_blocks_between(&self, last_known: &U256, target: &U256, limit: usize) -> Result<BlockPackage, Error>;
+    fn get_blocks_between(&self, last_known: &U256, target: &U256, limit: usize) -> Result<BlockPackage, Error> {
+        Ok(BlockPackage::new_empty())
+    }
 
     /// Returns a map of events for each tick that happened after a given tick. Note: it will not
     /// seek to reconstruct old history so `from_tick` simply allows additional filtering, e.g. if
     /// you set `from_tick` to 0, you would not get all events unless the oldest events have not
     /// yet been removed from the cache.
-    fn get_plot_events(&self, plot_id: PlotID, from_tick: u64) -> Result<RawEvents, Error>;
+    fn get_plot_events(&self, plot_id: PlotID, from_tick: u64) -> Result<RawEvents, Error> {
+        Ok(BTreeMap::new())
+    }
 
     /// Add a new listener for events such as new blocks. This will also take a moment to remove any
     /// listeners which no longer exist.
-    fn register_record_listener(&self, listener: Sender<RecordEvent>);
+    fn register_record_listener(&self, listener: Sender<RecordEvent>) {}
 
     /// Add a new listener for plot events. This will also take a moment to remove any listeners
     /// which no longer exist.
-    fn register_game_listener(&self, listener: Sender<PlotEvent>);
+    fn register_game_listener(&self, listener: Sender<PlotEvent>) {}
 
     /// Check if a block is valid and all its components.
-    fn is_valid_block(&self, block: &Block) -> Result<(), Error>;
+    fn is_valid_block(&self, block: &Block) -> Result<(), Error> {
+        Ok(())
+    }
 
     /// Check if a txn is valid given the current network state. Use this to validate pending txns,
     /// but do not use if simply going to add the txn as it will check there.
-    fn is_valid_txn(&self, txn: &Txn) -> Result<(), Error>;
+    fn is_valid_txn(&self, txn: &Txn) -> Result<(), Error> {
+        Ok(())
+    }
 
     /// Retrieve a block header from the database.
-    fn get_block_header(&self, hash: &U256) -> Result<BlockHeader, Error>;
+    fn get_block_header(&self, hash: &U256) -> Result<BlockHeader, Error> {
+        self.get_current_block_header()
+    }
 
     /// Get a block including its list of transactions from the database.
-    fn get_block(&self, hash: &U256) -> Result<Block, Error>;
+    fn get_block(&self, hash: &U256) -> Result<Block, Error> {
+        self.get_current_block()
+    }
 
     /// Convert a block header into a full block.
-    fn complete_block(&self, header: BlockHeader) -> Result<Block, Error>;
+    fn complete_block(&self, header: BlockHeader) -> Result<Block, Error> {
+        self.get_current_block()
+    }
 
     /// Get a transaction from the database.
-    fn get_txn(&self, hash: &U256) -> Result<Txn, Error>;
+    fn get_txn(&self, hash: &U256) -> Result<Txn, Error> {
+        Ok(Txn::new(U160_ZERO, Mutation::new()))
+    }
 
     /// Whether or not the block is part of the longest chain, and therefore influences the history
-    fn is_block_in_current_chain(&self, hash: &U256) -> Result<bool, Error>;
+    fn is_block_in_current_chain(&self, hash: &U256) -> Result<bool, Error> {
+        Ok(true)
+    }
 
     /// Get the block a txn is part of. It will return None if the txn is found to be pending.
-    fn get_txn_blocks(&self, txn: U256) -> Result<Option<HashSet<U256>>, Error>;
+    fn get_txn_blocks(&self, txn: U256) -> Result<Option<HashSet<U256>>, Error> {
+        Ok(None)
+    }
 
     /// Get the txns which were created by a given account.
-    fn get_account_txns(&self, account: &U160) -> Result<HashSet<U256>, Error>;
+    fn get_account_txns(&self, account: &U160) -> Result<HashSet<U256>, Error> {
+        Ok(HashSet::new())
+    }
 
     /// Get the time a txn was originally received.
-    fn get_txn_receive_time(&self, txn: U256) -> Result<Time, Error>;
+    fn get_txn_receive_time(&self, txn: U256) -> Result<Time, Error> {
+        Ok(Time::from_milliseconds(0))
+    }
 }
 
 
@@ -364,16 +436,6 @@ impl<DB: Database> RecordKeeper for RecordKeeperImpl<DB> {
         }
 
         Ok(true)
-    }
-
-    /// Get the CPU pool worker for normal-priority tasks.
-    fn get_worker(&self) -> &futures_cpupool::CpuPool {
-        &self.worker
-    }
-
-    /// Get the CPU pool worker for high-priority tasks.
-    fn get_priority_worker(&self) -> &futures_cpupool::CpuPool {
-        &self.priority_worker
     }
 
     /// Find a validator's public key given the hash. If they are not found, then they are not a
@@ -585,6 +647,18 @@ impl RecordKeeperImpl<DatabaseImpl> {
         }
 
         Ok(rk)
+    }
+}
+
+impl<DB: Database> PoolHolder for RecordKeeperImpl<DB> {
+    /// Get the CPU pool worker for normal-priority tasks.
+    fn get_worker(&self) -> &futures_cpupool::CpuPool {
+        &self.worker
+    }
+
+    /// Get the CPU pool worker for high-priority tasks.
+    fn get_priority_worker(&self) -> &futures_cpupool::CpuPool {
+        &self.priority_worker
     }
 }
 

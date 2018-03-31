@@ -23,7 +23,7 @@ pub struct BlockPackage {
 
 impl BlockPackage {
     /// Create a new, empty blockpackage.
-    fn new() -> BlockPackage {
+    pub fn new_empty() -> BlockPackage {
         BlockPackage { blocks: Vec::new(), txns: Vec::new() }
     }
 
@@ -67,7 +67,7 @@ impl BlockPackage {
         // add one block at a time to the package and needed transactions
         count = 0; 
         let mut size: usize = 0;  // running byte count
-        let mut package = Self::new();
+        let mut package = Self::new_empty();
         for block in blocks {
             let mut txn_indicies: Vec<u16> = Vec::new();
             let mut new_txns: Vec<Txn> = Vec::new();
