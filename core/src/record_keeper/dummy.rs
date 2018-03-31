@@ -7,7 +7,6 @@ use futures_cpupool;
 use primitives::{RawEvents};
 use super::{RecordKeeper, PoolHolder, RecordKeeperStatistics, Error, LogicError, PlotID};
 use super::BlockPackage;
-use super::database::*;
 use time::Time;
 
 #[derive(Debug)]
@@ -119,14 +118,31 @@ impl RecordKeeper for DummyRecordKeeper {
     /// Add a new block and its associated transactions to the chain state after verifying
     /// it is valid. Also move the network state to be at the new end of the chain.
     /// Returns true if the block was added, false if it was already in the system.
-    fn add_block(&self, block: &Block, fresh: bool) -> Result<bool, Error> {
+    fn add_block(&self, block: &Block, _fresh: bool) -> Result<bool, Error> {
 
-        if let Some(node) = self.blocks_hashes.read().unwrap().get(&block.calculate_hash()) {
+        if let Some(_) = self.blocks_hashes.read().unwrap().get(&block.calculate_hash()) {
             return Ok(false);
         }
 
-        if let Some(node) = self.blocks_hashes.read().unwrap().get(&block.prev) {
+        let bh = self.blocks_hashes.read().unwrap().get(&block.prev).cloned();
+
+        if let Some(node) = bh {
             
+            let mut ptxns = self.pending_txns.write().unwrap();
+            let mut atxns = self.txns.write().unwrap();
+
+            // first, we must have all the transactions listed within the block in our db
+            for txn in block.txns.iter() {
+                if ptxns.get(&txn).is_none() {
+                    return Err(Error::Logic(LogicError::MissingPrevious));
+                }
+            }
+
+            // now we can start adding the block
+            for txn in block.txns.iter() {
+                atxns.insert(*txn, ptxns.remove(txn).unwrap());
+            }
+
             let h = block.calculate_hash();
             let new_node = Arc::new(BlockTreeNode {
                 block: block.clone(),
@@ -138,9 +154,11 @@ impl RecordKeeper for DummyRecordKeeper {
                 let mut childs = node.children.lock().unwrap();
                 childs.push(Arc::clone(&new_node));
             }
-
-            if self.best_block.read().unwrap().height < new_node.height {
-                *self.best_block.write().unwrap() = Arc::clone(&new_node);
+            {
+                let mut bb = self.best_block.write().unwrap();
+                if bb.height < new_node.height {
+                    *bb = Arc::clone(&new_node);
+                }
             }
 
             self.blocks_hashes.write().unwrap().insert(h, new_node); 
@@ -155,16 +173,14 @@ impl RecordKeeper for DummyRecordKeeper {
     /// Add a new transaction to the pool of pending transactions after validating it. Returns true
     /// if it was added successfully to pending transactions, and returns false if it is already in
     /// the list of pending transactions or accepted into the database..
-    fn add_pending_txn(&self, txn: Txn, fresh: bool) -> Result<bool, Error> {
+    fn add_pending_txn(&self, txn: Txn, _fresh: bool) -> Result<bool, Error> {
         let hash = txn.calculate_hash();
-        self.pending_txns.write().unwrap().insert(hash, txn);
-
-        Ok(true)
+        Ok(self.pending_txns.write().unwrap().insert(hash, txn).is_none())
     }
 
     /// Get the shares of a validator given their ID.
     /// TODO: Handle shard-based shares
-    fn get_validator_stake(&self, id: &U160) -> Result<u64, Error> {
+    fn get_validator_stake(&self, _id: &U160) -> Result<u64, Error> {
         Ok(1)
     }
 
@@ -186,7 +202,8 @@ impl RecordKeeper for DummyRecordKeeper {
     /// Lookup the height of a given block which is in the DB.
     /// *Note:* This requires the block is in the DB already.
     fn get_block_height(&self, hash: &U256) -> Result<u64, Error> {
-        Ok(self.best_block.read().unwrap().height)
+        self.blocks_hashes.read().unwrap().get(hash)
+            .map(|n| n.height).ok_or(Error::Deserialize("Could not find".into()))
     }
 
     /// Return a list of **known** blocks which have a given height. If the block has not been added
@@ -216,7 +233,7 @@ impl RecordKeeper for DummyRecordKeeper {
     /// This is designed to get blocks between a start and end hash. It will get blocks from
     /// (last_known, target]. Do not include last-known because it is clearly already in the system,
     /// but do include the target block since it has not yet been accepted into the database.
-    fn get_blocks_between(&self, last_known: &U256, target: &U256, limit: usize) -> Result<BlockPackage, Error> {
+    fn get_blocks_between(&self, _last_known: &U256, _target: &U256, _limit: usize) -> Result<BlockPackage, Error> {
         Ok(BlockPackage::new_empty())
     }
 
@@ -224,18 +241,18 @@ impl RecordKeeper for DummyRecordKeeper {
     /// seek to reconstruct old history so `from_tick` simply allows additional filtering, e.g. if
     /// you set `from_tick` to 0, you would not get all events unless the oldest events have not
     /// yet been removed from the cache.
-    fn get_plot_events(&self, plot_id: PlotID, from_tick: u64) -> Result<RawEvents, Error> {
+    fn get_plot_events(&self, _plot_id: PlotID, _from_tick: u64) -> Result<RawEvents, Error> {
         Ok(BTreeMap::new())
     }
 
     /// Check if a block is valid and all its components.
-    fn is_valid_block(&self, block: &Block) -> Result<(), Error> {
+    fn is_valid_block(&self, _block: &Block) -> Result<(), Error> {
         Ok(())
     }
 
     /// Check if a txn is valid given the current network state. Use this to validate pending txns,
     /// but do not use if simply going to add the txn as it will check there.
-    fn is_valid_txn(&self, txn: &Txn) -> Result<(), Error> {
+    fn is_valid_txn(&self, _txn: &Txn) -> Result<(), Error> {
         Ok(())
     }
 
@@ -293,12 +310,12 @@ impl RecordKeeper for DummyRecordKeeper {
     }
 
     /// Get the block a txn is part of. It will return None if the txn is found to be pending.
-    fn get_txn_blocks(&self, txn: U256) -> Result<Option<HashSet<U256>>, Error> {
+    fn get_txn_blocks(&self, _txn: U256) -> Result<Option<HashSet<U256>>, Error> {
         Ok(None)
     }
 
     /// Get the txns which were created by a given account.
-    fn get_account_txns(&self, account: &U160) -> Result<HashSet<U256>, Error> {
+    fn get_account_txns(&self, _account: &U160) -> Result<HashSet<U256>, Error> {
         Ok(HashSet::new())
     }
 
@@ -306,4 +323,66 @@ impl RecordKeeper for DummyRecordKeeper {
     fn get_txn_receive_time(&self, txn: U256) -> Result<Time, Error> {
         self.get_txn(&txn).map(|txn| txn.timestamp)
     }
+}
+
+#[test]
+fn block_creation() {
+    let rk = DummyRecordKeeper::new();
+
+    // test add a block to root
+    let b = rk.create_block().expect("Should be able to create block");
+    let hash = b.calculate_hash();
+    assert_eq!(rk.add_block(&b, true).unwrap(), true);
+    assert_eq!(rk.add_block(&b, true).unwrap(), false);
+    assert_eq!(rk.get_current_block_hash(), hash);
+    assert_eq!(rk.get_block_height(&hash).unwrap(), 2);
+
+    // test add block to current chain    
+    let mut b2 = rk.create_block().expect("Should be able to create block");
+    let hash2 = b2.calculate_hash();
+    assert_eq!(rk.add_block(&b2, true).unwrap(), true);
+    assert_eq!(rk.get_current_block_hash(), hash2);
+    assert_eq!(rk.get_block_height(&hash2).unwrap(), 3);
+
+    // test adding block to nonexistant block
+    b2.header.prev = U256::from(1);
+    rk.add_block(&b2, true).expect_err("Should fail to add block with nonexistant previous hash");
+
+    // test adding block to older block in chain
+    b2.header.prev = b.prev;
+    assert!(rk.add_block(&b2, true).unwrap());
+    assert_eq!(rk.get_current_block_hash(), hash2);
+    assert_eq!(rk.get_stats().expect("Should get statistics").height, 3);
+
+    // test getting block by hash
+    assert_eq!(rk.get_block(&hash).unwrap(), b);
+}
+
+#[test]
+fn txns_in_block() {
+
+    use primitives::Mutation;
+
+    let rk = DummyRecordKeeper::new();
+
+    // test adding txn to pending pool
+    let txn = Txn::new(U160::from(0), Mutation::new());
+    assert!(rk.add_pending_txn(txn.clone(), true).unwrap());
+    assert!(!rk.add_pending_txn(txn.clone(), true).unwrap());
+    assert_eq!(rk.get_stats().expect("Should get statistics").pending_txns_count, 1);
+
+    // test pending txn is added to created block
+    let b = rk.create_block().expect("Should be able to create block");
+    rk.add_block(&b, true).expect("Should be able to add block");
+    assert_eq!(rk.get_stats().expect("Should get statistics").pending_txns_count, 0);
+    assert_eq!(rk.get_current_block().expect("Should have a current block").txns.iter().next().expect("Should have txn in block"), &txn.calculate_hash());
+
+    // test adding txn to pending pool still works
+    let txn2 = Txn::new(U160::from(0), Mutation::new());
+    assert!(rk.add_pending_txn(txn2.clone(), true).unwrap());
+    assert_eq!(rk.get_stats().expect("Should get statistics").pending_txns_count, 1);
+
+    // test querying txns both in the pending and not pending pool
+    assert_eq!(rk.get_txn(&txn.calculate_hash()).unwrap(), txn);
+    assert_eq!(rk.get_txn(&txn2.calculate_hash()).unwrap(), txn2);
 }
