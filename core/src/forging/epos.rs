@@ -67,6 +67,7 @@ type EPoSSignature = (Vec<u8>, U256);
 /// Data which is associated with signing and blobbing a block
 #[derive(Serialize, Deserialize, Debug)]
 struct EPoSBlockData {
+    pub difficulty: u64, // TODO: Consider removing
     pub sigs: Vec<EPoSSignature>
 }
 
@@ -74,7 +75,7 @@ impl EPoSBlockData {
 
     /// Apply this data to the block, by setting signatures and applying my signature. Will return the EPoS data for evaluation.
     /// If any signature or check comes out invalid, an error is returned
-    pub fn apply_block(block: &mut Block, my_signer: &PKey) -> Result<EPoSBlockData, ForgeError> {
+    pub fn apply_block(block: &mut Block, difficulty: u64, validator_info: &U256, my_signer: &PKey) -> Result<EPoSBlockData, ForgeError> {
         // sign the serialized data of our self
         let mut block_data = if !block.blob.is_empty() {
             bincode::deserialize(&block.blob[..])
@@ -82,18 +83,47 @@ impl EPoSBlockData {
         }
         else {
             EPoSBlockData {
+                difficulty: difficulty,
                 sigs: Vec::with_capacity(1)
             }
         };
 
+        let mut to_sign = bincode::serialize(validator_info, bincode::Infinite).unwrap();
+        
+        to_sign.extend(block.blob.clone());
+
         block_data.sigs.push((
             my_signer.public_key_to_der().map_err(|_| ForgeError(format!("Could not convert public key to DER")))?,
-            bincode::deserialize(&signer::sign_bytes(&block.blob[..], my_signer)).expect("Could not convert key signature to u256")
+            bincode::deserialize(&signer::sign_bytes(&to_sign, my_signer)).expect("Could not convert key signature to u256")
         ));
 
         block.blob = bincode::serialize(&block_data, bincode::Infinite).map_err(|_| ForgeError(format!("Could not serialize generated block data")))?;
 
         Ok(block_data)
+    }
+
+    /// Verifies that the signatures all match for the given block data for the given validator info hash
+    pub fn check_sigs(&self, validator_info: &U256) -> bool {
+        let mut sig_so_far = bincode::serialize(validator_info, bincode::Infinite).unwrap();
+
+        for sig in self.sigs.iter() {
+
+            let res = PKey::public_key_from_der(&sig.0);
+
+            if res.is_err() {
+                return false; // TODO: Would be nice if there was a way to report this
+            }
+
+            let ser = bincode::serialize(&sig.1, bincode::Infinite).unwrap();
+
+            if !signer::verify_bytes(&sig_so_far, &ser, &res.unwrap()) {
+                return false;
+            }
+
+            sig_so_far.extend(ser);
+        }
+
+        true
     }
 
     pub fn decode_relevant_validation_data(block: &BlockHeader) -> Result<(U160, U256), ForgeError> {
@@ -276,15 +306,19 @@ impl EPoS {
         
         let base_diff = if height % self.config.recalculate_blocks != 0 {
 
-            /*let pb = self.rk.get_block(&block.header.prev);
+            
+            if height < self.config.recalculate_blocks {
+                // use the starting difficulty
+                Ok(1)
+            }
+            else {
 
-            if pb.is_err() {
-                return Box::new(future::err(ForgeError(format!("Could not get a block from db: {}", ph.unwrap_err()).into())));
-            }*/
-
-            Ok(bincode::deserialize(
-                &try!(self.ctx.rk.get_block(&block.header.prev)
-                    .map_err(|e| ForgeError(format!("Could not get a block from db: {}", e).into()))).header.blob).unwrap())
+                let block_data = bincode::deserialize::<EPoSBlockData>(
+                    &try!(self.ctx.rk.get_block(&block.header.prev)
+                        .map_err(|e| ForgeError(format!("Could not get a block from db: {}", e).into()))).header.blob).unwrap();
+                
+                Ok(block_data.difficulty)
+            }
         }
         else {
 
@@ -308,16 +342,16 @@ impl EPoS {
             }
 
             // how long *should* it have taken to get to this point?
-            let expected: f64 = self.config.rate_target as f64 * n as f64;
+            let expected = self.config.rate_target * n;
 
             let b = try!(self.ctx.rk.get_block(&hash_cur)
                     .map_err(|e| ForgeError(format!("Could not get a block from db: {}", e).into())));
 
-            let actual = b.header.timestamp.diff(&pb.header.timestamp).millis() as f64;
+            let actual = b.header.timestamp.diff(&pb.header.timestamp).millis() as u64;
 
-            let last_diff = bincode::deserialize::<u64>(&pb.header.blob).unwrap() as f64;
+            let last_diff = bincode::deserialize::<EPoSBlockData>(&pb.header.blob).unwrap().difficulty;
 
-            debug!("Expected: {}, Actual: {}, Last Diff: {}", expected / 1000.0, actual / 1000.0, last_diff);
+            debug!("Expected: {}, Actual: {}, Last Diff: {}", expected, actual, last_diff);
 
             Ok((expected * last_diff / actual) as u64)
         };
@@ -349,12 +383,28 @@ impl EPoS {
 
         let exp_diff = res.unwrap();
 
+        // we have to check that the difficulty recorded in the block matches
+        let res = bincode::deserialize::<EPoSBlockData>(&block.blob);
+        if res.is_err() {
+            warn!("Received block's EPoS data could not be decoded!");
+            return false;
+        }
+
+        let cur_block_info = res.unwrap();
+
+        if cur_block_info.difficulty != exp_diff {
+            warn!("Received block's difficulty does not match ours!");
+            return false;
+        }
+
+        // the last of the validation
+
         let mut cur_best: Option<(Block, u64)> = None;
 
         for &(ref key_id, ref key) in &self.keys {
             let mut key_block = block.clone();
 
-            let res = EPoSBlockData::apply_block(&mut key_block, &key);
+            let res = EPoSBlockData::apply_block(&mut key_block, exp_diff, &target, &key);
             if let Err(e) = res {
                 warn!("Block check was not valid: {:?}, {:?}", e, key_block);
                 return false;
@@ -466,9 +516,56 @@ impl BlockForger for EPoS {
         // check that the difficulty matches what we expect
         let diff = self.calculate_expected_difficulty(block).expect("Database not working when validating block!");
 
-        if let Ok(b_diff) = bincode::deserialize::<u64>(&block.header.blob) {
-            if b_diff != diff {
+        let res = self.calculate_validator_info(&block.prev);
+
+        if let Err(e) = res {
+            // TODO: Change logging strategy?
+            return Some(ForgeError(format!("Forge validator calculation failed: {:?}", e)));
+        }
+
+        let (target, req_validators) = res.unwrap();
+
+        if let Ok(b_data) = bincode::deserialize::<EPoSBlockData>(&block.header.blob) {
+            if b_data.difficulty != diff {
                 return Some(ForgeError(format!("Block difficulty is invalid")));
+            }
+
+            // check that there is the correct number of validator signatures
+            if b_data.sigs.len() as u64 != req_validators {
+                return Some(ForgeError(format!("Signature count does not match expected")));
+            }
+
+            // check that validators signatures are for real
+            if !b_data.check_sigs(&target) {
+                return Some(ForgeError(format!("Block signatures do not line up!")));
+            }
+
+            // check that the block timestamp checks out
+            let mut wait = 0;
+
+            for sig in b_data.sigs {
+                let res = self.ctx.rk.get_validator_stake(&hash::hash_pub_key(&sig.0));
+                if let Err(e) = res {
+                    warn!("Could not get value held in account ({}): {:?}", hash::hash_pub_key(&sig.0), e);
+                    return Some(ForgeError(format!("Failed to get a balance for validator: {}", hash::hash_pub_key(&sig.0))));
+                }
+
+                let stake = res.unwrap();
+
+                wait += self.gen_wait(diff, stake, target.into(), sig.1.into());
+            }
+
+            // get the listed previous block, we should be timestamp + wait of that
+            let res = self.ctx.rk.get_block_header(&block.prev).map_err(|e| ForgeError(format!("Could not get previous block: {:?}", e)));
+
+            if res.is_err() {
+                return res.err();
+            }
+
+            let prev_block = res.unwrap();
+
+            if block.timestamp.millis() as u64 != prev_block.timestamp.millis() as u64 + wait {
+                return Some(ForgeError(format!("Forging timestamps do not match")));
             }
         }
         else {
@@ -516,15 +613,38 @@ fn block_data() {
 #[test]
 fn calculate_difficulty() {
 
-    /*let rk: DummyRecordKeeper = Arc::new(DummyRecordKeeper {
+    use record_keeper::DummyRecordKeeper;
+    use tokio_core::reactor::Core;
 
-    });
+    let rk = Arc::new(DummyRecordKeeper::new());
+    let rk2 = Arc::clone(&rk);
 
     let c = Core::new().unwrap();
 
-    let epos = EPoS::new(rk, mpsc::unbounded().0, c.handle(), EPoSConfig::new());
+    let mut epos_config = EPoSConfig::new(Vec::new());
+    epos_config.recalculate_blocks = 20; // this speeds up the unit test dramatically
 
-    let b = rk.create_block();
+    let epos = EPoS::new(rk2, mpsc::unbounded().0, c.handle().remote().clone(), epos_config).unwrap();
 
-    epos.calculate_difficulty()*/
+    let b = rk.create_block().unwrap();
+    assert_eq!(epos.calculate_expected_difficulty(&b).unwrap(), 1);
+
+    // add blocks with a timestamp range which is 3x the base rate... aka 2 hours for 2160 blocks. We are moving forward an epoch
+    for i in 0..epos.config.recalculate_blocks + 10 {
+        let mut b = rk.create_block().unwrap();
+        b.timestamp = Time::from_milliseconds((i * epos.config.rate_target / 3) as i64);
+
+        let diff = epos.calculate_expected_difficulty(&b).expect("Should  be able to calculate difficulty from dummy RK");
+        let block_data = EPoSBlockData {
+            difficulty: diff,
+            sigs: Vec::new()
+        };
+
+        b.blob = bincode::serialize(&block_data, bincode::Infinite).unwrap();
+        rk.add_block(&b, true);
+    }
+
+    // now adding another block, the expected difficulty should be changed to 3
+    let b = rk.create_block().unwrap();
+    assert_eq!(epos.calculate_expected_difficulty(&b).unwrap(), 3);
 }
