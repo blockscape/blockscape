@@ -601,13 +601,84 @@ impl BroadcastReceiver for EPoS {
 /// Verifies that block data is serialized, deserialized, generated, and verified properly in cycle
 #[test]
 fn block_data() {
-    // generate two keys
-    /*use openssl::rsa::Rsa;
 
-    let k1 = Rsa::generate(2048).unwrap();
-    let k2 = Rsa::generate(2048).unwrap();
+    use record_keeper::DummyRecordKeeper;
+    use tokio_core::reactor::Core;
 
-    let epos = EPoS::new()*/
+    // we use 2 keys for testing here
+    let priv_raw: [&[u8]; 2] = [
+b"-----BEGIN RSA PRIVATE KEY-----
+MIIEpAIBAAKCAQEAyius/0x70UPJCcrvvETVoI+BPKOR8NPhl3n7YGHs4VfNalYP
+JJoLlP90M/XN9IQgPPZZIc0HlcLKGstNE+J/c6dhvMgDvok6SQQ8sCktNyyeNexx
+MsJLvU25GLX8jtJw/k/IApIuzu+xQCW1XAkkR0ApmgPozYf26QRaHeRwl2s0WwCf
+qzRWVCaILLor0ND+fl48m/UoQV6ebEILX4WyHPcMkziseAQCR9Wg0P3GWhifQ3ue
+UsFPxu2RKLjjdQsaWmpuQFLz1KBwtpc5phYgXsQDwUKf40itR36cTRfcdW4oC507
+BZ9E4qxw3+QOsbs8StJbz1pqplCcB4KpPZAKiwIDAQABAoIBACCqT+hsFjFor2nq
+pTOZN58asLn4f9MWmQOdjPU0vU5nnmQJBadXUHnBkKf4lk9krcTL1Pj2JLyY3YjY
+wlptJUStjcgv1RMLHyS/D4MzFAAvMFzsGBoodI5gqYCJnwYAkIs2ns1ziyaaadxA
+e34kZ/0vK8mbyhizWDysHFdqGpsMSJZriRDRA9tNnCNRlSkwRpPgoVDYbc+LlQT7
+PAf0pJexipVg9LZcJlaEj1OyE3orkHo1Sg72OW+1BspuerWzv8rT0pE/SjNF152R
+rtOWKij4sLKPmEDIIsDhvb9z5vcroBaJEZFXmSovAcunQc6JV/gx1Vz+sUm7obQf
+1p0aYxECgYEA8+pM9k5TXM/OB/9pEOiDibc+WXHlRKkW0g4QMWcwqg5oVpxR9sxq
+HCdzd7DsIwP+jJ3qKz2tkcSmuBsmvRC6WmznictggikuiTSKDjHVcPWw/HatSdLZ
+AisYjUF5CmCd2egzpvzHW8mLnlU4ShW7wxNlw3y8eCtDf0ts7nj9nVMCgYEA1C/o
+NWHCqnQi8Kt5XuuORxsI18pCNSpXsUb0ls3vbjd1x1Mk1wBdnHhczB0odL5ATb0M
+eZRhmoUnk4L8w0o36LLky7kaTKqxx7Ti7LX2na+l1VZsKz1F+doSZPyLAqYxrhbQ
+GzeMJ59l0kKBFhA7kBki6sqTvPHUez6lgsDffukCgYEAycfis0BIplci0mrwuBQh
+/SOiaMxYJlzbjBomOzhqgcQ5fK0FAW5JudDJLRMnxi/fvORGfE8h750HbvbHLVFR
+WM0PHmcpB4SaAtd7/hIryK74I2LqKFBNRgXw4apwP6196G63jEVBhyVMY0eMsX0Z
+P2Akp3vhTmg8BmqXSxC8fhECgYEAx9ay0QvYhibI/XfR4Fbjcg6BHpMMFfxiCMF1
+/E3J0TkEgQzKZn+eqo4lf8t6XbEM6OpCxIK+BgSgSGqWWesdithpaYFUxp4Av8CZ
+9CxQLyTNf4Zca8DSlcUPi/LZjU4u/fHYX7nKE0spX4RpBPmWz1kNLKpLyCjOYKCY
+yvORynkCgYAuhFE/7kEMef3Js00wybC5P/ym8DW18sXkcX57y3PZa3XLLTrqdc4g
+lhGf8Heoc02o+9MMfKWFehpo+yg4wbJemq+GzKRyl0WsxI5BKNmI/q7OhXvAnNCV
+OhWJ3tlxRWxnJu3cE+3ywjh+O2I/SIWOpjoBTHFyjVGqnhv6KYv1VA==
+-----END RSA PRIVATE KEY-----",
+b"-----BEGIN RSA PRIVATE KEY-----
+MIIEpAIBAAKCAQEAyius/0x70UPJCcrvvETVoI+BPKOR8NPhl3n7YGHs4VfNalYP
+JJoLlP90M/XN9IQgPPZZIc0HlcLKGstNE+J/c6dhvMgDvok6SQQ8sCktNyyeNexx
+MsJLvU25GLX8jtJw/k/IApIuzu+xQCW1XAkkR0ApmgPozYf26QRaHeRwl2s0WwCf
+qzRWVCaILLor0ND+fl48m/UoQV6ebEILX4WyHPcMkziseAQCR9Wg0P3GWhifQ3ue
+UsFPxu2RKLjjdQsaWmpuQFLz1KBwtpc5phYgXsQDwUKf40itR36cTRfcdW4oC507
+BZ9E4qxw3+QOsbs8StJbz1pqplCcB4KpPZAKiwIDAQABAoIBACCqT+hsFjFor2nq
+pTOZN58asLn4f9MWmQOdjPU0vU5nnmQJBadXUHnBkKf4lk9krcTL1Pj2JLyY3YjY
+wlptJUStjcgv1RMLHyS/D4MzFAAvMFzsGBoodI5gqYCJnwYAkIs2ns1ziyaaadxA
+e34kZ/0vK8mbyhizWDysHFdqGpsMSJZriRDRA9tNnCNRlSkwRpPgoVDYbc+LlQT7
+PAf0pJexipVg9LZcJlaEj1OyE3orkHo1Sg72OW+1BspuerWzv8rT0pE/SjNF152R
+rtOWKij4sLKPmEDIIsDhvb9z5vcroBaJEZFXmSovAcunQc6JV/gx1Vz+sUm7obQf
+1p0aYxECgYEA8+pM9k5TXM/OB/9pEOiDibc+WXHlRKkW0g4QMWcwqg5oVpxR9sxq
+HCdzd7DsIwP+jJ3qKz2tkcSmuBsmvRC6WmznictggikuiTSKDjHVcPWw/HatSdLZ
+AisYjUF5CmCd2egzpvzHW8mLnlU4ShW7wxNlw3y8eCtDf0ts7nj9nVMCgYEA1C/o
+NWHCqnQi8Kt5XuuORxsI18pCNSpXsUb0ls3vbjd1x1Mk1wBdnHhczB0odL5ATb0M
+eZRhmoUnk4L8w0o36LLky7kaTKqxx7Ti7LX2na+l1VZsKz1F+doSZPyLAqYxrhbQ
+GzeMJ59l0kKBFhA7kBki6sqTvPHUez6lgsDffukCgYEAycfis0BIplci0mrwuBQh
+/SOiaMxYJlzbjBomOzhqgcQ5fK0FAW5JudDJLRMnxi/fvORGfE8h750HbvbHLVFR
+WM0PHmcpB4SaAtd7/hIryK74I2LqKFBNRgXw4apwP6196G63jEVBhyVMY0eMsX0Z
+P2Akp3vhTmg8BmqXSxC8fhECgYEAx9ay0QvYhibI/XfR4Fbjcg6BHpMMFfxiCMF1
+/E3J0TkEgQzKZn+eqo4lf8t6XbEM6OpCxIK+BgSgSGqWWesdithpaYFUxp4Av8CZ
+9CxQLyTNf4Zca8DSlcUPi/LZjU4u/fHYX7nKE0spX4RpBPmWz1kNLKpLyCjOYKCY
+yvORynkCgYAuhFE/7kEMef3Js00wybC5P/ym8DW18sXkcX57y3PZa3XLLTrqdc4g
+lhGf8Heoc02o+9MMfKWFehpo+yg4wbJemq+GzKRyl0WsxI5BKNmI/q7OhXvAnNCV
+OhWJ3tlxRWxnJu3cE+3ywjh+O2I/SIWOpjoBTHFyjVGqnhv6KYv1VA==
+-----END RSA PRIVATE KEY-----"
+    ];
+
+    let keys = priv_raw.iter().map(|p| PKey::private_key_from_pem(p).unwrap());
+    let ders = keys.map(|k| k.private_key_to_der().unwrap());
+
+    let rk = Arc::new(DummyRecordKeeper::new());
+    let core = Core::new().unwrap();
+
+    let eposes = ders.map(|d| {
+        let mut c = EPoSConfig::new(vec![d]);
+        c.recalculate_blocks = 20; // this speeds up the unit test dramatically
+
+        let rk2 = Arc::clone(&rk);
+        
+        EPoS::new(rk2, mpsc::unbounded().0, core.handle().remote().clone(), c).unwrap()
+    });
+
+
 }
 
 #[test]
