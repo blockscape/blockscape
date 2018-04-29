@@ -116,7 +116,7 @@ deploy:
     - apply_template blockscape-client-1.yaml
     - apply_template explorer.yaml
     - apply_template ingress.yaml
-    - apply_template certificate.yaml
+    #- apply_template certificate.yaml
     - apply_template node-ports.yaml
   environment:
     name: staging/$CI_COMMIT_REF_NAME
@@ -136,6 +136,7 @@ stop_deploy:
     - delete_template blockscape-client-1.yaml
     - delete_template explorer.yaml
     - delete_template ingress.yaml
+    - delete_template node_ports.yaml
   when: manual
   environment:
     name: staging/$CI_COMMIT_REF_NAME
