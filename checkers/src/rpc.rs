@@ -24,10 +24,7 @@ pub fn make_rpc(ctx: &Rc<Context>, bind_addr: SocketAddr) -> RPC {
     let mut handler = RPC::build_handler();
 
     ControlRPC::add(&ControlRPC::new(), &mut handler);
-
-    if let Some(ref net_client) = ctx.network {
-        NetworkRPC::add(&NetworkRPC::new(net_client.clone()), &mut handler);
-    }
+    NetworkRPC::add(&NetworkRPC::new(ctx.network.clone()), &mut handler);
 
     let forge_key = PKey::private_key_from_der(&ctx.forge_key.private_key_to_der().unwrap()).unwrap();
     BlockchainRPC::add(&BlockchainRPC::new(ctx.rk.clone(), forge_key), &mut handler);

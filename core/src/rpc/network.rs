@@ -3,7 +3,7 @@ use std::sync::Arc;
 use jsonrpc_core::*;
 
 use network::client::*;
-use primitives::u256::*;
+use primitives::{U256, U256_ZERO};
 
 use rpc::types::*;
 

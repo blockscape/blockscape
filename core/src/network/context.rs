@@ -1,7 +1,8 @@
-use std::cell::Cell;
+use std::cell::*;
 use std::sync::Arc;
 use std::io;
 use std::rc::Rc;
+use std::collections::HashMap;
 
 use futures::prelude::*;
 use futures::stream;
@@ -13,9 +14,11 @@ use tokio_core::reactor::*;
 use record_keeper::RecordKeeper;
 
 use primitives::U256;
+use time::Time;
+use hash::hash_bytes;
 
 use network::session::SocketPacket;
-use network::client::ClientConfig;
+use network::client::{ClientConfig, BroadcastReceiver};
 use network::node::Node;
 
 /// The amount of data a job is allowed to allocate in memory before it is 
@@ -86,6 +89,12 @@ pub struct NetworkContext {
     /// A place to chain data which should be retrieved. The second value in the tuple, a hash, is used to
     /// identify a possible augmentation. In this case, it is always the previous
     pub job_targets: unsync::mpsc::UnboundedSender<(Rc<NetworkJob>, Option<U256>)>,
+
+    /// List of received broadcast hashes
+    pub received_broadcasts: RefCell<HashMap<U256, Time>>,
+
+    /// Receivers which are registered to receive events; any payloads not fitting to this list will be dropped.
+    pub broadcast_receivers: [Cell<Option<Arc<BroadcastReceiver + Send + Sync>>>; 256]
 }
 
 impl NetworkContext {
@@ -96,6 +105,28 @@ impl NetworkContext {
             // TODO: Try to eliminate call to wait! Typically it should not be an issue, but
             // it would be more future-ist to provide some way to react upon future availability
             self.sink.set(Some(st.forward(self.sink.replace(None).unwrap()).wait().unwrap().1));
+        }
+    }
+
+    /// Forwards the received broadcast to the appropriate handler, or returns false if the handler does not exist or if the hash has alraedy been received
+    pub fn handle_broadcast(&self, network_id: &U256, id: u8, payload: &Vec<u8>) -> bool {
+        let incoming_hash = hash_bytes(&payload[..]);
+
+        if self.received_broadcasts.borrow().contains_key(&incoming_hash) {
+            // should not be propogating broadcasts multiple times
+            return false
+        }
+
+        if let Some(receiver) = self.broadcast_receivers[id as usize].replace(None) {
+            self.received_broadcasts.borrow_mut().insert(incoming_hash, Time::current_local());
+            let r = receiver.receive_broadcast(network_id, payload);
+
+            self.broadcast_receivers[id as usize].replace(Some(receiver));
+
+            r
+        }
+        else {
+            false
         }
     }
 }

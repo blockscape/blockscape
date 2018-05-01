@@ -86,8 +86,8 @@ impl NetDiff {
         self.delete.insert(key);
     }
 
-    pub fn change_validator_rep(&mut self, id: &U160, amount: i64) {
-        let key = NetworkEntry::ValidatorRep(*id).into();
+    pub fn change_validator_stake(&mut self, id: U160, amount: i64) {
+        let key = NetworkEntry::ValidatorStake(id).into();
         let value = {
             let raw = self.values.get(&key);
         
@@ -110,17 +110,25 @@ impl NetDiff {
                 else { self.delete_value(k); }
             },
             Change::BlockReward{id, ..} => {
-                self.change_validator_rep(&id, DB::BLOCK_REWARD);
+                self.change_validator_stake(id, DB::BLOCK_REWARD as i64);
             },
             Change::PlotEvent(e) => {
                 self.add_events(&e);
             },
             Change::NewValidator{pub_key, ..} => {
-                let key = NetworkEntry::ValidatorRep( hash_pub_key(&pub_key) ).into();
+                let key = NetworkEntry::ValidatorStake( hash_pub_key(&pub_key) ).into();
                 self.set_value(key, pub_key);
             },
             Change::Slash{id, amount, ..} => {
-                self.change_validator_rep(&id, -(amount as i64));
+                self.change_validator_stake(id, -(amount as i64));
+            },
+            Change::Transfer{from, to} => {
+                let mut sum = 0i64;
+                for (recipient, amount) in to.into_iter() {
+                    self.change_validator_stake(recipient, amount as i64);
+                    sum += amount as i64;
+                }
+                self.change_validator_stake(from, -sum);
             }
         }}
     }
@@ -135,7 +143,7 @@ impl NetDiff {
                 else { self.delete_value(k) }
             },
             Change::BlockReward{id, ..} => {
-                self.change_validator_rep(&id, -DB::BLOCK_REWARD);
+                self.change_validator_stake(id, -(DB::BLOCK_REWARD as i64));
             },
             Change::PlotEvent(e) => {
                 self.remove_events(&e);
@@ -144,7 +152,15 @@ impl NetDiff {
                 self.delete_value(NetworkEntry::ValidatorKey( hash_pub_key(&pub_key) ).into());
             },
             Change::Slash{id, amount, ..} => {
-                self.change_validator_rep(&id, amount as i64)
+                self.change_validator_stake(id, amount as i64)
+            },
+            Change::Transfer{from, to} => {
+                let mut sum = 0i64;
+                for (recipient, amount) in to {
+                    self.change_validator_stake(recipient, -(amount as i64));
+                    sum += amount as i64;
+                }
+                self.change_validator_stake(from, sum);
             }
         }}
     }
