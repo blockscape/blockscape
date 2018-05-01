@@ -32,8 +32,6 @@ struct BlockHeaderRPC {
 
     merkle_root: JU256,
 
-    creator: JU160,
-
     hash: JU256,
 
     txn_count: u64,
@@ -53,7 +51,6 @@ impl BlockHeaderRPC {
             shard: header.shard.into(),
             prev: header.prev.into(),
             merkle_root: header.merkle_root.into(),
-            creator: header.creator.into(),
             hash: block_hash.into(),
             txn_count: block.txns.len() as u64,
             height: h
@@ -167,7 +164,6 @@ impl RPCHandler for BlockchainRPC {
         d.add_method_with_meta("get_txn_receive_time", Self::get_txn_receive_time);
 
         d.add_method_with_meta("sign_txn", Self::sign_txn);
-        d.add_method_with_meta("sign_block", Self::sign_block);
 
         io.extend_with(d);
     }
@@ -291,16 +287,6 @@ impl BlockchainRPC {
     fn get_txn_receive_time(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
         let hash = expect_one_arg::<JU256>(params)?.into();
         to_rpc_res(self.rk.get_txn_receive_time(hash))
-    }
-
-
-    fn sign_block(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
-        let mut block : Block = expect_one_arg::<JBlock>(params)?.into();
-        block.merkle_root = Block::calculate_merkle_root(&block.txns);
-        block.creator = hash_pub_key(&self.forge_key.public_key_to_der().unwrap());
-        block = block.sign(&self.forge_key);
-        self.rk.is_valid_block(&block).map_err(map_rk_err)?;
-        to_rpc_res(Ok((JU256::from(block.calculate_hash()), JBlock::from(block))))
     }
 
     fn sign_txn(&self, params: Params, _meta: SocketMetadata) -> RpcResult {

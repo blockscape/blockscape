@@ -5,7 +5,7 @@ use std::time::Duration;
 use std::collections::HashSet;
 use futures::prelude::*;
 use futures::sync::*;
-use futures::sync::mpsc::{unbounded, UnboundedSender};
+use futures::sync::mpsc::UnboundedSender;
 use tokio_core::reactor::{Remote,Timeout};
 use bincode;
 use crypto::sha3::Sha3;
@@ -66,7 +66,7 @@ type EPoSSignature = (Vec<u8>, U256);
 
 /// Data which is associated with signing and blobbing a block
 #[derive(Serialize, Deserialize, Debug)]
-struct EPoSBlockData {
+pub struct EPoSBlockData {
     pub difficulty: u64, // TODO: Consider removing
     pub sigs: Vec<EPoSSignature>
 }
@@ -195,6 +195,13 @@ impl EPoS {
         Ok(pos)
     }
 
+    pub fn genesis_block_data() -> EPoSBlockData {
+        EPoSBlockData {
+            difficulty: 1,
+            sigs: Vec::new()
+        }
+    }
+
     /// Called when a waiting period has completed and a block should be sent, either as a completed block or as a incomplete block
     fn propagate_block(ctx: Arc<EPoSContext>) {
 
@@ -230,7 +237,11 @@ impl EPoS {
 
                 if other.is_some() {
                     debug!("Submitting block result (reqd {} validators)!", req_validators);
-                    other.unwrap().send(block.clone()).unwrap();
+                    
+                    if other.unwrap().send(block.clone()).is_err() {
+                        warn!("Send miss on generated block");
+                        // nothing to do from here
+                    }
                 }
                 else {
                     warn!("Could not submit block: submission not available!");
@@ -360,7 +371,7 @@ impl EPoS {
     }
 
     /// Tries to add our own signature to a received block, and prepare it for transmission if it is a keeper.
-    fn evaluate_block(&self, block: Block) -> bool {
+    fn evaluate_block(&self, mut block: Block) -> bool {
         // try to add one of our signatures onto this block
         // TODO: This could be much more efficient
 
@@ -384,17 +395,26 @@ impl EPoS {
         let exp_diff = res.unwrap();
 
         // we have to check that the difficulty recorded in the block matches
-        let res = bincode::deserialize::<EPoSBlockData>(&block.blob);
-        if res.is_err() {
-            warn!("Received block's EPoS data could not be decoded!");
-            return false;
+        if block.blob.is_empty() {
+            // simply set it to something basic
+            block.blob = bincode::serialize(&EPoSBlockData {
+                difficulty: exp_diff,
+                sigs: Vec::new()
+            }, bincode::Infinite).unwrap();
         }
+        else {
+            let res = bincode::deserialize::<EPoSBlockData>(&block.blob);
+            if res.is_err() {
+                warn!("Received block's EPoS data could not be decoded!");
+                return false;
+            }
 
-        let cur_block_info = res.unwrap();
+            let cur_block_info = res.unwrap();
 
-        if cur_block_info.difficulty != exp_diff {
-            warn!("Received block's difficulty does not match ours!");
-            return false;
+            if cur_block_info.difficulty != exp_diff {
+                warn!("Received block's difficulty does not match ours!");
+                return false;
+            }
         }
 
         // the last of the validation

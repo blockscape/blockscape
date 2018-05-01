@@ -92,9 +92,7 @@ pub trait RecordKeeper: PoolHolder + Send + Sync {
                 shard: U256_ZERO,
                 prev: U256_ZERO,
                 merkle_root: Block::calculate_merkle_root(&txns),
-                blob: Bin::new(),
-                creator: U160_ZERO,
-                signature: Bin::new()
+                blob: Bin::new()
             },
             txns
         };
@@ -146,7 +144,7 @@ pub trait RecordKeeper: PoolHolder + Send + Sync {
     /// Get the shares of a validator given their ID.
     /// TODO: Handle shard-based shares
     fn get_validator_stake(&self, _id: &U160) -> Result<u64, Error> {
-        Ok(0)
+        Ok(1)
     }
 
     /// Retrieve the current block hash which the network state represents.
@@ -319,9 +317,7 @@ impl<DB: Database> RecordKeeper for RecordKeeperImpl<DB> {
                 shard: if cbh.shard.is_zero() { cbh_h } else { cbh.shard },
                 prev: cbh_h,
                 merkle_root: Block::calculate_merkle_root(&txns),
-                blob: Bin::new(),
-                creator: U160_ZERO,
-                signature: Bin::new()
+                blob: Bin::new()
             },
             txns
         };
@@ -448,8 +444,11 @@ impl<DB: Database> RecordKeeper for RecordKeeperImpl<DB> {
     /// Get the shares of a validator given their ID.
     /// TODO: Handle shard-based shares
     fn get_validator_stake(&self, id: &U160) -> Result<u64, Error> {
-        self.db.read()
-            .get_validator_stake(*id)
+        // temp, come back to this later
+        /*self.db.read()
+            .get_validator_stake(*id)*/
+        
+        Ok(1)
     }
 
     /// Retrieve the current block hash which the network state represents.
@@ -681,7 +680,6 @@ impl<DB: Database> RecordKeeperImpl<DB> {
     /// Internal use function to check if a block and all its sub-components are valid.
     fn is_valid_block_given_state(&self, state: &NetState, db: &Database, block: &Block) -> Result<(), Error> {
         rules::block::TimeStamp.is_valid(state, db, block)?;
-        rules::block::Signature.is_valid(state, db, block)?;
         rules::block::MerkleRoot.is_valid(state, db, block)?;
 
         let mut mutation = Vec::new();

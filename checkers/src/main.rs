@@ -116,7 +116,7 @@ fn main() {
         cache: game_cache 
     });
 
-    let forge_key = PKey::private_key_from_pem(boot::TESTING_PRIVATE).unwrap();
+    let forge_key = boot::load_or_generate_key("forge");
 
     let ctx = Rc::new(Context {
         rk: rk.clone(),

@@ -15,6 +15,7 @@ use blockscape_core::env::*;
 use blockscape_core::network::client::ClientConfig;
 use blockscape_core::network::node::NodeEndpoint;
 use blockscape_core::primitives::*;
+use blockscape_core::forging::epos::EPoS;
 use blockscape_core::signer::generate_private_key;
 use blockscape_core::hash::hash_pub_key;
 use blockscape_core::time::Time;
@@ -164,7 +165,7 @@ pub fn parse_cmdline<'a>() -> ArgMatches<'a> {
 
 /// Returns the genesis block for blockscape
 pub fn make_genesis() -> (Block, Vec<Txn>) {
-    let n: u64 = 1;
+    let genesis_extra_blob = EPoS::genesis_block_data();
 
     let admkey: Bin = PKey::public_key_from_pem(ADMIN_KEY).unwrap()
         .public_key_to_der().unwrap()
@@ -204,9 +205,7 @@ pub fn make_genesis() -> (Block, Vec<Txn>) {
             prev: U256_ZERO,
             merkle_root,
             // Serialize in the initial block difficulty
-            blob: bincode::serialize(&n, bincode::Bounded(8)).unwrap(),
-            creator: adm_key_hash,
-            signature: Bin::new()
+            blob: bincode::serialize(&genesis_extra_blob, bincode::Infinite).unwrap()
         },
         txns
     };
