@@ -109,8 +109,8 @@ auto_mirror:
     - if [ ! -z "$GITHUB_PUSH_KEY" ]; then
     -   mkdir /root/.ssh
     -   echo "$GITHUB_PUSH_KEY" > /root/.ssh/id_rsa
-    -   git push git@github.com:blockscape/blockscape.git $CI_COMMIT_REF
-    -   git push --tags git@github.com:blockscape/blockscape.git $CI_COMMIT_REF
+    -   git push git@github.com:blockscape/blockscape.git HEAD:$CI_COMMIT_REF
+    -   git push --tags git@github.com:blockscape/blockscape.git HEAD:$CI_COMMIT_REF
     - fi
 
 deploy:
