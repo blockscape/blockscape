@@ -101,7 +101,17 @@ package_arm:
     - docker push $ARM_IMAGE_TAG
   dependencies:
     - build_arm
-    
+
+auto_mirror:
+  image: alpine/git:latest
+  stage: deploy
+  script:
+    - if [ ! -z $GITHUB_PUSH_KEY ]; then
+    -   echo "$GITHUB_PUSH_KEY" > /root/.ssh/id_rsa
+    -   git push git@github.com:blockscape/blockscape.git $CI_COMMIT_REF
+    -   git push --tags git@github.com:blockscape/blockscape.git $CI_COMMIT_REF
+    - fi
+
 deploy:
   image: dcr.buyme360.com/devops/kube-deploy:latest
   stage: deploy
