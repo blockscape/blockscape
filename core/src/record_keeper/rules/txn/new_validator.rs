@@ -8,21 +8,23 @@ use record_keeper::key::*;
 pub struct NewValidator;
 impl TxnRule for NewValidator {
     fn is_valid(&self, state: &NetState, txn: &Txn) -> Result<(), Error> {
-        let mut contains_nv = false;
-        for change in txn.mutation.changes.iter() {
-            match change {
-                &Change::NewValidator {..} => { contains_nv = true; break; },
-                _ => ()
-            }
-        }
-
-        if contains_nv {
-            let admin_key_id = state.get_obj(NetworkEntry::AdminKeyID.into())?;
-            
-            if txn.creator == admin_key_id { Ok(()) }
-            else { Err(Error::Logic(LogicError::ExpectedAdmin)) }
-        }
-        else { Ok(()) }
+        // TODO: For now we are not using ADMIN txns anymore, want to enable/disable this rule later on.
+        Ok(())
+//        let mut contains_nv = false;
+//        for change in txn.mutation.changes.iter() {
+//            match change {
+//                &Change::NewValidator {..} => { contains_nv = true; break; },
+//                _ => ()
+//            }
+//        }
+//
+//        if contains_nv {
+//            let admin_key_id = state.get_obj(NetworkEntry::AdminKeyID.into())?;
+//
+//            if txn.creator == admin_key_id { Ok(()) }
+//            else { Err(Error::Logic(LogicError::ExpectedAdmin)) }
+//        }
+//        else { Ok(()) }
     }
 
     fn description(&self) -> &'static str {
