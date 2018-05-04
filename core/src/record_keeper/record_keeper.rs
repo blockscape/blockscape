@@ -703,9 +703,6 @@ impl<DB: Database> RecordKeeperImpl<DB> {
             for mutation in pending.values().map(|&(_, ref txn)| txn.mutation.clone()) {
                 diff.apply_mutation(mutation);
             }
-
-            println!("NET DIFF: {:?}", diff);
-
             NetState::new(&*db, diff)
         };
         self.is_valid_txn_given_state(&state, txn)?;
