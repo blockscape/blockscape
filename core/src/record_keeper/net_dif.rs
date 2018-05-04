@@ -14,6 +14,7 @@ use super::database as DB;
 /// This is designed to be like a diff, so if an event is added but it had been marked as deleted,
 /// then it will simply remove it from the list of deleted under the assumption that the net change
 /// should be zero.
+#[derive(Debug)]
 pub struct NetDiff {
     /// The initial block this is changing from
     pub from: U256,
@@ -116,7 +117,7 @@ impl NetDiff {
                 self.add_events(&e);
             },
             Change::NewValidator{pub_key, ..} => {
-                let key = NetworkEntry::ValidatorStake( hash_pub_key(&pub_key) ).into();
+                let key = NetworkEntry::ValidatorKey( hash_pub_key(&pub_key) ).into();
                 self.set_value(key, pub_key);
             },
             Change::Slash{id, amount, ..} => {
