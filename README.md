@@ -38,8 +38,8 @@ Ensure UDP traffic on port 35653 is unfiltered between nodes.
 To play checkers, first get your player ID, and optionally the opponents:
 
 ```bash
-# get public key identifier for the play registered on the current node
-my_id=`./run-blockscape-standalone get_my_player`
+# get public key identifier for the play registered on the current node. You will need this later!
+./run-blockscape-standalone register_my_player
 ```
 
 Play a game against yourself:
@@ -48,12 +48,12 @@ Play a game against yourself:
 # see the current state of a checkers game
 ./run-blockscape-standalone get_checkers_board 0 0
 # start the game and play a move
-./run-blockscape-standalone new_checkers_game 0 0 $my_id
+./run-blockscape-standalone new_checkers_game 0 0 <id returned from register earlier>
 ./run-blockscape-standalone play_checkers 0 0 d6 move NW
 # to do a 3-point jump
 ./run-blockscape-standalone play_checkers 0 0 d6 jump NW SW NW
 ```
 
-Invalid moves will be denied.
+With larger networks, other players can register themselves and you can start a game with them arbitrarily.
 
 
