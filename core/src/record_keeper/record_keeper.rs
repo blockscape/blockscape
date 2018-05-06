@@ -329,6 +329,11 @@ impl<DB: Database> RecordKeeper for RecordKeeperImpl<DB> {
     /// it is valid. Also move the network state to be at the new end of the chain.
     /// Returns true if the block was added, false if it was already in the system.
     fn add_block(&self, block: &Block, fresh: bool) -> Result<bool, Error> {
+
+        if self.get_block(&block.calculate_hash()).is_ok() {
+            return Ok(false); // block already exists
+        }
+
         self.is_valid_block(block)?;
 
         let mut pending_txns = self.pending_txns.write();
@@ -392,6 +397,11 @@ impl<DB: Database> RecordKeeper for RecordKeeperImpl<DB> {
     fn add_pending_txn(&self, txn: Txn, fresh: bool) -> Result<bool, Error> {
         let hash = txn.calculate_hash();
 
+        // check if it is already pending or in db
+        if txns.contains_key(&hash) || self.get_txn(&hash).is_ok() {
+            return Ok(false);
+        }
+
         let mut txns = self.pending_txns.write();
         let db = self.db.read();
 
@@ -399,11 +409,6 @@ impl<DB: Database> RecordKeeper for RecordKeeperImpl<DB> {
             .fold(0, |acc, &(_, ref t)| acc + (t.calculate_size()));
         if pending_size + txn.calculate_size() > MAX_PENDING_TXN_MEM {
             return Err(Error::OutOfMemory("Maximum pending txn memory reached.".into()));
-        }
-
-        // check if it is already pending
-        if txns.contains_key(&hash) {
-            return Ok(false);
         }
 
         // check if it is already in the database
