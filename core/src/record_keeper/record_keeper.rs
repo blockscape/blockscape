@@ -398,7 +398,7 @@ impl<DB: Database> RecordKeeper for RecordKeeperImpl<DB> {
         let hash = txn.calculate_hash();
 
         // check if it is already pending or in db
-        if txns.contains_key(&hash) || self.get_txn(&hash).is_ok() {
+        if self.pending_txns.read().contains_key(&hash) || self.get_txn(&hash).is_ok() {
             return Ok(false);
         }
 
