@@ -704,7 +704,7 @@ impl<DB: Database> RecordKeeperImpl<DB> {
     fn is_valid_txn_given_lock(&self, db: &Database, pending: &HashMap<U256, (Time, Txn)>, txn: &Txn) -> Result<(), Error> {
         let state = {
             let cur = db.get_current_block_hash();
-            let mut diff = NetDiff::new(cur, cur);
+            let mut diff = NetDiff::new(cur, cur, None, None);
             for mutation in pending.values().map(|&(_, ref txn)| txn.mutation.clone()) {
                 diff.apply_mutation(mutation);
             }
