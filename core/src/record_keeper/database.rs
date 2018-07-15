@@ -370,7 +370,7 @@ pub trait Database: Send + Sync {
         let (a_heights, b_heights) = self.calculate_block_path(a_block, b_block)?;
 
         // construct the diff
-        let mut diff = NetDiff::new(*a_block, *b_block);
+        let mut diff = NetDiff::new(*a_block, *b_block, None, None);
         // go down `a` chain and then go up `b` chain.
         for (h, b) in a_heights.into_iter().rev() {
             debug_assert!(h > 1);

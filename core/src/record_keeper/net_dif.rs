@@ -1,7 +1,7 @@
-use bin::Bin;
+use bin::{AsBin, Bin};
 use bincode;
 use hash::hash_pub_key;
-use primitives::{Change, Mutation, U256, U160, RawEvent, RawEvents, event};
+use primitives::{Change, Mutation, U256, U160, RawEvent, RawEvents, event, Coord, BoundingBox};
 use record_keeper::PlotEvent;
 use std::collections::{HashMap, HashSet};
 use super::PlotID;
@@ -20,6 +20,10 @@ pub struct NetDiff {
     pub from: U256,
     /// The block all these changes lead to (if applied to the initial block)
     pub to: U256,
+    /// Only pay attention to changes specified within this set of filters for kv sets. Works independantly of plot events
+    filters: Option<Vec<Bin>>,
+    /// Bounding box to filter whichc plots should be retained by this NetDiff. Works independently of KV statuses
+    bounds: Option<BoundingBox>,
     /// New key-value sets to be added (or overwritten). Keys do not include the Network postfix.
     values: HashMap<Key, Bin>,
     /// Keys which are to be removed from the DB
@@ -31,9 +35,15 @@ pub struct NetDiff {
 }
 
 impl NetDiff {
-    pub fn new(from: U256, to: U256) -> NetDiff {
+    pub fn new(from: U256, to: U256, mut filters: Option<Vec<Bin>>, bounds: Option<BoundingBox>) -> NetDiff {
+
+        match filters.as_mut() {
+            Some(ref mut f) => f.sort_unstable(),
+            None => {}
+        };
+
         NetDiff {
-            from, to,
+            from, to, filters, bounds,
             values: HashMap::new(),
             delete: HashSet::new(),
             new_events: HashMap::new(),
@@ -43,6 +53,12 @@ impl NetDiff {
 
     /// Add an event to the appropriate plot
     pub fn add_event(&mut self, id: PlotID, tick: u64, event: RawEvent) {
+        // do bounding box filter
+        if self.bounds.is_some() && 
+            !self.bounds.unwrap().contains(id) {
+            return;
+        }
+
         //if it was in removed events, then we don't need to add it
         if !Self::remove(&mut self.removed_events, id, tick, &event) {
             Self::add(&mut self.new_events, id, tick, event);
@@ -60,6 +76,12 @@ impl NetDiff {
 
     /// Remove an event from the appropriate plot (or mark it to be removed).
     pub fn remove_event(&mut self, id: PlotID, tick: u64, event: RawEvent) {
+        // do bounding box filter
+        if self.bounds.is_some() && 
+            !self.bounds.unwrap().contains(id) {
+            return;
+        }
+
         //if it was in new events events, then we don't need to add it be removed
         if !Self::remove(&mut self.new_events, id, tick, &event) {
             Self::add(&mut self.removed_events, id, tick, event)
@@ -77,6 +99,18 @@ impl NetDiff {
 
     /// Mark a value to be updated at a given key.
     pub fn set_value(&mut self, key: Key, value: Bin) {
+
+        // TODO: Remove copy by retrieving a refence instead...
+        let bin = key.as_bin();
+
+        if let Some(ref f) = self.filters {
+            let pos = f.binary_search(&bin);
+
+            if pos.is_err() {
+                return;
+            }
+        }
+
         self.delete.remove(&key);
         self.values.insert(key, value);
     }
