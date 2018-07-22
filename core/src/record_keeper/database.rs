@@ -4,7 +4,7 @@ use hash::hash_pub_key;
 use primitives::{U256, U160, Mutation, Change, Block, BlockHeader, Txn, RawEvent, RawEvents};
 use primitives::event;
 use time::Time;
-use rocksdb::{DB, Options, IteratorMode, DBCompressionType};
+use rocksdb::{DB, Options, IteratorMode, DBCompressionType, WriteBatch};
 use rocksdb::Error as RocksDBError;
 use std::collections::{HashMap, HashSet, BTreeMap};
 use std::path::PathBuf;
@@ -461,15 +461,11 @@ pub trait Database: Send + Sync {
         let mut tick = from_tick;
         let mut event_list = RawEvents::new();
         loop {
-            let key: Key = NetworkEntry::Plot(plot_id, tick).into();
+            let raw_events = self._get_plot_event_bucket(plot_id, tick)?;
+            if raw_events.is_none() { break; }
+            let mut raw_events = raw_events.unwrap();
 
-            let raw_list = match self.get(key.clone()) {
-                Ok(l) => l,
-                Err(Error::NotFound(..)) => break,
-                Err(e) => return Err(e)
-            };
-
-            event_list.append(&mut deserialize::<RawEvents>(&raw_list)?);
+            event_list.append(&mut raw_events);
 
             tick += PLOT_EVENT_BUCKET_SIZE;
         } Ok(event_list.split_off(&from_tick))
@@ -508,19 +504,17 @@ pub trait Database: Send + Sync {
 
     /// Add a new event to the specified plot.
     fn _add_event(&mut self, plot_id: PlotID, tick: u64, event: &RawEvent) -> Result<(), Error> {
-        let db_key: Key = NetworkEntry::Plot(plot_id, tick).into();
-        let mut event_list = match self.get(db_key.clone()) {
-            Ok(list) => deserialize::<RawEvents>(&list)?,
-            Err(Error::NotFound(..)) => {
-                // we need to add empty lists too all prior buckets to make them contiguous
-                self._init_event_buckets(plot_id, tick)?;
-                RawEvents::new()
-            },
-            Err(e) => return Err(e)
-        };
+        let event_list = self._get_plot_event_bucket(plot_id, tick)?;
 
+        if event_list.is_none() {
+            // we need to add empty lists too all prior buckets to make them contiguous
+            self._init_event_buckets(plot_id, tick)?;
+        }
+
+        let mut event_list = event_list.unwrap_or_else(RawEvents::new);
         event::add_event(&mut event_list, tick, event.clone());
-        self.put(db_key, &serialize(&event_list, Infinite).unwrap())
+
+        self._put_plot_event_bucket(plot_id, tick, &event_list)
     }
 
     /// Add an event to all the specified plots (iff they are in this shard).
@@ -533,21 +527,39 @@ pub trait Database: Send + Sync {
     }
 
     /// Remove an event from a plot. Should only be used when undoing a mutation.
-    fn _remove_event(&mut self, id: PlotID, tick: u64, event: &RawEvent) -> Result<(), Error> {
-        let db_key: Key = NetworkEntry::Plot(id, tick).into();
-        match self.get(db_key.clone()) {
-            Ok(raw_event_list) => {
-                let mut event_list: RawEvents = deserialize(&raw_event_list)?;
-                if !event::remove_event(&mut event_list, tick, event) {
-                    warn!("Unable to remove event because it does not exist! The network state \
-                        may be desynchronized.");
-                } else { self.put(db_key, &serialize(&event_list, Infinite).unwrap())?; }
-                Ok(())
-            },
-            Err(Error::NotFound(..)) => { warn!("Unable to remove event because it does not exist! \
-                                               The network state may be desynchronized."); Ok(()) },
+    fn _remove_event(&mut self, plot_id: PlotID, tick: u64, event: &RawEvent) -> Result<(), Error> {
+        let event_list = self._get_plot_event_bucket(plot_id, tick)?;
+        if let Some(mut event_list) = event_list {
+            if !event::remove_event(&mut event_list, tick, event) {
+                warn!("Unable to remove event because it does not exist! The network state may be desynchronized.");
+            } else {
+                self._put_plot_event_bucket(plot_id, tick, &event_list)?;
+            } Ok(())
+        } else {
+            warn!("Unable to remove event because it does not exist! The network state may be desynchronized.");
+            Ok(())
+        }
+    }
+
+    fn _get_plot_event_bucket(&self, plot_id: PlotID, tick: u64) -> Result<Option<RawEvents>, Error> {
+        let key: Key = NetworkEntry::Plot(plot_id, tick).into();
+
+        match self.get(key.clone()) {
+            Ok(l) => Ok(Some(deserialize::<RawEvents>(&l)?)),
+            Err(Error::NotFound(..)) => Ok(None),
             Err(e) => Err(e)
         }
+    }
+
+    fn _put_plot_event_bucket(&mut self, plot_id: PlotID, tick: u64, event_list: &RawEvents) -> Result<(), Error> {
+        let bucket = tick / PLOT_EVENT_BUCKET_SIZE;
+        assert!(event_list.iter()
+            .find(|(t, _)| (*t / PLOT_EVENT_BUCKET_SIZE) != bucket)
+            .is_none()
+        );
+
+        let key: Key = NetworkEntry::Plot(plot_id, tick).into();
+        self.put(key, &serialize(event_list, Infinite).unwrap())
     }
 
     /// Remove an event from all the specified plots (iff they are in this shard).
@@ -783,14 +795,11 @@ pub trait Database: Send + Sync {
     fn _init_event_buckets(&mut self, plot_id: PlotID, before_tick: u64) -> Result<(), Error> {
         if before_tick < PLOT_EVENT_BUCKET_SIZE { return Ok(()); }
         let mut tick = before_tick - PLOT_EVENT_BUCKET_SIZE; // only want prior buckets.
-        loop {
-            let key: Key = NetworkEntry::Plot(plot_id, tick).into();
+        let empty_events = RawEvents::new();
 
-            match self.get(key.clone()) {
-                Ok(l) => { deserialize::<RawEvents>(&l)?; break },
-                Err(Error::NotFound(..)) => self.put(key, &serialize(&RawEvents::new(), Infinite).unwrap())?,
-                Err(e) => return Err(e)
-            }
+        loop {
+            if self._get_plot_event_bucket(plot_id, tick)?.is_some() { break; }
+            self._put_plot_event_bucket(plot_id, tick, &empty_events);
 
             if tick < PLOT_EVENT_BUCKET_SIZE { break; }
             tick -= PLOT_EVENT_BUCKET_SIZE;
