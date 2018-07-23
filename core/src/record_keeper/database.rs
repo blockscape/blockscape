@@ -8,7 +8,7 @@ use rocksdb::{DB, Options, IteratorMode, DBCompressionType, WriteBatch};
 use rocksdb::Error as RocksDBError;
 use std::collections::{HashMap, HashSet, BTreeMap};
 use std::path::PathBuf;
-use super::{PlotID, NetDiff, PlotEvent};
+use super::{PlotID, DBDiff, PlotEvent};
 use super::error::*;
 use super::key::*;
 use num_cpus;
@@ -366,11 +366,11 @@ pub trait Database: Send + Sync {
     /// walks the network state and creates a Diff object of the changes. To walk backwards on the
     /// chain it requires use of contra transactions, so the `a_block` must be either come before
     /// `b_block` or be on the main chain to work.
-    fn get_diff(&self, a_block: &U256, b_block: &U256) -> Result<NetDiff, Error> {
+    fn get_diff(&self, a_block: &U256, b_block: &U256) -> Result<DBDiff, Error> {
         let (a_heights, b_heights) = self.calculate_block_path(a_block, b_block)?;
 
         // construct the diff
-        let mut diff = NetDiff::new(*a_block, *b_block, None, None);
+        let mut diff = DBDiff::new(*a_block, *b_block, None, None);
         // go down `a` chain and then go up `b` chain.
         for (h, b) in a_heights.into_iter().rev() {
             debug_assert!(h > 1);

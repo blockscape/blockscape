@@ -15,7 +15,7 @@ use super::database as DB;
 /// then it will simply remove it from the list of deleted under the assumption that the net change
 /// should be zero.
 #[derive(Debug)]
-pub struct NetDiff {
+pub struct DBDiff {
     /// The initial block this is changing from
     pub from: U256,
     /// The block all these changes lead to (if applied to the initial block)
@@ -34,15 +34,15 @@ pub struct NetDiff {
     removed_events: HashMap<PlotID, RawEvents>
 }
 
-impl NetDiff {
-    pub fn new(from: U256, to: U256, mut filters: Option<Vec<Bin>>, bounds: Option<BoundingBox>) -> NetDiff {
+impl DBDiff {
+    pub fn new(from: U256, to: U256, mut filters: Option<Vec<Bin>>, bounds: Option<BoundingBox>) -> DBDiff {
 
         match filters.as_mut() {
             Some(ref mut f) => f.sort_unstable(),
             None => {}
         };
 
-        NetDiff {
+        DBDiff {
             from, to, filters, bounds,
             values: HashMap::new(),
             delete: HashSet::new(),
@@ -280,7 +280,7 @@ use std::vec::IntoIter as VecIntoIter;
 
 /// Iterate over all plots we have event changes to make to. The first value is the key, the next is
 /// the list of events to remove, and finally it has the list of new events,
-pub struct EventDiffIter<'a>(&'a NetDiff, VecIntoIter<PlotID>);
+pub struct EventDiffIter<'a>(&'a DBDiff, VecIntoIter<PlotID>);
 impl<'a> Iterator for EventDiffIter<'a> {
     type Item = (PlotID, Option<&'a RawEvents>, Option<&'a RawEvents>);
 
@@ -291,7 +291,7 @@ impl<'a> Iterator for EventDiffIter<'a> {
 
 /// Iterate over all values we have changes recorded for. The first part of the Item is the key, and
 /// the second part is the value, if the value is None, then the key should be deleted from the DB.
-pub struct ValueDiffIter<'a>(&'a NetDiff, VecIntoIter<&'a Key>);
+pub struct ValueDiffIter<'a>(&'a DBDiff, VecIntoIter<&'a Key>);
 impl<'a> Iterator for ValueDiffIter<'a> {
     type Item = (&'a Key, Option<&'a Bin>);
 

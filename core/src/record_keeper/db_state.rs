@@ -2,7 +2,7 @@ use bin::Bin;
 use bincode;
 use primitives::{U160, RawEvents, event};
 use super::database::Database;
-use super::{Error, NetDiff, PlotID};
+use super::{Error, DBDiff, PlotID};
 use super::error::map_not_found;
 use super::key::*;
 use serde::de::DeserializeOwned;
@@ -10,15 +10,15 @@ use serde::de::DeserializeOwned;
 /// A snapshot of the network state at a given point in time. This builds on a reference to the
 /// database with a diff to allow being at a point in time without modifying the DB. This will hold
 /// a read lock on the database, so it is important to hold it for only as long as needed.
-pub struct NetState<'a> {
-    db: &'a Database,
-    diff: NetDiff
+pub struct DBState<'a> {
+    db: &'a dyn Database,
+    diff: DBDiff
 }
 
-impl<'a> NetState<'a> {
+impl<'a> DBState<'a> {
     /// Create a new Network Snapshot given a reference to the db and a network difference.
-    pub fn new(db: &'a Database, diff: NetDiff) -> NetState<'a> {
-        NetState { db, diff }
+    pub fn new(db: &'a dyn Database, diff: DBDiff) -> DBState<'a> {
+        DBState { db, diff }
     }
 
     /// Retrieve a value first from the diff if it has been defined, and then from the database if

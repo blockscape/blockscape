@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use parking_lot::{RwLock, Mutex};
 use primitives::{RawEvents, event, Mutation};
 use super::{Error, RecordEvent, PlotEvent, PlotID};
-use super::{NetState, NetDiff};
+use super::{DBState, DBDiff};
 use super::{rules, BlockRule, TxnRule, MutationRule, MutationRules};
 use super::BlockPackage;
 use super::database::*;
@@ -544,7 +544,7 @@ impl<DB: Database> RecordKeeper for RecordKeeperImpl<DB> {
     /// Check if a block is valid and all its components.
     fn is_valid_block(&self, block: &Block) -> Result<(), Error> {
         let db = self.db.read();
-        let state = NetState::new(
+        let state = DBState::new(
             &*db, db.get_diff(&db.get_current_block_hash(), &block.prev)?
         );
         self.is_valid_block_given_state(&state, &*db, block)
@@ -683,7 +683,7 @@ impl<DB: Database> RecordKeeperImpl<DB> {
     }
 
     /// Internal use function to check if a block and all its sub-components are valid.
-    fn is_valid_block_given_state(&self, state: &NetState, db: &Database, block: &Block) -> Result<(), Error> {
+    fn is_valid_block_given_state(&self, state: &DBState, db: &Database, block: &Block) -> Result<(), Error> {
         rules::block::TimeStamp.is_valid(state, db, block)?;
         rules::block::MerkleRoot.is_valid(state, db, block)?;
 
@@ -704,11 +704,11 @@ impl<DB: Database> RecordKeeperImpl<DB> {
     fn is_valid_txn_given_lock(&self, db: &Database, pending: &HashMap<U256, (Time, Txn)>, txn: &Txn) -> Result<(), Error> {
         let state = {
             let cur = db.get_current_block_hash();
-            let mut diff = NetDiff::new(cur, cur, None, None);
+            let mut diff = DBDiff::new(cur, cur, None, None);
             for mutation in pending.values().map(|&(_, ref txn)| txn.mutation.clone()) {
                 diff.apply_mutation(mutation);
             }
-            NetState::new(&*db, diff)
+            DBState::new(&*db, diff)
         };
         self.is_valid_txn_given_state(&state, txn)?;
 
@@ -720,7 +720,7 @@ impl<DB: Database> RecordKeeperImpl<DB> {
     }
 
     /// Internal use function, check if a txn is valid.
-    fn is_valid_txn_given_state(&self, state: &NetState, txn: &Txn) -> Result<(), Error> {
+    fn is_valid_txn_given_state(&self, state: &DBState, txn: &Txn) -> Result<(), Error> {
         rules::txn::Signature.is_valid(state, txn)?;
         rules::txn::AdminCheck.is_valid(state, txn)?;
         rules::txn::NewValidator.is_valid(state, txn)?;
@@ -728,7 +728,7 @@ impl<DB: Database> RecordKeeperImpl<DB> {
     }
 
     /// Internal use function to check if a mutation is valid.
-    fn is_valid_mutation_given_state(&self, state: &NetState, mutation: &Vec<(Change, U160)>) -> Result<(), Error> {
+    fn is_valid_mutation_given_state(&self, state: &DBState, mutation: &Vec<(Change, U160)>) -> Result<(), Error> {
         let mut cache = Bin::new();
         // base rules
         rules::mutation::PlotEvent.is_valid(state, mutation, &mut cache)?;

@@ -1,7 +1,7 @@
 use bin::Bin;
 use hash::hash_pub_key;
 use primitives::{Change, RawEvent, RawEvents, U160};
-use record_keeper::{Error, LogicError, NetState, PlotID};
+use record_keeper::{Error, LogicError, DBState, PlotID};
 use primitives::add_event;
 use record_keeper::rules::MutationRule;
 use std::collections::{HashSet, HashMap};
@@ -24,7 +24,7 @@ impl Duplicates {
 
     /// Check if a given event is already in the set of events at the given tick in the network
     /// state.
-    fn duplicated_within_net(state: &NetState, id: PlotID, tick: u64, event: &RawEvent) -> Result<bool, Error> {
+    fn duplicated_within_net(state: &DBState, id: PlotID, tick: u64, event: &RawEvent) -> Result<bool, Error> {
         let plot_events = state.get_plot_events(id, tick)?;
         if let Some(event_list) = plot_events.get(&tick) {
             if event_list.contains(event) {
@@ -47,7 +47,7 @@ impl Duplicates {
 }
 
 impl MutationRule for Duplicates {
-    fn is_valid(&self, state: &NetState, mutation: &Vec<(Change, U160)>, _cache: &mut Bin) -> Result<(), Error> {
+    fn is_valid(&self, state: &DBState, mutation: &Vec<(Change, U160)>, _cache: &mut Bin) -> Result<(), Error> {
         let mut validators = HashSet::new();
         let mut events: HashMap<PlotID, RawEvents> = HashMap::new();
 
