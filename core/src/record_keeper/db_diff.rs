@@ -3,35 +3,45 @@ use bincode;
 use hash::hash_pub_key;
 use primitives::{Change, Mutation, U256, U160, RawEvent, RawEvents, event, Coord, BoundingBox};
 use record_keeper::PlotEvent;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, BTreeSet};
 use super::PlotID;
 use super::key::*;
-use super::database as DB;
+use super::database;
+use super::database::Database;
+use super::Error;
+use super::DBState;
 
-/// A set of changes which define the difference from a given network state to another though
-/// walking the blockchain from one point to another. This should be used to compile a list of
-/// changes to the network state without having to write to the same place in the DB multiple times.
-/// This is designed to be like a diff, so if an event is added but it had been marked as deleted,
-/// then it will simply remove it from the list of deleted under the assumption that the net change
-/// should be zero.
+/// A set of changes which define the difference from a given state to another through walking the
+/// blockchain from one point to another. This should be used to compile a list of changes to the
+/// database state without having to write to the same place in the DB multiple times.
+///
+/// Ultimately, this should be used as a base for making multiple changes to the DB at a time
+/// because pending changes can be read as if they are already part of the database and a final
+/// WriteBatch can be constructed which can then be applied to the database itself. It can also
+/// just be used to view what the Database would be like after a series of changes are made without
+/// ever changing the Database.
+///
+/// The way deletion works, is if something is added and then deleted, it does not just remove it
+/// form the changes to make, but actually denotes that it will need to be deleted from the database
+/// as well. If something which was denoted as being deleted is then set to a value, it will remove
+/// it from the list of things to delete and add it to the list of values to set.
+///
+/// *Warning*: Do not manually add or remove events, use the functions dedicated to them. This is
+/// because of how the tick buckets work and prevents
 #[derive(Debug)]
 pub struct DBDiff {
-    /// The initial block this is changing from
-    pub from: U256,
-    /// The block all these changes lead to (if applied to the initial block)
-    pub to: U256,
-    /// Only pay attention to changes specified within this set of filters for kv sets. Works independantly of plot events
+    /// Only pay attention to changes specified within this set of filters for kv sets. Works independently of plot events
     filters: Option<Vec<Bin>>,
-    /// Bounding box to filter whichc plots should be retained by this NetDiff. Works independently of KV statuses
+    /// Bounding box to filter which plots should be retained by this NetDiff. Works independently of KV statuses
     bounds: Option<BoundingBox>,
     /// New key-value sets to be added (or overwritten). Keys do not include the Network postfix.
-    values: HashMap<Key, Bin>,
+    new_values: HashMap<Key, Bin>,
     /// Keys which are to be removed from the DB
-    delete: HashSet<Key>,
+    del_values: HashSet<Key>,
     /// Events which need to be added to plots
     new_events: HashMap<PlotID, RawEvents>,
     /// Events which need to be removed from plots
-    removed_events: HashMap<PlotID, RawEvents>
+    del_events: HashMap<PlotID, RawEvents>
 }
 
 impl DBDiff {
@@ -43,12 +53,46 @@ impl DBDiff {
         };
 
         DBDiff {
-            from, to, filters, bounds,
-            values: HashMap::new(),
-            delete: HashSet::new(),
+            filters, bounds,
+            new_values: HashMap::new(),
+            del_values: HashSet::new(),
             new_events: HashMap::new(),
-            removed_events: HashMap::new()
+            del_events: HashMap::new()
         }
+    }
+
+    pub fn into_state<'a, DB: Database>(self, db: &'a DB) -> DBState<'a> {
+        DBState::new(db, self)
+    }
+
+    #[inline(always)]
+    pub fn filters(&self) -> &Option<Vec<Bin>> {
+        &self.filters
+    }
+
+    #[inline(always)]
+    pub fn bounds(&self) -> &Option<BoundingBox> {
+        &self.bounds
+    }
+
+    #[inline(always)]
+    pub fn new_values(&self) -> &HashMap<Key, Bin> {
+        &self.new_values
+    }
+
+    #[inline(always)]
+    pub fn del_values(&self) -> &HashSet<Key> {
+        &self.del_values
+    }
+
+    #[inline(always)]
+    pub fn new_events(&self) -> &HashMap<PlotID, RawEvents> {
+        &self.new_events
+    }
+
+    #[inline(always)]
+    pub fn del_events(&self) -> &HashMap<PlotID, RawEvents> {
+        &self.del_events
     }
 
     /// Add an event to the appropriate plot
@@ -60,7 +104,7 @@ impl DBDiff {
         }
 
         //if it was in removed events, then we don't need to add it
-        if !Self::remove(&mut self.removed_events, id, tick, &event) {
+        if !Self::remove(&mut self.del_events, id, tick, &event) {
             Self::add(&mut self.new_events, id, tick, event);
         }
     }
@@ -84,7 +128,7 @@ impl DBDiff {
 
         //if it was in new events events, then we don't need to add it be removed
         if !Self::remove(&mut self.new_events, id, tick, &event) {
-            Self::add(&mut self.removed_events, id, tick, event)
+            Self::add(&mut self.del_events, id, tick, event)
         }
     }
 
@@ -100,7 +144,7 @@ impl DBDiff {
     /// Mark a value to be updated at a given key.
     pub fn set_value(&mut self, key: Key, value: Bin) {
 
-        // TODO: Remove copy by retrieving a refence instead...
+        // TODO: Remove copy by retrieving a reference instead...
         let bin = key.as_bin();
 
         if let Some(ref f) = self.filters {
@@ -111,20 +155,20 @@ impl DBDiff {
             }
         }
 
-        self.delete.remove(&key);
-        self.values.insert(key, value);
+        self.del_values.remove(&key);
+        self.new_values.insert(key, value);
     }
 
     /// Mark a key and its value to be removed from the state.
     pub fn delete_value(&mut self, key: Key) {
-        self.values.remove(&key);
-        self.delete.insert(key);
+        self.new_values.remove(&key);
+        self.del_values.insert(key);
     }
 
     pub fn change_validator_stake(&mut self, id: U160, amount: i64) {
         let key = NetworkEntry::ValidatorStake(id).into();
         let value = {
-            let raw = self.values.get(&key);
+            let raw = self.new_values.get(&key);
         
             if let Some(r) = raw {
                 bincode::deserialize::<i64>(r).unwrap()
@@ -145,7 +189,7 @@ impl DBDiff {
                 else { self.delete_value(k); }
             },
             Change::BlockReward{id, ..} => {
-                self.change_validator_stake(id, DB::BLOCK_REWARD as i64);
+                self.change_validator_stake(id, database::BLOCK_REWARD as i64);
             },
             Change::PlotEvent(e) => {
                 self.add_events(&e);
@@ -178,7 +222,7 @@ impl DBDiff {
                 else { self.delete_value(k) }
             },
             Change::BlockReward{id, ..} => {
-                self.change_validator_stake(id, -(DB::BLOCK_REWARD as i64));
+                self.change_validator_stake(id, -(database::BLOCK_REWARD as i64));
             },
             Change::PlotEvent(e) => {
                 self.remove_events(&e);
@@ -207,23 +251,23 @@ impl DBDiff {
 
     /// Retrieves a list of events to be removed from a given plot.
     pub fn get_removed_events(&self, plot: PlotID) -> Option<&RawEvents> {
-        self.removed_events.get(&plot)
+        self.del_events.get(&plot)
     }
 
     /// Retrieve the value if any changes have been specified to it. Will return none if no changes
     /// are recorded or if it is to be deleted.
     pub fn get_value(&self, key: &Key) -> Option<&Bin> {
-        self.values.get(key)
+        self.new_values.get(key)
     }
 
     /// Returns whether or not a given value is marked for deletion.
     pub fn is_value_deleted(&self, key: &Key) -> bool {
-        self.delete.contains(key)
+        self.del_values.contains(key)
     }
 
     /// Check if an event has been marked for removal from its associated plots.
     pub fn is_event_removed(&self, plot: PlotID, tick: u64, event: &RawEvent) -> bool {
-        if let Some(plot) = self.removed_events.get(&plot) {
+        if let Some(plot) = self.del_events.get(&plot) {
             if let Some(events) = plot.get(&tick) {
                 events.contains(event)
             } else { false }
@@ -235,7 +279,7 @@ impl DBDiff {
     pub fn get_event_changes<'a>(&'a self) -> EventDiffIter {
         let keys = {
             let added: HashSet<_> = self.new_events.keys().cloned().collect();
-            let removed: HashSet<_> = self.removed_events.keys().cloned().collect();
+            let removed: HashSet<_> = self.del_events.keys().cloned().collect();
             added.union(&removed).cloned().collect::<Vec<_>>()
         };
         
@@ -246,8 +290,8 @@ impl DBDiff {
     /// value it should be set to. See `ValueDiffIter`.
     pub fn get_value_changes<'a>(&'a self) -> ValueDiffIter {
         let keys: Vec<&'a Key> = {
-            let added: HashSet<_> = self.values.keys().collect();
-            let removed: HashSet<_> = self.delete.iter().collect();
+            let added: HashSet<_> = self.new_values.keys().collect();
+            let removed: HashSet<_> = self.del_values.iter().collect();
             added.union(&removed).cloned().collect()
         };
 
@@ -275,6 +319,14 @@ impl DBDiff {
         plots.insert(id, plot);
     }
 }
+
+impl<'a> From<DBState<'a>> for DBDiff {
+    fn from(s: DBState) -> Self {
+        s.diff
+    }
+}
+
+
 
 use std::vec::IntoIter as VecIntoIter;
 

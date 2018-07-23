@@ -12,7 +12,7 @@ use serde::de::DeserializeOwned;
 /// a read lock on the database, so it is important to hold it for only as long as needed.
 pub struct DBState<'a> {
     db: &'a dyn Database,
-    diff: DBDiff
+    pub diff: DBDiff
 }
 
 impl<'a> DBState<'a> {
