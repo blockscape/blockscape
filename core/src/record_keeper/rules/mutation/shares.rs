@@ -1,6 +1,6 @@
 use bin::Bin;
 use primitives::{Change, U160};
-use record_keeper::{Error, LogicError, DBState};
+use record_keeper::{Error, LogicError, DBState, Database};
 use record_keeper::rules::MutationRule;
 use std::collections::HashMap;
 use record_keeper::key::NetworkEntry;

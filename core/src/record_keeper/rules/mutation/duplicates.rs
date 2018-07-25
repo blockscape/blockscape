@@ -1,7 +1,7 @@
 use bin::Bin;
 use hash::hash_pub_key;
 use primitives::{Change, RawEvent, RawEvents, U160};
-use record_keeper::{Error, LogicError, DBState, PlotID};
+use record_keeper::{Error, LogicError, DBState, PlotID, Database};
 use primitives::add_event;
 use record_keeper::rules::MutationRule;
 use std::collections::{HashSet, HashMap};

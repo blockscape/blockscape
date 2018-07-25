@@ -10,6 +10,7 @@ use super::{rules, BlockRule, TxnRule, MutationRule, MutationRules};
 use super::BlockPackage;
 use super::database::*;
 use time::Time;
+use rocksdb::WriteBatch;
 
 use futures::sync::mpsc::Sender;
 use futures_cpupool;
@@ -704,7 +705,7 @@ impl<DB: Database> RecordKeeperImpl<DB> {
     fn is_valid_txn_given_lock(&self, db: &Database, pending: &HashMap<U256, (Time, Txn)>, txn: &Txn) -> Result<(), Error> {
         let state = {
             let cur = db.get_current_block_hash();
-            let mut diff = DBDiff::new(cur, cur, None, None);
+            let mut diff = DBDiff::default();
             for mutation in pending.values().map(|&(_, ref txn)| txn.mutation.clone()) {
                 diff.apply_mutation(mutation);
             }

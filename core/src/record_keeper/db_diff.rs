@@ -3,13 +3,10 @@ use bincode;
 use hash::hash_pub_key;
 use primitives::{Change, Mutation, U256, U160, RawEvent, RawEvents, event, Coord, BoundingBox};
 use record_keeper::PlotEvent;
-use std::collections::{HashMap, HashSet, BTreeSet};
-use super::PlotID;
-use super::key::*;
-use super::database;
-use super::database::Database;
-use super::Error;
-use super::DBState;
+use std::collections::{HashMap, HashSet};
+use super::{PlotID, DBState, key::*};
+use super::database::{self, Database};
+
 
 /// A set of changes which define the difference from a given state to another through walking the
 /// blockchain from one point to another. This should be used to compile a list of changes to the
@@ -45,7 +42,7 @@ pub struct DBDiff {
 }
 
 impl DBDiff {
-    pub fn new(from: U256, to: U256, mut filters: Option<Vec<Bin>>, bounds: Option<BoundingBox>) -> DBDiff {
+    pub fn new(mut filters: Option<Vec<Bin>>, bounds: Option<BoundingBox>) -> DBDiff {
 
         match filters.as_mut() {
             Some(ref mut f) => f.sort_unstable(),
@@ -65,40 +62,16 @@ impl DBDiff {
         DBState::new(db, self)
     }
 
-    #[inline(always)]
-    pub fn filters(&self) -> &Option<Vec<Bin>> {
-        &self.filters
-    }
-
-    #[inline(always)]
-    pub fn bounds(&self) -> &Option<BoundingBox> {
-        &self.bounds
-    }
-
-    #[inline(always)]
-    pub fn new_values(&self) -> &HashMap<Key, Bin> {
-        &self.new_values
-    }
-
-    #[inline(always)]
-    pub fn del_values(&self) -> &HashSet<Key> {
-        &self.del_values
-    }
-
-    #[inline(always)]
-    pub fn new_events(&self) -> &HashMap<PlotID, RawEvents> {
-        &self.new_events
-    }
-
-    #[inline(always)]
-    pub fn del_events(&self) -> &HashMap<PlotID, RawEvents> {
-        &self.del_events
+    /// Check if there are no new values or events.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.new_values.is_empty() && self.new_events.is_empty()
     }
 
     /// Add an event to the appropriate plot
     pub fn add_event(&mut self, id: PlotID, tick: u64, event: RawEvent) {
         // do bounding box filter
-        if self.bounds.is_some() && 
+        if self.bounds.is_some() &&
             !self.bounds.unwrap().contains(id) {
             return;
         }
@@ -109,19 +82,10 @@ impl DBDiff {
         }
     }
 
-    /// Add an event to the appropriate plots.
-    /// TODO: Handle shards?
-    pub fn add_events(&mut self, e: &PlotEvent) {
-        self.add_event(e.from, e.tick, e.event.clone());
-        for plot in e.to.iter() {
-            self.add_event(*plot, e.tick, e.event.clone());
-        }
-    }
-
     /// Remove an event from the appropriate plot (or mark it to be removed).
     pub fn remove_event(&mut self, id: PlotID, tick: u64, event: RawEvent) {
         // do bounding box filter
-        if self.bounds.is_some() && 
+        if self.bounds.is_some() &&
             !self.bounds.unwrap().contains(id) {
             return;
         }
@@ -132,23 +96,10 @@ impl DBDiff {
         }
     }
 
-    /// Add an event to the appropriate plots.
-    /// TODO: Handle shards?
-    pub fn remove_events(&mut self, e: &PlotEvent) {
-        self.remove_event(e.from, e.tick, e.event.clone());
-        for plot in e.to.iter() {
-            self.remove_event(*plot, e.tick, e.event.clone());
-        }
-    }
-
     /// Mark a value to be updated at a given key.
     pub fn set_value(&mut self, key: Key, value: Bin) {
-
-        // TODO: Remove copy by retrieving a reference instead...
-        let bin = key.as_bin();
-
         if let Some(ref f) = self.filters {
-            let pos = f.binary_search(&bin);
+            let pos = f.binary_search(&key.as_bin());
 
             if pos.is_err() {
                 return;
@@ -163,85 +114,6 @@ impl DBDiff {
     pub fn delete_value(&mut self, key: Key) {
         self.new_values.remove(&key);
         self.del_values.insert(key);
-    }
-
-    pub fn change_validator_stake(&mut self, id: U160, amount: i64) {
-        let key = NetworkEntry::ValidatorStake(id).into();
-        let value = {
-            let raw = self.new_values.get(&key);
-        
-            if let Some(r) = raw {
-                bincode::deserialize::<i64>(r).unwrap()
-            } else { 0 }
-        } + amount;
-
-        let raw = bincode::serialize(&value, bincode::Bounded(8)).unwrap();
-        self.set_value(key, raw);
-    }
-
-    /// Apply all the changes in a mutation to this diff.
-    pub fn apply_mutation(&mut self, m: Mutation) {
-        m.assert_not_contra();
-        for change in m.changes { match change {
-            Change::Admin{key, value} => {
-                let k = NetworkEntry::Generic(key).into();
-                if let Some(v) = value { self.set_value(k, v); }
-                else { self.delete_value(k); }
-            },
-            Change::BlockReward{id, ..} => {
-                self.change_validator_stake(id, database::BLOCK_REWARD as i64);
-            },
-            Change::PlotEvent(e) => {
-                self.add_events(&e);
-            },
-            Change::NewValidator{pub_key, ..} => {
-                let key = NetworkEntry::ValidatorKey( hash_pub_key(&pub_key) ).into();
-                self.set_value(key, pub_key);
-            },
-            Change::Slash{id, amount, ..} => {
-                self.change_validator_stake(id, -(amount as i64));
-            },
-            Change::Transfer{from, to} => {
-                let mut sum = 0i64;
-                for (recipient, amount) in to.into_iter() {
-                    self.change_validator_stake(recipient, amount as i64);
-                    sum += amount as i64;
-                }
-                self.change_validator_stake(from, -sum);
-            }
-        }}
-    }
-
-    /// Apply all the changes in a contra-mutation to this diff.
-    pub fn apply_contra(&mut self, m: Mutation) {
-        m.assert_contra();
-        for change in m.changes { match change {
-            Change::Admin{key, value, ..} => {
-                let k = NetworkEntry::Generic(key).into();
-                if let Some(v) = value { self.set_value(k, v); }
-                else { self.delete_value(k) }
-            },
-            Change::BlockReward{id, ..} => {
-                self.change_validator_stake(id, -(database::BLOCK_REWARD as i64));
-            },
-            Change::PlotEvent(e) => {
-                self.remove_events(&e);
-            },
-            Change::NewValidator{pub_key, ..} => {
-                self.delete_value(NetworkEntry::ValidatorKey( hash_pub_key(&pub_key) ).into());
-            },
-            Change::Slash{id, amount, ..} => {
-                self.change_validator_stake(id, amount as i64)
-            },
-            Change::Transfer{from, to} => {
-                let mut sum = 0i64;
-                for (recipient, amount) in to {
-                    self.change_validator_stake(recipient, -(amount as i64));
-                    sum += amount as i64;
-                }
-                self.change_validator_stake(from, sum);
-            }
-        }}
     }
 
     /// Retrieve a list of new events for a given plot.
@@ -282,7 +154,7 @@ impl DBDiff {
             let removed: HashSet<_> = self.del_events.keys().cloned().collect();
             added.union(&removed).cloned().collect::<Vec<_>>()
         };
-        
+
         EventDiffIter(self, keys.into_iter())
     }
 
@@ -326,10 +198,17 @@ impl<'a> From<DBState<'a>> for DBDiff {
     }
 }
 
+impl Default for DBDiff {
+    fn default() -> Self {
+        DBDiff::new(None, None)
+    }
+}
+
 
 
 use std::vec::IntoIter as VecIntoIter;
 
+// TODO: rewrite to not use a vec of keys
 /// Iterate over all plots we have event changes to make to. The first value is the key, the next is
 /// the list of events to remove, and finally it has the list of new events,
 pub struct EventDiffIter<'a>(&'a DBDiff, VecIntoIter<PlotID>);
@@ -341,6 +220,7 @@ impl<'a> Iterator for EventDiffIter<'a> {
     }
 }
 
+// TODO: rewrite to not use a vec of keys
 /// Iterate over all values we have changes recorded for. The first part of the Item is the key, and
 /// the second part is the value, if the value is None, then the key should be deleted from the DB.
 pub struct ValueDiffIter<'a>(&'a DBDiff, VecIntoIter<&'a Key>);

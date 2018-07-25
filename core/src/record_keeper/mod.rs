@@ -21,6 +21,7 @@ pub use self::dummy::*;
 pub use self::rules::*;
 pub use self::key::*;
 pub use self::game_state::GameStateCache;
+pub use self::database::Database;
 
 
 use primitives;

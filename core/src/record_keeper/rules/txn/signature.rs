@@ -1,5 +1,5 @@
 use primitives::Txn;
-use record_keeper::{Error, LogicError, DBState};
+use record_keeper::{Error, LogicError, DBState, Database};
 use record_keeper::rules::TxnRule;
 use openssl::pkey::PKey;
 use std::error::Error as StdErr;
