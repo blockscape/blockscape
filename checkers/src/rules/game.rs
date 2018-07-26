@@ -1,4 +1,4 @@
-use blockscape_core::record_keeper::{MutationRule, Error, LogicError, NetState, GameStateCache};
+use blockscape_core::record_keeper::{MutationRule, Error, LogicError, DBState, GameStateCache, Database};
 use blockscape_core::primitives::{Change, U160};
 use blockscape_core::bin::*;
 use std::error::Error as StdErr;
@@ -26,7 +26,7 @@ impl Game {
 }
 
 impl MutationRule for Game {
-    fn is_valid(&self, net_state: &NetState, mutation: &Vec<(Change, U160)>, _cache: &mut Bin) -> Result<(), Error> {
+    fn is_valid(&self, state: &DBState, mutation: &Vec<(Change, U160)>, _cache: &mut Bin) -> Result<(), Error> {
         let events = super::get_events(mutation)?;
 
         let mut cache = self.0.write();
@@ -47,7 +47,7 @@ impl MutationRule for Game {
             debug_assert!(start_tick < event.tick);
             if (start_tick + 1) < event.tick {
                 // we can assume these will all work because they have been deemed valid already.
-                let old_events = net_state.get_plot_events(event.from, start_tick + 1)?;
+                let old_events = state.get_plot_events(event.from, start_tick + 1)?;
                 for (t, e) in old_events {
                     debug_assert_eq!(e.len(), 1);
                     board.play(

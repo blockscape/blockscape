@@ -4,11 +4,8 @@ use std::collections::{HashMap, BTreeSet, BTreeMap, HashSet};
 use std::path::PathBuf;
 use parking_lot::{RwLock, Mutex};
 use primitives::{RawEvents, event, Mutation};
-use super::{Error, RecordEvent, PlotEvent, PlotID};
-use super::{DBState, DBDiff};
-use super::{rules, BlockRule, TxnRule, MutationRule, MutationRules};
-use super::BlockPackage;
-use super::database::*;
+use super::{BlockPackage, Error, RecordEvent, PlotEvent, PlotID, DBState, rules, BlockRule, TxnRule, MutationRule, MutationRules, database::*};
+use super::db_state::DBDiff;
 use time::Time;
 use rocksdb::WriteBatch;
 
@@ -330,66 +327,77 @@ impl<DB: Database> RecordKeeper for RecordKeeperImpl<DB> {
     /// it is valid. Also move the network state to be at the new end of the chain.
     /// Returns true if the block was added, false if it was already in the system.
     fn add_block(&self, block: &Block, fresh: bool) -> Result<bool, Error> {
-
-        if self.get_block(&block.calculate_hash()).is_ok() {
+        let hash = block.calculate_hash();
+        if self.get_block(&hash).is_ok() {
             return Ok(false); // block already exists
         }
 
         self.is_valid_block(block)?;
 
-        let mut pending_txns = self.pending_txns.write();
         let mut db = self.db.write();
+        let mut pending_txns = self.pending_txns.write();
 
-        // we know it is a valid block, so go ahead and add it's transactions, and then it.
-        for txn_hash in block.txns.iter() {
-            if let Some((recv_time, txn)) = pending_txns.remove(txn_hash) { // we will need to add it
-                db.add_txn(&txn, recv_time)?;
-            } else {
-                // should already be in the DB then because otherwise is_valid_block should give an
-                // error, so use an assert check
-                assert!(db.get_txn(*txn_hash).is_ok())
+        // get around the scope issues
+        let (initial_height, invalidated_blocks, earliest_invalidated_tick, uncled);
+
+        // construct a write batch of all changes we are making using a DBState object.
+        let wb = {  // because consuming state with the compile operation is not enough for the borrow checker...
+            let mut state = DBState::new(&*db);
+            // we know it is a valid block, so go ahead and add it's transactions, and then it.
+            for txn_hash in block.txns.iter() {
+                if let Some((recv_time, txn)) = pending_txns.remove(txn_hash) { // we will need to add it
+                    state.add_txn(&txn, recv_time)?;
+                } else {
+                    // should already be in the DB then because otherwise is_valid_block should give an
+                    // error, so use an assert check
+                    assert!(state.get_txn(*txn_hash).is_ok())
+                }
             }
-        }
-        // add txns first, so that we make sure all blocks in the system have all their information,
-        // plus, any txn which is somehow added without its block will probably be added by another
-        // anyway so it is the lesser of the evils
 
-        // record the block
-        if db.add_block(block)? {
-            let hash = block.calculate_hash();
+            // record the block
+            assert!(state.add_block(block)?); // we already checked if the block was known
 
             // move the network state
-            let initial_height = db.get_current_block_height();
-            let (invalidated_blocks, earliest_invalidated_tick) = db.walk_to_head()?;
-            let uncled = hash != db.get_current_block_hash();
+            initial_height = state.get_current_block_height();
+
+            {
+                let (a, b) = state.walk_to_head()?;
+                invalidated_blocks = a;
+                earliest_invalidated_tick = b;
+            }
+
+            uncled = hash != state.get_current_block_hash();
 
             // couple of quick checks...
             // if uncled, basic verification that we have not moved
             debug_assert!(!uncled || (
                 invalidated_blocks == 0 &&
-                    initial_height == db.get_current_block_height()
+                    initial_height == state.get_current_block_height()
             ));
             // if not uncled, do some validity checks to make sure we moved correctly
             debug_assert!(uncled || (
                 initial_height > invalidated_blocks &&
-                    initial_height < db.get_current_block_height()
+                    initial_height < state.get_current_block_height()
             ));
 
-            // send out events as needed
-            let mut record_listeners = self.record_listeners.lock();
-            if invalidated_blocks > 0 {
-                record_listeners.notify(&RecordEvent::StateInvalidated {
-                    new_height: db.get_current_block_height(),
-                    after_height: initial_height - invalidated_blocks,
-                    after_tick: earliest_invalidated_tick
-                });
-            }
-            record_listeners.notify(&RecordEvent::NewBlock { uncled, fresh, block: block.clone() });
+            // write the changes to the actual db
+            state.compile()?
+        };
 
-            Ok(true)
-        } else { // we already knew about this block, do nothing
-            Ok(false)
+        db.apply(wb)?;
+
+        // send out events as needed
+        let mut record_listeners = self.record_listeners.lock();
+        if invalidated_blocks > 0 {
+            record_listeners.notify(&RecordEvent::StateInvalidated {
+                new_height: db.get_current_block_height(),
+                after_height: initial_height - invalidated_blocks,
+                after_tick: earliest_invalidated_tick
+            });
         }
+        record_listeners.notify(&RecordEvent::NewBlock { uncled, fresh, block: block.clone() });
+
+        Ok(true)
     }
 
     /// Add a new transaction to the pool of pending transactions after validating it. Returns true
@@ -545,9 +553,9 @@ impl<DB: Database> RecordKeeper for RecordKeeperImpl<DB> {
     /// Check if a block is valid and all its components.
     fn is_valid_block(&self, block: &Block) -> Result<(), Error> {
         let db = self.db.read();
-        let state = DBState::new(
-            &*db, db.get_diff(&db.get_current_block_hash(), &block.prev)?
-        );
+        let mut state = DBState::new(&*db);
+        state.walk(&block.prev)?;
+
         self.is_valid_block_given_state(&state, &*db, block)
     }
 
@@ -639,15 +647,23 @@ impl RecordKeeperImpl<DatabaseImpl> {
 
         { // Handle Genesis
             let mut db = rk.db.write();
-            if db.is_empty() { // add genesis
+            let wb = if db.is_empty() { // add genesis
                 debug!("Loaded DB is empty, adding genesis block...");
+                let mut state = DBState::new(&*db);
                 for ref txn in genesis.1 {
-                    db.add_txn(txn, genesis.0.timestamp)?;
+                    state.add_txn(txn, genesis.0.timestamp)?;
                 }
-                db.add_block(&genesis.0)?;
-                db.walk_to_head()?;
+                state.add_block(&genesis.0)?;
+                state.walk_to_head()?;
+
+                Some(state.compile()?)
             } else { // make sure the (correct) genesis block is there
                 db.get_block(&genesis.0.calculate_hash())?;
+                None
+            };
+
+            if let Some(wb) = wb {
+                db.apply(wb)?;
             }
         }
 
@@ -704,13 +720,13 @@ impl<DB: Database> RecordKeeperImpl<DB> {
     /// network state.
     fn is_valid_txn_given_lock(&self, db: &Database, pending: &HashMap<U256, (Time, Txn)>, txn: &Txn) -> Result<(), Error> {
         let state = {
+            let mut state = DBState::new(db);
             let cur = db.get_current_block_hash();
-            let mut diff = DBDiff::default();
-            for mutation in pending.values().map(|&(_, ref txn)| txn.mutation.clone()) {
-                diff.apply_mutation(mutation);
-            }
-            DBState::new(&*db, diff)
+            for (time, txn) in pending.values() {
+                state.add_txn(txn, *time)?;
+            } state
         };
+
         self.is_valid_txn_given_state(&state, txn)?;
 
         let mut mutation = Vec::new();

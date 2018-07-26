@@ -8,7 +8,7 @@ use rocksdb::{DB, Options, IteratorMode, DBCompressionType, WriteBatch};
 use rocksdb::Error as RocksDBError;
 use std::collections::{HashMap, HashSet, BTreeMap};
 use std::path::PathBuf;
-use super::{PlotID, DBDiff, PlotEvent, DBState};
+use super::{PlotID, PlotEvent, DBState};
 use super::error::*;
 use super::key::*;
 use num_cpus;

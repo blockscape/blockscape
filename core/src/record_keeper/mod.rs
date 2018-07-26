@@ -3,7 +3,6 @@ pub mod database;
 pub mod error;
 pub mod events;
 pub mod key;
-pub mod db_diff;
 pub mod db_state;
 pub mod game_state;
 
@@ -14,7 +13,6 @@ mod rules;
 pub use self::block_package::BlockPackage;
 pub use self::error::*;
 pub use self::events::{PlotEvent, JPlotEvent, RecordEvent, DePlotEvent};
-pub use self::db_diff::*;
 pub use self::db_state::*;
 pub use self::record_keeper::*;
 pub use self::dummy::*;
