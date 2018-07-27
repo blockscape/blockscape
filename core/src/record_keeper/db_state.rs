@@ -211,6 +211,22 @@ impl<'db> Database for DBState<'db> {
         unimplemented!("Cannot initialize events buckets for a DBState object.")
     }
 
+    fn iter_up<'a>(&'a self, start_height: u64) -> UpIter<'a> {
+        UpIter::new(self, start_height)
+    }
+
+    fn iter_down<'a>(&'a self, start_block: U256) -> DownIter<'a> {
+        DownIter::new(self, start_block)
+    }
+
+    fn get_current_block_hash(&self) -> U256 {
+        self.head.block
+    }
+
+    fn get_current_block_height(&self) -> u64 {
+        self.head.height
+    }
+
     /// Returns a map of events for each tick that happened after a given tick. Note: it will not
     /// seek to reconstruct old history so `from_tick` simply allows additional filtering, e.g. if
     /// you set `from_tick` to 0, you would not get all events unless the oldest events have not
@@ -257,22 +273,6 @@ impl<'db> Database for DBState<'db> {
     fn _remove_event(&mut self, plot_id: PlotID, tick: u64, event: &RawEvent) -> Result<(), Error> {
         self.diff.remove_event(plot_id, tick, event.clone());
         Ok(())
-    }
-
-    fn iter_up<'a>(&'a self, start_height: u64) -> UpIter<'a> {
-        UpIter::new(self, start_height)
-    }
-
-    fn iter_down<'a>(&'a self, start_block: U256) -> DownIter<'a> {
-        DownIter::new(self, start_block)
-    }
-
-    fn get_current_block_hash(&self) -> U256 {
-        self.head.block
-    }
-
-    fn get_current_block_height(&self) -> u64 {
-        self.head.height
     }
 
     fn _update_current_block(&mut self, hash: U256, height: Option<u64>) -> Result<(), Error> {
@@ -413,7 +413,7 @@ impl DBDiff {
             } else { false }
         } else { false }
     }
-    
+
     /// Attempt to remove an event from list and return whether it was was there or not.
     fn remove(plots: &mut HashMap<PlotID, RawEvents>, id: PlotID, tick: u64, event: &RawEvent) -> bool {
         if let Some(plot) = plots.get_mut(&id) {
