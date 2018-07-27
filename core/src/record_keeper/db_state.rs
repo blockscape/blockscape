@@ -413,32 +413,7 @@ impl DBDiff {
             } else { false }
         } else { false }
     }
-
-    /// Get an iterator over each Plot we have information on and give a list of all things to
-    /// remove for it and all things to add to it. See `EventDiffIter`.
-    pub fn get_event_changes<'a>(&'a self) -> EventDiffIter {
-        let keys = {
-            let added: HashSet<_> = self.new_events.keys().cloned().collect();
-            let removed: HashSet<_> = self.del_events.keys().cloned().collect();
-            added.union(&removed).cloned().collect::<Vec<_>>()
-        };
-
-        EventDiffIter(self, keys.into_iter())
-    }
-
-    /// Get an iterator over each key we have information on and return if it is deleted or the new
-    /// value it should be set to. See `ValueDiffIter`.
-    pub fn get_value_changes<'a>(&'a self) -> ValueDiffIter {
-        let keys: Vec<&'a Key> = {
-            let added: HashSet<_> = self.new_values.keys().collect();
-            let removed: HashSet<_> = self.del_values.iter().collect();
-            added.union(&removed).cloned().collect()
-        };
-
-        ValueDiffIter(self, keys.into_iter())
-    }
-
-
+    
     /// Attempt to remove an event from list and return whether it was was there or not.
     fn remove(plots: &mut HashMap<PlotID, RawEvents>, id: PlotID, tick: u64, event: &RawEvent) -> bool {
         if let Some(plot) = plots.get_mut(&id) {
@@ -485,35 +460,5 @@ impl<'a> From<DBState<'a>> for DBDiff {
 impl Default for DBDiff {
     fn default() -> Self {
         DBDiff::new(None, None)
-    }
-}
-
-
-
-use std::vec::IntoIter as VecIntoIter;
-
-// TODO: rewrite to not use a vec of keys
-/// Iterate over all plots we have event changes to make to. The first value is the key, the next is
-/// the list of events to remove, and finally it has the list of new events,
-pub struct EventDiffIter<'a>(&'a DBDiff, VecIntoIter<PlotID>);
-impl<'a> Iterator for EventDiffIter<'a> {
-    type Item = (PlotID, Option<&'a RawEvents>, Option<&'a RawEvents>);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.1.next().map(|k| (k, self.0.get_removed_events(k), self.0.get_new_events(k)) )
-    }
-}
-
-// TODO: rewrite to not use a vec of keys
-/// Iterate over all values we have changes recorded for. The first part of the Item is the key, and
-/// the second part is the value, if the value is None, then the key should be deleted from the DB.
-pub struct ValueDiffIter<'a>(&'a DBDiff, VecIntoIter<&'a Key>);
-impl<'a> Iterator for ValueDiffIter<'a> {
-    type Item = (&'a Key, Option<&'a Bin>);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.1.next().map(|k| {
-            (k, self.0.get_value(k))
-        })
     }
 }
