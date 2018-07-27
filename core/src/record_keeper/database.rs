@@ -870,7 +870,8 @@ impl Database for DatabaseImpl {
     #[inline]
     fn apply(&mut self, wb: WriteBatch) -> Result<(), Error> {
         self.db.write(wb)?;
-        self.head = deserialize(&self._get(CacheEntry::CurrentHead.into()).unwrap()).unwrap();
+        self.head = deserialize(&self._get(CacheEntry::CurrentHead.into()).unwrap())
+            .expect("HeadRef was not able to be retrieved from the database after applying changes.");
         Ok(())
     }
 
