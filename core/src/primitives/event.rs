@@ -38,6 +38,14 @@ pub fn add_event(events: &mut RawEvents, tick: u64, event: RawEvent) -> bool {
     true
 }
 
+/// Add more than one event at a time to a PlotEvents object.
+#[inline]
+pub fn add_events(events: &mut RawEvents, tick: u64, event_list: Vec<RawEvent>) {
+    for event in event_list {
+        self::add_event(events, tick, event);
+    }
+}
+
 /// Remove an event from a PlotEvents object. Returns true if the event was removed.
 pub fn remove_event(events: &mut RawEvents, tick: u64, event: &RawEvent) -> bool {
     let mut del_tick = false;
@@ -50,6 +58,14 @@ pub fn remove_event(events: &mut RawEvents, tick: u64, event: &RawEvent) -> bool
 
     if del_tick { events.remove(&tick).unwrap(); }
     removed
+}
+
+/// Remove more than one event at a time from a PlotEvents object.
+#[inline]
+pub fn remove_events(events: &mut RawEvents, tick: u64, event_list: &Vec<RawEvent>) {
+    for event in event_list {
+        self::remove_event(events, tick, event);
+    }
 }
 
 /// A set of listeners who are ready to receive events. This is designed to be a simple way to

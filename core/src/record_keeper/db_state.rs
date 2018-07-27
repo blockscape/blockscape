@@ -1,7 +1,7 @@
 use bin::{Bin, AsBin};
 use bincode::{deserialize, serialize, Bounded, Infinite};
 use primitives::{U160, U256, RawEvents, RawEvent, event, BoundingBox};
-use super::database::{self, Database, HeadRef, UpIter, DownIter};
+use super::database::{PLOT_EVENT_BUCKET_SIZE, Database, HeadRef, UpIter, DownIter};
 use super::{Error, PlotID, key::*};
 use super::error::map_not_found;
 use serde::de::DeserializeOwned;
@@ -34,54 +34,122 @@ impl<'db> DBState<'db> {
         Ok(deserialize(&raw)?)
     }
 
-    pub fn compile(self) -> Result<WriteBatch, Error> {
+    pub fn compile(mut self) -> Result<WriteBatch, Error> {
+        use std::mem::swap;
         let mut wb = WriteBatch::default();
-        for (key, value) in self.diff.get_value_changes() {
-            if let Some(v) = value {
-                wb.put(&key.as_bin(), v)?;
-            } else {
-                wb.delete(&key.as_bin())?;
-            }
+
+        // Handle all simple puts/dels
+        for (key, value) in self.diff.new_values.into_iter() {
+            wb.put(&key.as_bin(), &value)?;
+        }
+        for key in self.diff.del_values.into_iter() {
+            wb.delete(&key.as_bin())?;
         }
 
-        // need to hit each plot just once
-        for (plot, remove, add) in self.diff.get_event_changes() {
-            // set of the affected tick buckets
+        // Now construct an iterator over all plots which yields the new events and removed events.
+        // We want to drain the values from memory as we do so to prevent duplicates from taking
+        // extra space, so we need to mutate the values of new_events and del_events as we go, so
+        // get around partially moved issues by swapping them out with empty HashMaps.
+        let mut new_events = HashMap::new();
+        let mut del_events = HashMap::new();
+        swap(&mut new_events, &mut self.diff.new_events);
+        swap(&mut del_events, &mut self.diff.del_events);
+
+        let plot_event_changes =
+            new_events.keys().cloned()
+            .chain(del_events.keys().cloned())
+            .collect::<HashSet<PlotID>>()
+            .into_iter()
+            .map(|plot_id| (
+                plot_id,
+                new_events.remove(&plot_id),
+                del_events.remove(&plot_id)
+            ));
+
+        // For each plot, handle the new and removed events.
+        for (plot_id, mut new_events, mut del_events) in plot_event_changes {
+            // Find impacted buckets
+            let mut greatest_bucket = 0u64;
             let tick_buckets = {
                 let mut tb = BTreeSet::new();
 
-                if let Some(add) = add {
-                    for (t, _) in add.iter() {
-                        tb.insert(*t / database::PLOT_EVENT_BUCKET_SIZE);
+                if let Some(ref new_events) = new_events {
+                    for (t, _) in new_events.iter() {
+                        let b = *t / PLOT_EVENT_BUCKET_SIZE;
+                        greatest_bucket = greatest_bucket.max(b);
+                        tb.insert(b);
                     }
                 }
 
-                if let Some(remove) = remove {
-                    for (t, _) in remove.iter() {
-                        tb.insert(*t / database::PLOT_EVENT_BUCKET_SIZE);
+                if let Some(ref del_events) = del_events {
+                    for (t, _) in del_events.iter() {
+                        tb.insert(*t / PLOT_EVENT_BUCKET_SIZE);
                     }
                 }
 
                 tb
             };
 
-            // initialize any new buckets required so they can be overwritten if need be.
+            // Initialize new event buckets as needed (may be overwritten)
+            let mut tick = greatest_bucket * PLOT_EVENT_BUCKET_SIZE;
+            let empty_events = serialize(&RawEvents::new(), Bounded(8)).unwrap();
+            loop {
+                if self.db._get_plot_event_bucket(plot_id, tick)?.is_some() { break; }
+                wb.put(
+                    &Key::Network(NetworkEntry::Plot(plot_id, tick)).as_bin(),
+                    &empty_events
+                )?;
 
+                if tick < PLOT_EVENT_BUCKET_SIZE { break; }
+                tick -= PLOT_EVENT_BUCKET_SIZE;
+            }
+            let empty_after = // do not need to get any events with a tick_bucket > empty_after from the db
+                tick / PLOT_EVENT_BUCKET_SIZE;
 
+            // Process one tick bucket at a time to reduce reads/writes
             for tb in tick_buckets.into_iter().rev() {
-                let mut current =
-                    self.db._get_plot_event_bucket(
-                        plot,
-                        tb * database::PLOT_EVENT_BUCKET_SIZE
-                    )?.unwrap_or_else(RawEvents::new);
+                let tb_min = tb * PLOT_EVENT_BUCKET_SIZE;
+                let tb_max = tb_min + PLOT_EVENT_BUCKET_SIZE;
 
-                // TODO: do we need to init buckets? Perhaps start from greatest tick bucket first so we can overwrite the initializations.
-                unimplemented!()
-//                event::add_event
+                // get base set of events already in the DB (unless we know it is not in the DB)
+                let mut events =
+                    if tb > empty_after {
+                        RawEvents::new()
+                    } else {
+                        self.db._get_plot_event_bucket(plot_id, tb_min)?
+                            .unwrap_or_else(RawEvents::new)
+                    };
+
+                // Add new events
+                if let Some(ne) = new_events.as_mut() {
+                    let ticks = ne.range(tb_min..tb_max)
+                        .map(|(tick, _)| *tick)
+                        .collect::<Vec<u64>>();
+
+                    for tick in ticks {
+                        event::add_events(&mut events, tick, ne.remove(&tick).unwrap());
+                    }
+                }
+
+                // Remove marked events
+                if let Some(de) = del_events.as_mut() {
+                    let ticks = de.range(tb_min..tb_max)
+                        .map(|(tick, _)| *tick)
+                        .collect::<Vec<u64>>();
+
+                    for tick in ticks {
+                        event::remove_events(&mut events, tick, &de.remove(&tick).unwrap());
+                    }
+                }
+
+                // Write the tick bucket
+                let key: Key = NetworkEntry::Plot(plot_id, tb_min).into();
+                wb.put(&key.as_bin(), &serialize(&events, Infinite).unwrap())?;
             }
         }
 
-        unimplemented!()
+        // And now, finally, we may return the list of changes as a WriteBatch
+        Ok(wb)
     }
 }
 
@@ -97,7 +165,7 @@ impl<'db> Database for DBState<'db> {
     /// 'deleted' in the diff.
     fn _get(&self, key: Key) -> Result<Vec<u8>, Error> {
         if let Key::Network(NetworkEntry::Plot(..)) = key {
-            unimplemented!()
+            unimplemented!("All functions which call this should be directed elsewhere")
         }
 
         if let Some(v) = self.diff.get_value(&key) {
@@ -113,7 +181,7 @@ impl<'db> Database for DBState<'db> {
     /// deletion list of it is there.
     fn _put(&mut self, key: Key, data: &[u8]) -> Result<(), Error> {
         if let Key::Network(NetworkEntry::Plot(..)) = key {
-            unimplemented!()
+            unimplemented!("All functions which call this should be directed elsewhere")
         }
 
         self.diff.set_value(key, data.into());
@@ -256,7 +324,6 @@ pub struct DBDiff {
 
 impl DBDiff {
     pub fn new(mut filters: Option<Vec<Bin>>, bounds: Option<BoundingBox>) -> DBDiff {
-
         match filters.as_mut() {
             Some(ref mut f) => f.sort_unstable(),
             None => {}
@@ -279,13 +346,10 @@ impl DBDiff {
 
     /// Add an event to the appropriate plot
     pub fn add_event(&mut self, id: PlotID, tick: u64, event: RawEvent) {
-        // do bounding box filter
-        if self.bounds.is_some() &&
-            !self.bounds.unwrap().contains(id) {
-            return;
-        }
+        if !self.relevant_plot(id) { return; }
 
-        //if it was in removed events, then we don't need to add it
+        // If it was in removed events, then we don't need to add it to be added because we would
+        // not mark it to be removed unless it was already in the db.
         if !Self::remove(&mut self.del_events, id, tick, &event) {
             Self::add(&mut self.new_events, id, tick, event);
         }
@@ -293,13 +357,10 @@ impl DBDiff {
 
     /// Remove an event from the appropriate plot (or mark it to be removed).
     pub fn remove_event(&mut self, id: PlotID, tick: u64, event: RawEvent) {
-        // do bounding box filter
-        if self.bounds.is_some() &&
-            !self.bounds.unwrap().contains(id) {
-            return;
-        }
+        if !self.relevant_plot(id) { return; }
 
-        //if it was in new events events, then we don't need to add it be removed
+        // if it was in new events, then we don't need to add it be removed because we would not add
+        // it to the diff if it was already in the db.
         if !Self::remove(&mut self.new_events, id, tick, &event) {
             Self::add(&mut self.del_events, id, tick, event)
         }
@@ -307,22 +368,20 @@ impl DBDiff {
 
     /// Mark a value to be updated at a given key.
     pub fn set_value(&mut self, key: Key, value: Bin) {
-        if let Some(ref f) = self.filters {
-            let pos = f.binary_search(&key.as_bin());
+        if !self.relevant_key(&key) { return; }
 
-            if pos.is_err() {
-                return;
-            }
+        if !self.del_values.remove(&key) {
+            self.new_values.insert(key, value);
         }
-
-        self.del_values.remove(&key);
-        self.new_values.insert(key, value);
     }
 
     /// Mark a key and its value to be removed from the state.
     pub fn delete_value(&mut self, key: Key) {
-        self.new_values.remove(&key);
-        self.del_values.insert(key);
+        if !self.relevant_key(&key) { return; }
+
+        if self.new_values.remove(&key).is_none() {
+            self.del_values.insert(key);
+        }
     }
 
     /// Retrieve a list of new events for a given plot.
@@ -398,6 +457,22 @@ impl DBDiff {
         let mut plot = RawEvents::new();
         event::add_event(&mut plot, tick, event);
         plots.insert(id, plot);
+    }
+
+    /// Check if this key is accepted by the filter, returns true if the key should be used by the
+    /// DBDiff, and false if it should be ignored.
+    #[inline]
+    fn relevant_key(&self, key: &Key) -> bool {
+        if let Some(ref f) = self.filters {
+            f.binary_search(&key.as_bin()).is_ok()
+        } else { true }
+    }
+
+    /// Check if this plot is accepted by the filter, returns true if the plot should be used by the
+    /// DBDiff, and false if it should be ignored.
+    #[inline]
+    fn relevant_plot(&self, plot: PlotID) -> bool {
+        self.bounds.is_none() || self.bounds.unwrap().contains(plot)
     }
 }
 
