@@ -8,7 +8,7 @@ use rocksdb::{DB, Options, IteratorMode, DBCompressionType, WriteBatch};
 use rocksdb::Error as RocksDBError;
 use std::collections::{HashMap, HashSet, BTreeMap};
 use std::path::PathBuf;
-use super::{PlotID, PlotEvent, DBState};
+use super::{PlotID, PlotEvent};
 use super::error::*;
 use super::key::*;
 use num_cpus;
@@ -658,7 +658,7 @@ pub trait Database: Send + Sync {
                 let key: Key = NetworkEntry::ValidatorKey(id).into();
                 self._set_value(key.as_bin(), None)?;
             },
-            Change::Slash{id, amount, ..} => { self._change_validator_stake(id, (amount as i64))?; },
+            Change::Slash{id, amount, ..} => { self._change_validator_stake(id, amount as i64)?; },
             Change::Transfer{from, to} => {
                 let mut sum = 0i64;
                 for (recipient, amount) in to {

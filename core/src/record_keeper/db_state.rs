@@ -1,6 +1,6 @@
 use bin::{Bin, AsBin};
 use bincode::{deserialize, serialize, Bounded, Infinite};
-use primitives::{U160, U256, RawEvents, RawEvent, event, BoundingBox};
+use primitives::{U256, RawEvents, RawEvent, event, BoundingBox};
 use super::database::{PLOT_EVENT_BUCKET_SIZE, Database, HeadRef, UpIter, DownIter};
 use super::{Error, PlotID, key::*};
 use super::error::map_not_found;
@@ -195,19 +195,19 @@ impl<'db> Database for DBState<'db> {
         Ok(())
     }
 
-    fn apply(&mut self, wb: WriteBatch) -> Result<(), Error> {
+    fn apply(&mut self, _wb: WriteBatch) -> Result<(), Error> {
         unimplemented!("Cannot apply a write batch to a DBState object.")
     }
 
-    fn _get_plot_event_bucket(&self, plot_id: PlotID, tick: u64) -> Result<Option<RawEvents>, Error> {
+    fn _get_plot_event_bucket(&self, _plot_id: PlotID, _tick: u64) -> Result<Option<RawEvents>, Error> {
         unimplemented!("Cannot get an event bucket from a DBState object.")
     }
 
-    fn _put_plot_event_bucket(&mut self, plot_id: PlotID, tick: u64, event_list: &RawEvents) -> Result<(), Error> {
+    fn _put_plot_event_bucket(&mut self, _plot_id: PlotID, _tick: u64, _event_list: &RawEvents) -> Result<(), Error> {
         unimplemented!("Cannot set an event bucket in a DBState object.")
     }
 
-    fn _init_event_buckets(&mut self, plot_id: PlotID, before_tick: u64) -> Result<(), Error> {
+    fn _init_event_buckets(&mut self, _plot_id: PlotID, _before_tick: u64) -> Result<(), Error> {
         unimplemented!("Cannot initialize events buckets for a DBState object.")
     }
 

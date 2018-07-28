@@ -5,9 +5,7 @@ use std::path::PathBuf;
 use parking_lot::{RwLock, Mutex};
 use primitives::{RawEvents, event, Mutation};
 use super::{BlockPackage, Error, RecordEvent, PlotEvent, PlotID, DBState, rules, BlockRule, TxnRule, MutationRule, MutationRules, database::*};
-use super::db_state::DBDiff;
 use time::Time;
-use rocksdb::WriteBatch;
 
 use futures::sync::mpsc::Sender;
 use futures_cpupool;
@@ -721,7 +719,6 @@ impl<DB: Database> RecordKeeperImpl<DB> {
     fn is_valid_txn_given_lock(&self, db: &Database, pending: &HashMap<U256, (Time, Txn)>, txn: &Txn) -> Result<(), Error> {
         let state = {
             let mut state = DBState::new(db);
-            let cur = db.get_current_block_hash();
             for (time, txn) in pending.values() {
                 state.add_txn(txn, *time)?;
             } state
