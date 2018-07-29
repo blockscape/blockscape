@@ -436,7 +436,6 @@ pub trait Database: Send + Sync {
 
         // TODO: We may only need to have a count of the number of blocks to undo when walking backwards
         let (a_heights, b_heights) = self.calculate_block_path(&a_block, b_block)?;
-        debug_assert!(a_heights.len() < b_heights.len());
 
         // the number of blocks invalidated is equal to the number of blocks we are going to undo.
         let invalidated_blocks = a_heights.len() as u64;
