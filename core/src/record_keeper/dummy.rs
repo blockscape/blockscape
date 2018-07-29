@@ -1,5 +1,5 @@
 use bin::Bin;
-use primitives::{U256, U160, U256_ZERO, U160_ZERO, Txn, Block, BlockHeader, HasBlockHeader};
+use primitives::{U256, U160, U256_ZERO, Txn, Block, BlockHeader, HasBlockHeader};
 use std::collections::{HashMap, BTreeSet, BTreeMap, HashSet};
 use std::sync::Arc;
 use std::sync::{RwLock,Mutex};
@@ -37,9 +37,7 @@ impl DummyRecordKeeper {
                     shard: U256_ZERO,
                     prev: U256_ZERO,
                     merkle_root: Block::calculate_merkle_root(&BTreeSet::new()),
-                    blob: Bin::new(),
-                    creator: U160_ZERO,
-                    signature: Bin::new()
+                    blob: Bin::new()
                 },
                 txns: BTreeSet::new()
             },
@@ -105,9 +103,7 @@ impl RecordKeeper for DummyRecordKeeper {
                 shard: U256_ZERO,
                 prev: cbh_h,
                 merkle_root: Block::calculate_merkle_root(&txns),
-                blob: Bin::new(),
-                creator: U160_ZERO,
-                signature: Bin::new()
+                blob: Bin::new()
             },
             txns
         };

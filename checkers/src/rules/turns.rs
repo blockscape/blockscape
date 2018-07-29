@@ -1,4 +1,4 @@
-use blockscape_core::record_keeper::{MutationRule, Error, NetState, LogicError};
+use blockscape_core::record_keeper::{MutationRule, Error, DBState, LogicError, Database};
 use blockscape_core::record_keeper::error::assert_mut_valid;
 use blockscape_core::primitives::{Change, U160};
 use blockscape_core::bin::*;
@@ -11,7 +11,7 @@ use std::collections::HashMap;
 /// blockchain-level stuff which must be correct.
 pub struct Turns;
 impl MutationRule for Turns {
-    fn is_valid(&self, net_state: &NetState, mutation: &Vec<(Change, U160)>, _cache: &mut Bin) -> Result<(), Error> {
+    fn is_valid(&self, state: &DBState, mutation: &Vec<(Change, U160)>, _cache: &mut Bin) -> Result<(), Error> {
         // Construct a list of all the game events so we can mess around with it
         let events = super::get_events(mutation)?;
 
@@ -48,12 +48,12 @@ impl MutationRule for Turns {
                     }
 
                     assert_mut_valid(
-                        net_state.get_plot_events(e.from, 0)?.is_empty(),
+                        state.get_plot_events(e.from, 0)?.is_empty(),
                         "Cannot start a new game on an existing board."
                     )?;
                 }
                 else { //trying to continue an existing game
-                    let events = net_state.get_plot_events(e.from, 0)?;
+                    let events = state.get_plot_events(e.from, 0)?;
                     let ps = events.get(&0);
                     assert_mut_valid(!ps.is_none() && events.contains_key(&(e.tick - 1)), "Missing prior turns.")?;
                     assert_mut_valid(!events.contains_key(&e.tick), "Cannot replace existing turn.")?;

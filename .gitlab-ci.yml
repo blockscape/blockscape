@@ -35,22 +35,22 @@ build:
 
   # depending on your build setup it's most likely a good idea to cache outputs to reduce the build time
 
-build_arm:
-  image: dcr.buyme360.com/plu-capstone/rust/arm:latest
-  stage: build
-  cache:
-    key: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME-arm"
-    paths:
-      - cargo/
-      - checkers/target/
-  script:
-    - mkdir -p cargo
-    - cp /root/.cargo/config cargo
-    - cargo build --release --verbose --manifest-path=checkers/Cargo.toml 2>&1 | tee log.txt
-  artifacts:
-    paths:
-      - checkers/target/arm-unknown-linux-musleabi/release/blockscape
-    expire_in: 2 days
+#build_arm:
+#  image: dcr.buyme360.com/plu-capstone/rust/arm:latest
+#  stage: build
+#  cache:
+#    key: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME-arm"
+#    paths:
+#      - cargo/
+#      - checkers/target/
+#  script:
+#    - mkdir -p cargo
+#    - cp /root/.cargo/config cargo
+#    - cargo build --release --verbose --manifest-path=checkers/Cargo.toml 2>&1 | tee log.txt
+#  artifacts:
+#    paths:
+#      - checkers/target/arm-unknown-linux-musleabi/release/blockscape
+#    expire_in: 2 days
 
 
 #pages:
@@ -92,16 +92,30 @@ package:
   dependencies:
     - build
 
-package_arm:
-  image: dcr.buyme360.com/devops/docker:latest
-  stage: package
+#package_arm:
+#  image: dcr.buyme360.com/devops/docker:latest
+#  stage: package
+#  script:
+#    - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
+#    - docker build -t $ARM_IMAGE_TAG -f Dockerfile.slim --build-arg RELEASE=arm-unknown-linux-musleabi/release --build-arg PRODUCT=checkers .
+#    - docker push $ARM_IMAGE_TAG
+#  dependencies:
+#    - build_arm
+
+auto_mirror:
+  image: alpine/git:latest
+  stage: deploy
   script:
-    - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
-    - docker build -t $ARM_IMAGE_TAG -f Dockerfile.slim --build-arg RELEASE=arm-unknown-linux-musleabi/release --build-arg PRODUCT=checkers .
-    - docker push $ARM_IMAGE_TAG
-  dependencies:
-    - build_arm
-    
+    - if [ ! -z "$GITHUB_PUSH_KEY" ]; then
+    -   mkdir /root/.ssh
+    -   echo "$GITHUB_PUSH_KEY" > /root/.ssh/id_rsa
+    -   chmod 400 /root/.ssh/id_rsa
+    # we have to include this in order for github's server to be verified
+    -   echo "github.com,192.30.252.130 ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEAq2A7hRGmdnm9tUDbO9IDSwBK6TbQa+PXYPCPy6rbTrTtw7PHkccKrpp0yVhp5HdEIcKr6pLlVDBfOLX9QUsyCOV0wzfjIJNlGEYsdlLJizHhbn2mUjvSAHQqZETYP81eFzLQNnPHt4EVVUh7VfDESU84KezmD5QlWpXLmvU31/yMf+Se8xhHTvKSCZIFImWwoG6mbUoWf9nzpIoaSjB+weqqUUmpaaasXVal72J+UX2B+2RPW3RcT0eOzQgqlJL3RKrTJvdsjE3JEAvGq3lGHSZXy28G3skua2SmVi/w4yCE6gbODqnTWlg7+wC604ydGXA8VJiS5ap43JXiUFFAaQ==" > /root/.ssh/known_hosts
+    -   git push git@github.com:blockscape/blockscape.git HEAD:$CI_COMMIT_REF_NAME
+    -   git push --tags git@github.com:blockscape/blockscape.git HEAD:$CI_COMMIT_REF_NAME
+    - fi
+
 deploy:
   image: dcr.buyme360.com/devops/kube-deploy:latest
   stage: deploy
@@ -116,7 +130,7 @@ deploy:
     - apply_template blockscape-client-1.yaml
     - apply_template explorer.yaml
     - apply_template ingress.yaml
-    - apply_template certificate.yaml
+    #- apply_template certificate.yaml
     - apply_template node-ports.yaml
   environment:
     name: staging/$CI_COMMIT_REF_NAME
@@ -136,6 +150,7 @@ stop_deploy:
     - delete_template blockscape-client-1.yaml
     - delete_template explorer.yaml
     - delete_template ingress.yaml
+    - delete_template node_ports.yaml
   when: manual
   environment:
     name: staging/$CI_COMMIT_REF_NAME

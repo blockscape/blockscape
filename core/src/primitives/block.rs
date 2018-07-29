@@ -1,10 +1,7 @@
 use bin::{Bin, JBin};
-use bincode;
-use hash::{hash_obj, hash_pub_key, merge_hashes};
-use openssl::pkey::PKey;
-use primitives::{U256, U160, JU160, JU256, U256_ZERO};
+use hash::{hash_obj, merge_hashes};
+use primitives::{U256, JU256, U256_ZERO};
 use range::Range;
-use signer::{sign_bytes, verify_bytes};
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::ops::{Deref, DerefMut};
@@ -24,11 +21,7 @@ pub struct BlockHeader {
     /// Hash identifer of the txn list
     pub merkle_root: U256,
     /// Binary blob of data which can be used to save things such as difficulty
-    pub blob: Bin,
-    /// The person who created the block and signed it
-    pub creator: U160,
-    /// Signature of the block creator to verify integrity of the contained data
-    pub signature: Bin
+    pub blob: Bin
 }
 
 impl PartialEq for BlockHeader {
@@ -41,42 +34,6 @@ impl BlockHeader {
     /// Calculate the hash of this block by hashing all data in the header.
     pub fn calculate_hash(&self) -> U256 {
         hash_obj(self)
-    }
-
-    /// Sign the data within the block header except the signature itself.
-    pub fn sign(mut self, key: &PKey) -> BlockHeader {
-        self.creator = hash_pub_key(&key.public_key_to_der().unwrap());
-        let bytes = self.get_signing_bytes();
-
-        BlockHeader {
-            version: self.version,
-            timestamp: self.timestamp,
-            shard: self.shard,
-            prev: self.prev,
-            merkle_root: self.merkle_root,
-            blob: self.blob,
-            creator: self.creator,
-            signature: sign_bytes(&bytes, key).into()
-        }
-    }
-
-    /// Verify the signature, requires the public key which signed it to be provided.
-    pub fn verify_signature(&self, key: &PKey) -> bool {
-        let bytes = self.get_signing_bytes();
-        verify_bytes(&bytes, &self.signature, key)
-    }
-
-    /// Get the bytes which are signed or verified for this object.
-    fn get_signing_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        bytes.extend(bincode::serialize(&self.version, bincode::Bounded(2)).unwrap());
-        bytes.extend(bincode::serialize(&self.timestamp, bincode::Bounded(8)).unwrap());
-        bytes.extend(self.shard.to_vec());
-        bytes.extend(self.prev.to_vec());
-        bytes.extend(self.merkle_root.to_vec());
-        bytes.extend_from_slice(&self.blob);
-        bytes.extend(self.creator.to_vec());
-        bytes
     }
 }
 
@@ -165,11 +122,6 @@ impl Block {
         if len == 1 { hashes[0] }
         else { U256_ZERO }
     }
-
-    /// Sign the data within the block header except the signature itself.
-    pub fn sign(mut self, key: &PKey) -> Block {
-        self.header = self.header.sign(key); self
-    }
 }
 
 
@@ -181,9 +133,7 @@ pub struct JBlockHeader {
     shard: JU256,
     prev: JU256,
     merkle_root: JU256,
-    blob: JBin,
-    creator: JU160,
-    signature: JBin
+    blob: JBin
 }
 
 #[derive(Serialize, Deserialize)]
@@ -200,9 +150,7 @@ impl From<BlockHeader> for JBlockHeader {
             shard: h.shard.into(),
             prev: h.prev.into(),
             merkle_root: h.merkle_root.into(),
-            blob: h.blob.into(),
-            creator: h.creator.into(),
-            signature: h.signature.into()
+            blob: h.blob.into()
         }
     }
 }
@@ -215,9 +163,7 @@ impl Into<BlockHeader> for JBlockHeader {
             shard: self.shard.into(),
             prev: self.prev.into(),
             merkle_root: self.merkle_root.into(),
-            blob: self.blob.into(),
-            creator: self.creator.into(),
-            signature: self.signature.into()
+            blob: self.blob.into()
         }
     }
 }

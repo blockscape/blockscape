@@ -44,8 +44,6 @@ use futures::sync::oneshot::channel;
 
 use tokio_core::reactor::*;
 
-use openssl::pkey::PKey;
-
 use blockscape_core::env;
 use blockscape_core::forging::epos::{EPoS, EPoSConfig};
 use blockscape_core::network::client::*;
@@ -110,13 +108,13 @@ fn main() {
     let net_client = h.send(ClientMsg::AttachNetwork(genesis_net, ShardMode::Primary)).wait().expect("Could not attach to root network!");
     threads.push(t);
 
+    let forge_key = boot::load_or_generate_key("forge");
+
     let checkers_game = Arc::new(CheckersGame{ 
         rk: Arc::clone(&rk), 
-        sign_key: PKey::private_key_from_pem(boot::TESTING_PRIVATE).unwrap(), 
+        sign_key: boot::load_or_generate_key("forge"), 
         cache: game_cache 
     });
-
-    let forge_key = PKey::private_key_from_pem(boot::TESTING_PRIVATE).unwrap();
 
     let ctx = Rc::new(Context {
         rk: rk.clone(),

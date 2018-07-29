@@ -22,16 +22,10 @@ impl AsBin for BlockchainEntry {
     fn as_bin(&self) -> Bin {
         use self::BlockchainEntry::*;
         match self {
-            &Txn(ref h) => prefix(b"T", h),
-            &BlockHeader(ref h) => prefix(b"B", h),
-            &TxnList(ref h) => prefix(b"L", h)
+            Txn(h) => prefix(b"T", h),
+            BlockHeader(h) => prefix(b"B", h),
+            TxnList(h) => prefix(b"L", h)
         }
-    }
-}
-
-impl Into<Key> for BlockchainEntry {
-    fn into(self) -> Key {
-        Key::Blockchain(self)
     }
 }
 
@@ -52,20 +46,14 @@ impl AsBin for CacheEntry {
     fn as_bin(&self) -> Bin {
         use self::CacheEntry::*;
         match self {
-            &BlocksByHeight(ref h) => prefix(b"HGT", h),
-            &HeightByBlock(ref b) => prefix(b"BHT", b),
-            &BlocksByTxn(ref h) => prefix(b"TBK", h),
-            &TxnsByAccount(ref h) => prefix(b"ATN", h),
-            &TxnReceiveTime(ref h) => prefix(b"RCT", h),
-            &ContraMut(ref b) => prefix(b"CMT", b),
-            &CurrentHead => Bin::from(b"CHead" as &[u8])
+            BlocksByHeight(h) => prefix(b"HGT", h),
+            HeightByBlock(b) => prefix(b"BHT", b),
+            BlocksByTxn(h) => prefix(b"TBK", h),
+            TxnsByAccount(h) => prefix(b"ATN", h),
+            TxnReceiveTime(h) => prefix(b"RCT", h),
+            ContraMut(b) => prefix(b"CMT", b),
+            CurrentHead => Bin::from(b"CHead" as &[u8])
         }
-    }
-}
-
-impl Into<Key> for CacheEntry {
-    fn into(self) -> Key {
-        Key::Cache(self)
     }
 }
 
@@ -84,18 +72,12 @@ impl AsBin for NetworkEntry {
     fn as_bin(&self) -> Bin {
         use self::NetworkEntry::*;
         match self {
-            &Plot(ref id, tick) => prefix(&prefix(b"PLT", id), &(tick / DB::PLOT_EVENT_BUCKET_SIZE)),
-            &ValidatorKey(ref k) => prefix(b"VKY", k),
-            &ValidatorStake(ref k) => prefix(b"VSK", k),
-            &AdminKeyID => Bin::from(b"ADMIN" as &[u8]),
-            &Generic(ref b) => b.clone()
+            Plot(id, tick) => prefix(&prefix(b"PLT", id), &(tick / DB::PLOT_EVENT_BUCKET_SIZE)),
+            ValidatorKey(k) => prefix(b"VKY", k),
+            ValidatorStake(k) => prefix(b"VSK", k),
+            AdminKeyID => Bin::from(b"ADMIN" as &[u8]),
+            Generic(b) => b.clone()
         }
-    }
-}
-
-impl Into<Key> for NetworkEntry {
-    fn into(self) -> Key {
-        Key::Network(self)
     }
 }
 
@@ -113,48 +95,27 @@ impl AsBin for Key {
     fn as_bin(&self) -> Bin {
         use self::Key::*;
         match self {
-            &Blockchain(ref e) => prefix(b"b", e),
-            &Cache(ref e)      => prefix(b"c", e),
-            &Network(ref e)    => prefix(b"n", e)
+            Blockchain(e) => prefix(b"b", e),
+            Cache(e)      => prefix(b"c", e),
+            Network(e)    => prefix(b"n", e)
         }
     }
 }
 
+impl From<BlockchainEntry> for Key {
+    fn from(e: BlockchainEntry) -> Self {
+        Key::Blockchain(e)
+    }
+}
 
+impl From<CacheEntry> for Key {
+    fn from(e: CacheEntry) -> Self {
+        Key::Cache(e)
+    }
+}
 
-// A database key, comprised of (prefix, key-value, postfix)
-// #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-// pub struct Key(pub Option<&'static [u8]>, pub Bin, pub &'static [u8]);
-// impl Key {
-//     /// Add a prefix to raw data.
-//     #[inline]
-//     pub fn with_prefix(prefix: &'static [u8], data: &[u8]) -> Vec<u8> {
-//         let mut t = Vec::from(prefix);
-//         t.extend_from_slice(data); t
-//     }
-
-//     /// Add a postfix to raw data
-//     #[inline]
-//     pub fn with_postfix(data: &[u8], postfix: &'static [u8]) -> Vec<u8> {
-//         let mut t = Vec::from(data);
-//         t.extend_from_slice(postfix); t
-//     }
-
-//     /// Add a prefix and postfix to raw data.
-//     #[inline]
-//     pub fn with_pre_post_fix(prefix: &'static [u8], data: &[u8], postfix: &'static [u8]) -> Vec<u8> {
-//         let mut t = Vec::from(prefix);
-//         t.extend_from_slice(data);
-//         t.extend_from_slice(postfix); t
-//     }
-// }
-
-// impl AsBin for Key {
-//     fn as_bin(&self) -> Bin {
-//         if let Some(pre) = self.0 {
-//             Self::with_pre_post_fix(pre, &self.1, self.2)
-//         } else {
-//             Self::with_postfix(&self.1, self.2)
-//         }
-//     }
-// }
+impl From<NetworkEntry> for Key {
+    fn from(e: NetworkEntry) -> Self {
+        Key::Network(e)
+    }
+}
