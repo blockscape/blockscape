@@ -871,6 +871,8 @@ impl Database for DatabaseImpl {
         self.db.write(wb)?;
         self.head = deserialize(&self._get(CacheEntry::CurrentHead.into()).unwrap())
             .expect("HeadRef was not able to be retrieved from the database after applying changes.");
+
+        debug!("Applied multiple writes to DB; head is now ({}) of height {}.", self.head.block, self.head.height);
         Ok(())
     }
 
