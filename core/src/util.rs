@@ -1,4 +1,4 @@
-use bin::{AsBin, Bin};
+use bin::Bin;
 
 use futures::future::Shared;
 use futures::sync::oneshot::Receiver;
@@ -32,7 +32,8 @@ macro_rules! tryf(
 
 /// Verifies if the given binary string matches a simple pattern. Only supports asterisk for right now,
 /// and asterisk cannot be used in bin at all.
-fn simple_match(topic: &Bin, pattern: &Bin) -> bool {
+#[allow(dead_code)]
+pub fn simple_match(topic: &Bin, pattern: &Bin) -> bool {
     assert!(!topic.contains(&b'*'), "Simple match string contained wildcard pattern");
 
     if pattern.is_empty() {

@@ -96,7 +96,7 @@ pub fn parse_args_simple<T: DeserializeOwned>(p: Params, size: Range<usize>) -> 
 
 
 pub fn expect_one_arg<T: DeserializeOwned>(p: Params) -> Result<T, Error> {
-	let mut array = expect_array(p, (1..2))?;
+	let mut array = expect_array(p, 1..2)?;
 	from_value(array.pop().unwrap())
 		.map_err( |e| Error::invalid_params(format!("{:?}", e)) )
 }
@@ -105,7 +105,7 @@ pub fn expect_two_args<A, B>(p: Params) -> Result<(A, B), Error>
 	where A: DeserializeOwned,
 		  B: DeserializeOwned
 {
-	let mut array = expect_array(p, (2..3))?;
+	let mut array = expect_array(p, 2..3)?;
 	let b = from_value(array.pop().unwrap())
 		.map_err( |e| Error::invalid_params(format!("{:?}", e)) )?;
 	let a = from_value(array.pop().unwrap())

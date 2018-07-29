@@ -66,7 +66,7 @@ impl NetworkRPC {
     }
 
     fn attach_network(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
-        let args = parse_args_simple::<String>(params, (2..1000))?;
+        let args = parse_args_simple::<String>(params, 2..1000)?;
 
         let network_id: U256 = args[1].parse().unwrap_or(U256_ZERO);
 
@@ -101,7 +101,7 @@ impl NetworkRPC {
     }
 
     fn add_node(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
-        let args = parse_args_simple::<String>(params, (1..4))?;
+        let args = parse_args_simple::<String>(params, 1..4)?;
 
         if args.len() == 3 {
             Ok(Value::String("Not implemented".into()))
