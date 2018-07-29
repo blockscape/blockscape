@@ -18,6 +18,7 @@ struct BlockTreeNode {
 
 /// A record keeper which maintains an in-memory database of blocks and transactions
 pub struct DummyRecordKeeper {
+    #[allow(dead_code)]
     blocks: Arc<BlockTreeNode>,
     blocks_hashes: RwLock<HashMap<U256, Arc<BlockTreeNode>>>,
     txns: RwLock<HashMap<U256, Txn>>,

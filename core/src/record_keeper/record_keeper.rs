@@ -455,7 +455,7 @@ impl<DB: Database> RecordKeeper for RecordKeeperImpl<DB> {
 
     /// Get the shares of a validator given their ID.
     /// TODO: Handle shard-based shares
-    fn get_validator_stake(&self, id: &U160) -> Result<u64, Error> {
+    fn get_validator_stake(&self, _id: &U160) -> Result<u64, Error> {
         // temp, come back to this later
         /*self.db.read()
             .get_validator_stake(*id)*/

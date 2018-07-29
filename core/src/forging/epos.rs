@@ -392,7 +392,7 @@ impl EPoS {
             return false;
         }
 
-        let exp_diff = res.unwrap();
+        let exp_diff = res.unwrap(); 
 
         // we have to check that the difficulty recorded in the block matches
         // TODO: check to see that no validators have signed the block as well?
