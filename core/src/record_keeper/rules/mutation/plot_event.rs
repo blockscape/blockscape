@@ -1,6 +1,6 @@
 use bin::Bin;
 use primitives::{Change, U160};
-use record_keeper::{Error, LogicError, NetState};
+use record_keeper::{Error, LogicError, DBState};
 use record_keeper::PlotEvent as PE;
 use record_keeper::rules::MutationRule;
 use record_keeper::rules::plot_events_rule_iter;
@@ -21,7 +21,7 @@ impl PlotEvent {
 }
 
 impl MutationRule for PlotEvent {
-    fn is_valid(&self, _state: &NetState, mutation: &Vec<(Change, U160)>, _cache: &mut Bin) -> Result<(), Error> {
+    fn is_valid(&self, _state: &DBState, mutation: &Vec<(Change, U160)>, _cache: &mut Bin) -> Result<(), Error> {
         plot_events_rule_iter(Self::validate, mutation)
     }
 

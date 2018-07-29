@@ -1,5 +1,5 @@
 use primitives::Txn;
-use record_keeper::{Error, LogicError, NetState};
+use record_keeper::{Error, LogicError, DBState};
 use record_keeper::rules::TxnRule;
 use primitives::Change;
 use record_keeper::key::*;
@@ -7,7 +7,7 @@ use record_keeper::key::*;
 /// The txn creator must be the Admin if it contains an admin change
 pub struct AdminCheck;
 impl TxnRule for AdminCheck {
-    fn is_valid(&self, state: &NetState, txn: &Txn) -> Result<(), Error> {
+    fn is_valid(&self, state: &DBState, txn: &Txn) -> Result<(), Error> {
         let mut contains_admin = false;
         for change in txn.mutation.changes.iter() {
             match change {

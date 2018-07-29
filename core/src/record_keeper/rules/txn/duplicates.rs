@@ -1,5 +1,5 @@
 use primitives::Txn;
-use record_keeper::{Error, NetState};
+use record_keeper::{Error, DBState};
 use record_keeper::rules::{TxnRule, MutationRule};
 
 use record_keeper::rules::mutation::Duplicates as MutationDuplicates;
@@ -9,7 +9,7 @@ use record_keeper::rules::mutation::Duplicates as MutationDuplicates;
 /// NewValidator or duplicate PlotEvents
 pub struct Duplicates;
 impl TxnRule for Duplicates {
-    fn is_valid(&self, state: &NetState, txn: &Txn) -> Result<(), Error> {
+    fn is_valid(&self, state: &DBState, txn: &Txn) -> Result<(), Error> {
         let mut mutation = Vec::new();
         for change in txn.mutation.changes.iter().cloned() {
             mutation.push((change, txn.creator));

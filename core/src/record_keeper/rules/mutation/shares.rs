@@ -1,6 +1,6 @@
 use bin::Bin;
 use primitives::{Change, U160};
-use record_keeper::{Error, LogicError, NetState};
+use record_keeper::{Error, LogicError, DBState, Database};
 use record_keeper::rules::MutationRule;
 use std::collections::HashMap;
 use record_keeper::key::NetworkEntry;
@@ -8,7 +8,7 @@ use record_keeper::key::NetworkEntry;
 /// Make sure there are enough shares for transfers and slash txns. Also make sure
 pub struct Shares;
 impl MutationRule for Shares {
-    fn is_valid(&self, state: &NetState, mutation: &Vec<(Change, U160)>, _cache: &mut Bin) -> Result<(), Error> {
+    fn is_valid(&self, state: &DBState, mutation: &Vec<(Change, U160)>, _cache: &mut Bin) -> Result<(), Error> {
         // record the people sending money to make sure they do not send more than they have.
         let mut senders: HashMap<U160, u64> = HashMap::new();
 

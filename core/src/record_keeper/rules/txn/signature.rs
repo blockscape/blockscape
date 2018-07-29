@@ -1,5 +1,5 @@
 use primitives::Txn;
-use record_keeper::{Error, LogicError, NetState};
+use record_keeper::{Error, LogicError, DBState, Database};
 use record_keeper::rules::TxnRule;
 use openssl::pkey::PKey;
 use std::error::Error as StdErr;
@@ -8,7 +8,7 @@ use primitives::Change;
 /// The signature on the txn must be by a valid signer and the hash must match the signed hash.
 pub struct Signature;
 impl TxnRule for Signature {
-    fn is_valid(&self, state: &NetState, txn: &Txn) -> Result<(), Error> {
+    fn is_valid(&self, state: &DBState, txn: &Txn) -> Result<(), Error> {
         let der = match state.get_validator_key(txn.creator) {
             Ok(k) => k,
             Err(Error::NotFound(..)) => {
