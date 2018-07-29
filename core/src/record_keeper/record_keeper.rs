@@ -341,7 +341,14 @@ impl<DB: Database> RecordKeeper for RecordKeeperImpl<DB> {
         // construct a write batch of all changes we are making using a DBState object.
         let wb = {  // because consuming state with the compile operation is not enough for the borrow checker...
             let mut state = DBState::new(&*db);
-            // we know it is a valid block, so go ahead and add it's transactions, and then it.
+
+            // we know it is a valid block, so go ahead and add it and then its transactions
+            if !state.add_block(block)? {
+                // between checking if the block was valid and taking out a write lock, the block
+                // has already been added.
+                return Ok(false);
+            }
+
             for txn_hash in block.txns.iter() {
                 if let Some((recv_time, txn)) = pending_txns.remove(txn_hash) { // we will need to add it
                     state.add_txn(&txn, recv_time)?;
@@ -351,9 +358,6 @@ impl<DB: Database> RecordKeeper for RecordKeeperImpl<DB> {
                     assert!(state.get_txn(*txn_hash).is_ok())
                 }
             }
-
-            // record the block
-            assert!(state.add_block(block)?); // we already checked if the block was known
 
             // move the network state
             initial_height = state.get_current_block_height();
