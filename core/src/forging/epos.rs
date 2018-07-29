@@ -395,8 +395,9 @@ impl EPoS {
         let exp_diff = res.unwrap();
 
         // we have to check that the difficulty recorded in the block matches
+        // TODO: check to see that no validators have signed the block as well?
         if block.blob.is_empty() {
-            // simply set it to something basic
+            // simply set it to what we have
             block.blob = bincode::serialize(&EPoSBlockData {
                 difficulty: exp_diff,
                 sigs: Vec::new()
@@ -418,19 +419,10 @@ impl EPoS {
         }
 
         // the last of the validation
-
+        // look at all of our signing keys and figure out which one would find the block the fastest
         let mut cur_best: Option<(Block, u64)> = None;
 
         for &(ref key_id, ref key) in &self.keys {
-            let mut key_block = block.clone();
-
-            let res = EPoSBlockData::apply_block(&mut key_block, exp_diff, &target, &key);
-            if let Err(e) = res {
-                warn!("Block check was not valid: {:?}, {:?}", e, key_block);
-                return false;
-            }
-            let actual = res.unwrap().get_relevant_validation_data().1;
-
             // get the stake of the account we are forging
             let res = self.ctx.rk.get_validator_stake(&key_id);
             if let Err(e) = res {
@@ -439,6 +431,19 @@ impl EPoS {
             }
 
             let stake = res.unwrap();
+
+            if stake == 0 {
+                continue; // no use in forging with an empty balance
+            }
+
+            let mut key_block = block.clone();
+
+            let res = EPoSBlockData::apply_block(&mut key_block, exp_diff, &target, &key);
+            if let Err(e) = res {
+                warn!("Block check was not valid: {:?}, {:?}", e, key_block);
+                return false;
+            }
+            let actual = res.unwrap().get_relevant_validation_data().1;
 
             let w = self.gen_wait(exp_diff, stake, target.into(), actual.into());
 
@@ -453,6 +458,7 @@ impl EPoS {
             }
         }
 
+        // calculate if the current best block should replace what we are already trying to forge
         if let Some(best) = cur_best {
             let disp = block.timestamp.millis() as u64 + best.1;
 
@@ -461,7 +467,14 @@ impl EPoS {
 
             if prev_best.is_some() {
                 let pb = prev_best.as_mut().unwrap();
-                if disp < pb.0 {
+
+                let new_height = self.ctx.rk.get_block_height(&block.prev)
+                    .expect("Previous block should exist");
+                let old_height = self.ctx.rk.get_block_height(&pb.1.prev)
+                    .expect("Previous block should exist for accepted forge work");
+
+                // either the new block will have a higher height or a shorter weight
+                if new_height > old_height || disp < pb.0 {
                     // update block and timeout
                     *pb = (req_validators, best.0, disp);
 
@@ -516,6 +529,7 @@ impl EPoS {
                 })
             }
         }
+        // else we cannot forge a block with any of the accounts we have so ignore
 
         true
     }
