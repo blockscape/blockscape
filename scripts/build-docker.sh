@@ -1,6 +1,6 @@
 set -e
 
-DIR=$(readlink -e $(dirname $0)/..)
+DIR=$(realpath $(dirname $0)/..)
 
 if docker ps -a | grep blockscape_build_x86; then
     docker start -i blockscape_build_x86
