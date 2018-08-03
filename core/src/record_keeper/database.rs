@@ -426,9 +426,9 @@ pub trait Database: Send + Sync {
     /// walking process. E.g., if it returns (5, 100), then the 5 latest blocks were undone and are
     /// no longer part of the network state and any cached data at or after tick 100 should be
     /// thrown out because the events are now different.
+    ///
+    /// See also `calculate_invalidations_to_block`.
     fn walk(&mut self, b_block: &U256) -> Result<(u64, u64), Error> {
-        use std::cmp::min;
-
         let a_block = self.get_current_block_hash();
         if a_block == *b_block { return Ok((0, <u64>::max_value())); }
         debug!("Walking the network state from {} to {}.", a_block, b_block);
@@ -448,7 +448,7 @@ pub trait Database: Send + Sync {
             debug_assert!(self.get_current_block_hash() == b);
             let header = self.get_block_header(&b)?;
             let contra = self._get_contra(b)?;
-            earliest_invalidated_tick = min(earliest_invalidated_tick, contra.earliest_game_event());
+            earliest_invalidated_tick = earliest_invalidated_tick.min(contra.earliest_game_event());
             self._undo_mutate(contra)?;
             self._update_current_block(header.prev, Some(h - 1))?;
         }
@@ -457,7 +457,7 @@ pub trait Database: Send + Sync {
             let block = self.get_block(&b)?;
             debug_assert!(block.prev == self.get_current_block_hash());
             let mutation = self._get_mutation(&block)?;
-            earliest_invalidated_tick = min(earliest_invalidated_tick, mutation.earliest_game_event());
+            earliest_invalidated_tick = earliest_invalidated_tick.min(mutation.earliest_game_event());
             let contra = self._mutate(&mutation)?;
             self._add_contra(b, &contra)?;
             self._update_current_chain(h, &b)?;
@@ -488,6 +488,43 @@ pub trait Database: Send + Sync {
             let head = self.find_chain_head()?;
             self.walk(&head)
         }
+    }
+
+    /// This function is very similar to `walk`, however, instead of changing the database state,
+    /// all it does is pretends to walk to a specified block from the current state and calculates
+    /// what would have been invalidated along the path. This can be used going up the chain, or
+    /// going down the chain.
+    ///
+    /// Returns the number of blocks we undid, the number of blocks we added, and the earliest tick
+    /// we modified.
+    ///
+    /// See also `walk`.
+    fn calculate_invalidations_to_block(&self, b_block: &U256) -> Result<(u64, u64, u64), Error> {
+        let a_block = self.get_current_block_hash();
+        if a_block == *b_block { return Ok((0, 0, <u64>::max_value())); }
+        assert!(!b_block.is_zero(), "Cannot walk to nothing");
+
+        let (a_heights, b_heights) = self.calculate_block_path(&a_block, b_block)?;
+
+        // the number of blocks invalidated is equal to the number of blocks we are going to undo.
+        let undone_blocks = a_heights.len() as u64;
+        let new_blocks = b_heights.len() as u64;
+        let mut earliest_tick = 0u64;
+
+        // go down `a` chain and then go up `b` chain.
+        for (h, b) in a_heights.into_iter().rev() {
+            debug_assert!(h > 1);
+            let contra = self._get_contra(b)?;
+            earliest_tick = earliest_tick.min(contra.earliest_game_event());
+        }
+        for (h, b) in b_heights {
+            debug_assert!(h > 1);
+            let block = self.get_block(&b)?;
+            let mutation = self._get_mutation(&block)?;
+            earliest_tick = earliest_tick.min(mutation.earliest_game_event());
+        }
+
+        Ok((undone_blocks, new_blocks, earliest_tick))
     }
 
     /// Returns a map of events for each tick that happened after a given tick. Note: it will not

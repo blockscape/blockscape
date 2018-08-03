@@ -18,6 +18,7 @@ pub struct DBState<'a> {
 }
 
 impl<'db> DBState<'db> {
+    /// Create a new DBState object which is an exact mirror of the current database.
     pub fn new(db: &'db dyn Database) -> DBState<'db> {
         let block = db.get_current_block_hash();
         let height = db.get_current_block_height();
@@ -29,11 +30,24 @@ impl<'db> DBState<'db> {
         }
     }
 
+    /// Move a DBState object to a new head. This should be chained onto a newly constructed state
+    /// as `let state = DBState::new(&db).at(block_hash)?;`.
+    pub fn at(mut self, block: U256) -> Result<DBState<'db>, Error> {
+        self.walk(&block)?;
+        Ok(self)
+    }
+
+    /// Retrieve an object from this state object by first retrieving the raw value stored in the db
+    /// and then deserializing it into the appropriate type.
     pub fn get_obj<T: DeserializeOwned>(&self, key: Key) -> Result<T, Error> {
         let raw = self._get(key)?;
         Ok(deserialize(&raw)?)
     }
 
+    /// Take the difference between this state and the underlying database and compile them into a
+    /// WriteBatch which may be applied atomically to RocksDB. The changes should only be applied
+    /// to the same database which is referenced by this state, and will make the database identical
+    /// to this current state once done.
     pub fn compile(mut self) -> Result<WriteBatch, Error> {
         use std::mem::swap;
         let mut wb = WriteBatch::default();

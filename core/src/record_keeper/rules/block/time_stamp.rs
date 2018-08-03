@@ -7,9 +7,9 @@ use time::Time;
 /// The time stamp must not be after the current time and must be after the previous block.
 pub struct TimeStamp;
 impl BlockRule for TimeStamp {
-    fn is_valid(&self, _state: &DBState, db: &Database, block: &Block) -> Result<(), Error> {
+    fn is_valid(&self, prev_state: &DBState, block: &Block) -> Result<(), Error> {
         if (block.timestamp > Time::current()) ||
-           (block.timestamp < db.get_block_header(&block.prev)?.timestamp)
+           (block.timestamp < prev_state.get_block_header(&block.prev)?.timestamp)
         { Err(LogicError::InvalidTime.into()) } else { Ok(()) }
     }
 

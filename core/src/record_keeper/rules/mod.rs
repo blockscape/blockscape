@@ -9,7 +9,6 @@ pub mod mutation;
 use primitives::{Change, Block, Txn, U160, Event};
 use std::collections::LinkedList;
 use std::fmt::Debug;
-use super::database::Database;
 use super::{Error, DBState, PlotEvent};
 use bin::Bin;
 use std::fmt;
@@ -23,7 +22,8 @@ pub trait BlockRule: Send + Sync {
     /// encountered.
     /// **Note: There is overlap between the information in DB and NetState, use DB only for
     /// Chainstate and Cachestate, do not use it for the Networkstate.**
-    fn is_valid(&self, state: &DBState, db: &Database, block: &Block) -> Result<(), Error>;
+    /// `prev_state` is the network state at the block prior to this one.
+    fn is_valid(&self, prev_state: &DBState, block: &Block) -> Result<(), Error>;
     /// Retrieve a description of the rule.
     fn description(&self) -> &'static str;
 }
@@ -48,7 +48,7 @@ pub trait TxnRule: Send + Sync {
 /// in RAM, and they will need to keep multiple checkpoints to allow going backwards.
 pub trait MutationRule: Send + Sync {
     /// Return Ok if it is valid, or an error explaining what rule was broken or what error was encountered.
-    fn is_valid(&self, net_state: &DBState, mutation: &Vec<(Change, U160)>, cache: &mut Bin) -> Result<(), Error>;
+    fn is_valid(&self, state: &DBState, mutation: &Vec<(Change, U160)>, cache: &mut Bin) -> Result<(), Error>;
     /// Retrieve a description of the rule.
     fn description(&self) -> &'static str;
 }
