@@ -332,11 +332,12 @@ impl<DB: Database> RecordKeeper for RecordKeeperImpl<DB> {
 
         self.is_valid_block(block)?;
 
-        let mut db = self.db.write();
         let mut pending_txns = self.pending_txns.write();
+        let mut db = self.db.write();
 
         // get around the scope issues
-        let (initial_height, invalidated_blocks, earliest_invalidated_tick, uncled);
+        let initial_height = db.get_current_block_height();
+        let (invalidated_blocks, earliest_invalidated_tick, uncled);
 
         // construct a write batch of all changes we are making using a DBState object.
         let wb = {  // because consuming state with the compile operation is not enough for the borrow checker...
@@ -358,9 +359,6 @@ impl<DB: Database> RecordKeeper for RecordKeeperImpl<DB> {
                     assert!(state.get_txn(*txn_hash).is_ok())
                 }
             }
-
-            // move the network state
-            initial_height = state.get_current_block_height();
 
             {
                 let (a, b) = state.walk_to_head()?;
@@ -413,10 +411,10 @@ impl<DB: Database> RecordKeeper for RecordKeeperImpl<DB> {
             return Ok(false);
         }
 
-        let mut txns = self.pending_txns.write();
+        let mut pending_txns = self.pending_txns.write();
         let db = self.db.read();
 
-        let pending_size = txns.values()
+        let pending_size = pending_txns.values()
             .fold(0, |acc, &(_, ref t)| acc + (t.calculate_size()));
         if pending_size + txn.calculate_size() > MAX_PENDING_TXN_MEM {
             return Err(Error::OutOfMemory("Maximum pending txn memory reached.".into()));
@@ -432,8 +430,8 @@ impl<DB: Database> RecordKeeper for RecordKeeperImpl<DB> {
         debug!("New pending txn ({})", txn.calculate_hash());
 
         // add the event
-        self.is_valid_txn_given_lock(&*db, &*txns, &txn)?;
-        txns.insert(hash, (Time::current(), txn.clone()));
+        self.is_valid_txn_given_lock(&*db, &*pending_txns, &txn)?;
+        pending_txns.insert(hash, (Time::current(), txn.clone()));
 
         // notify listeners
         self.record_listeners.lock().notify(&RecordEvent::NewTxn { fresh, txn: txn.clone() });
@@ -463,8 +461,116 @@ impl<DB: Database> RecordKeeper for RecordKeeperImpl<DB> {
         // temp, come back to this later
         /*self.db.read()
             .get_validator_stake(*id)*/
-        
+
         Ok(1)
+    }
+
+    /// Import a package of blocks and transactions. Returns the hash of the last block imported.
+    fn import_pkg(&self, pkg: BlockPackage) -> Result<U256, Error> {
+        let time = Time::current();
+
+        // Retrieve the blocks and txns to import
+        let (blocks, txns) = pkg.unpack();
+        let txns = txns.into_iter()
+            .map(|(k, v)| (k, (time, v)))
+            .collect::<HashMap<U256, (Time, Txn)>>();
+        debug!("Importing {} blocks and {} txns to database.", blocks.len(), txns.len());
+
+        if blocks.is_empty() {
+            // it is invalid to import an empty block package
+            return Err(Error::Deserialize("Empty Block Package".into()));
+        }
+
+        let last = blocks.last().unwrap().calculate_hash();
+
+        // Lock the state as we make verify and plan (and eventually make) changes
+        let mut pending_txns = self.pending_txns.write();
+        let mut db = self.db.write();
+
+        let initial_height = db.get_current_block_height();
+        let initial_block = db.get_current_block_hash();
+
+        // get around scope issues.
+        let (invalidated_blocks, earliest_invalidated_tick);
+
+        let wb = {
+            let mut state = DBState::new(&*db);
+
+            // Add all blocks and associated transactions and verify they are valid
+            for block in blocks.iter() {
+                let block_hash = block.calculate_hash();
+                if state.get_block_header(&block_hash).is_ok() {
+                    // the block has already in the system.
+                    continue;
+                }
+
+                { // Check if it is valid
+                    // Yipee for second level differences!
+                    // (I just new making state implement DB would be worthwhile...)
+                    // TODO: should we walk our own state forward to reduce how far subsequent blocks have to walk to get to the same place?
+                    let prior_block_state = DBState::new(&state).at(block.prev)?;
+                    self.is_valid_block_given_state(&prior_block_state, &txns, &block)?;
+                }
+
+                let added = state.add_block(&block)?;
+                debug_assert!(added); // already verified it was not present
+
+                for txn_hash in block.txns.iter() {
+                    let txn = txns.get(txn_hash)
+                        .expect("Missing transaction after validating block from block package.");
+                    state.add_txn(&txn.1, time)?;
+                }
+
+                state.walk_to_head()?;
+            }
+
+            let (_undone_block, new_blocks, earliest_tick) =
+                state.calculate_invalidations_to_block(&initial_block)?;
+            invalidated_blocks = new_blocks;
+            earliest_invalidated_tick = earliest_tick;
+
+            state.compile()?
+        };
+
+        // Write the changes
+        db.apply(wb)?;
+        let db = db.downgrade();
+
+        // Validate all pending transactions against the new state
+        {
+            use std::mem::swap;
+
+            let mut txns = HashMap::with_capacity(pending_txns.len());
+            swap(&mut txns, &mut *pending_txns);
+
+            for (txn_hash, (recv_time, txn)) in txns {
+                if self.is_valid_txn_given_lock(&*db, &*pending_txns, &txn).is_err() {
+                    continue;
+                }
+                // else
+                pending_txns.insert(txn_hash, (recv_time, txn));
+            }
+
+            drop(pending_txns);
+        }
+
+        // Notify listeners of the changes
+        let mut record_listeners = self.record_listeners.lock();
+
+        for block in blocks {
+            let uncled = db.is_part_of_current_chain(block.calculate_hash())?;
+            record_listeners.notify(&RecordEvent::NewBlock { uncled, fresh: false, block });
+        }
+
+        if invalidated_blocks > 0 {
+            record_listeners.notify(&RecordEvent::StateInvalidated {
+                new_height: db.get_current_block_height(),
+                after_height: initial_height - invalidated_blocks,
+                after_tick: earliest_invalidated_tick
+            });
+        }
+
+        Ok(last)
     }
 
     /// Retrieve the current block hash which the network state represents.
@@ -554,11 +660,10 @@ impl<DB: Database> RecordKeeper for RecordKeeperImpl<DB> {
 
     /// Check if a block is valid and all its components.
     fn is_valid_block(&self, block: &Block) -> Result<(), Error> {
+        let pending = self.pending_txns.read();
         let db = self.db.read();
-        let mut state = DBState::new(&*db);
-        state.walk(&block.prev)?;
-
-        self.is_valid_block_given_state(&state, &*db, block)
+        let state = DBState::new(&*db).at(block.prev)?;
+        self.is_valid_block_given_state(&state, &*pending, block)
     }
 
     /// Check if a txn is valid given the current network state. Use this to validate pending txns,
@@ -702,25 +807,29 @@ impl<DB: Database> RecordKeeperImpl<DB> {
     }
 
     /// Internal use function to check if a block and all its sub-components are valid.
-    fn is_valid_block_given_state(&self, state: &DBState, db: &Database, block: &Block) -> Result<(), Error> {
-        rules::block::TimeStamp.is_valid(state, db, block)?;
-        rules::block::MerkleRoot.is_valid(state, db, block)?;
+    fn is_valid_block_given_state(&self, prev_block_state: &DBState, pending: &HashMap<U256, (Time, Txn)>, block: &Block) -> Result<(), Error> {
+        rules::block::TimeStamp.is_valid(prev_block_state, block)?;
+        rules::block::MerkleRoot.is_valid(prev_block_state, block)?;
 
         let mut mutation = Vec::new();
         for txn_hash in &block.txns {
-            let txn = self.get_txn_given_lock(db, &txn_hash)?;
-            self.is_valid_txn_given_state(state, &txn)?;
+            let txn = pending.get(txn_hash)
+                .map(|t| Ok(t.1.clone()))
+                .unwrap_or_else(|| prev_block_state.get_txn(*txn_hash))?;
+
+            self.is_valid_txn_given_state(prev_block_state, &txn)?;
             for change in txn.mutation.changes {
                 mutation.push((change, txn.creator));
             }
         }
 
-        self.is_valid_mutation_given_state(state, &mutation)
+        // verifies all txns are valid together
+        self.is_valid_mutation_given_state(prev_block_state, &mutation)
     }
 
     /// Check if a txn is valid given access to the database and pending txns. Will construct a
-    /// network state.
-    fn is_valid_txn_given_lock(&self, db: &Database, pending: &HashMap<U256, (Time, Txn)>, txn: &Txn) -> Result<(), Error> {
+    /// DBState with all txns applied.
+    fn is_valid_txn_given_lock(&self, db: &dyn Database, pending: &HashMap<U256, (Time, Txn)>, txn: &Txn) -> Result<(), Error> {
         let state = {
             let mut state = DBState::new(db);
             for (time, txn) in pending.values() {
@@ -746,27 +855,19 @@ impl<DB: Database> RecordKeeperImpl<DB> {
     }
 
     /// Internal use function to check if a mutation is valid.
-    fn is_valid_mutation_given_state(&self, state: &DBState, mutation: &Vec<(Change, U160)>) -> Result<(), Error> {
+    fn is_valid_mutation_given_state(&self, prev_block_state: &DBState, mutation: &Vec<(Change, U160)>) -> Result<(), Error> {
         let mut cache = Bin::new();
         // base rules
-        rules::mutation::PlotEvent.is_valid(state, mutation, &mut cache)?;
-        rules::mutation::Duplicates.is_valid(state, mutation, &mut cache)?;
+        rules::mutation::PlotEvent.is_valid(prev_block_state, mutation, &mut cache)?;
+        rules::mutation::Duplicates.is_valid(prev_block_state, mutation, &mut cache)?;
 
         // user-added rules
         cache = Bin::new();
         let rules = &self.config.rules;
         for rule in &*rules {
             // verify all rules are satisfied and return, propagate error if not
-            rule.is_valid(state, mutation, &mut cache)?;
+            rule.is_valid(prev_block_state, mutation, &mut cache)?;
         }
         Ok(())
-    }
-
-    fn get_txn_given_lock(&self, db: &Database, hash: &U256) -> Result<Txn, Error> {
-        if let Some(&(_, ref txn)) = self.pending_txns.read().get(hash) {
-            Ok(txn.clone())
-        } else {
-            db.get_txn(*hash)
-        }
     }
 }
