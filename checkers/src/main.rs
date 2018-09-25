@@ -47,6 +47,7 @@ use tokio_core::reactor::*;
 use blockscape_core::env;
 use blockscape_core::forging::epos::{EPoS, EPoSConfig};
 use blockscape_core::network::client::*;
+use blockscape_core::network::ShardMode;
 use blockscape_core::record_keeper::{RecordKeeper, RecordKeeperImpl};
 
 use game::CheckersGame;
@@ -162,7 +163,7 @@ fn main() {
     // core.handle().spawn(test_txn_job);
 
     if cmdline.is_present("forge") {
-        forger::start_forging(&ctx, &handler, genesis_net);
+        forger::start_forging(&ctx, &handler, genesis_net, cmdline.is_present("force-forge"));
     }
 
     // wait for the kill signal

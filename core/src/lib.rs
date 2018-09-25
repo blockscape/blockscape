@@ -18,6 +18,7 @@ extern crate serde_json;
 extern crate serde;
 extern crate time as timelib;
 extern crate tokio_core;
+extern crate tokio_io;
 extern crate num_cpus;
 extern crate parking_lot;
 
