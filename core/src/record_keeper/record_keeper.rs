@@ -8,7 +8,6 @@ use super::{BlockPackage, Error, RecordEvent, PlotEvent, PlotID, DBState, rules,
 use time::Time;
 
 use futures::sync::mpsc::Sender;
-use futures_cpupool;
 
 const MAX_PENDING_TXN_MEM: usize = 128*1024*1024; //128 MB
 
@@ -53,15 +52,7 @@ pub struct RecordKeeperStatistics {
     pub pending_txns_size: u64,
 }
 
-pub trait PoolHolder {
-    /// Get the CPU pool worker for normal-priority tasks.
-    fn get_worker(&self) -> &futures_cpupool::CpuPool;
-
-    /// Get the CPU pool worker for high-priority tasks.
-    fn get_priority_worker(&self) -> &futures_cpupool::CpuPool;
-}
-
-pub trait RecordKeeper: PoolHolder + Send + Sync {
+pub trait RecordKeeper: Send + Sync {
     /// Get information about the current status of RK.
     fn get_stats(&self) -> Result<RecordKeeperStatistics, Error> {
         Ok(RecordKeeperStatistics {
@@ -268,13 +259,6 @@ pub struct RecordKeeperImpl<DB> {
     record_listeners: Mutex<ListenerPool<RecordEvent>>,
     game_listeners: Mutex<ListenerPool<PlotEvent>>,
 
-    /// A CPU pool of a single thread dedicated to processing work related to RecordKeeper. Work can
-    /// be passed to it. Future compatible. It is recommended to spawn major work for the DB on this
-    /// thread; one can also spawn their own thread for smaller, higher priority jobs.
-    worker: futures_cpupool::CpuPool,
-
-    /// A larger work queue designed for smaller, time sensitive jobs
-    priority_worker: futures_cpupool::CpuPool
 }
 
 impl<DB: Database> RecordKeeper for RecordKeeperImpl<DB> {
@@ -778,18 +762,6 @@ impl RecordKeeperImpl<DatabaseImpl> {
     }
 }
 
-impl<DB: Database> PoolHolder for RecordKeeperImpl<DB> {
-    /// Get the CPU pool worker for normal-priority tasks.
-    fn get_worker(&self) -> &futures_cpupool::CpuPool {
-        &self.worker
-    }
-
-    /// Get the CPU pool worker for high-priority tasks.
-    fn get_priority_worker(&self) -> &futures_cpupool::CpuPool {
-        &self.priority_worker
-    }
-}
-
 
 impl<DB: Database> RecordKeeperImpl<DB> {
     /// Construct a new RecordKeeper from an already opened database and possibly an existing set of
@@ -801,8 +773,6 @@ impl<DB: Database> RecordKeeperImpl<DB> {
             pending_txns: RwLock::new(HashMap::new()),
             record_listeners: Mutex::new(ListenerPool::new()),
             game_listeners: Mutex::new(ListenerPool::new()),
-            worker: futures_cpupool::Builder::new().pool_size(1).create(),
-            priority_worker: futures_cpupool::Builder::new().pool_size(3).create()
         }
     }
 

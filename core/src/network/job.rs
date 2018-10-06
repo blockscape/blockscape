@@ -6,6 +6,8 @@ use primitives::Block;
 use network::protocol::*;
 use network::context::NetworkContext;
 
+use futures::prelude::*;
+
 use primitives::U256;
 
 thread_local!(static ACTIVE_SYNCS: Cell<usize> = Cell::new(0));
@@ -143,9 +145,18 @@ impl NetworkJob {
                         // immediately try to open connections
                         // limit results we use to the maximum number of new connections
                         for node in nodes.iter().take(ctx.config.max_nodes as usize - ctx.config.min_nodes as usize) {
-                            if let Err(e) = shard.open_session(node.clone(), None, true) {
-								debug!("Failed to open session (find nodes job): {:?}", e);
-							}
+							
+							
+							let f = shard.open_session(node.clone(), None, true)
+								.then(move |r| {
+									if let Err(e) = r {
+										debug!("Failed to open session (find nodes job): {:?}", e);
+									}
+									
+									Ok(())
+								});
+							
+							ctx.event_loop.spawn(f);
                         }
                     }
                 }

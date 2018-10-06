@@ -71,6 +71,7 @@ pub struct NewSessionOptions {
     pub context: Rc<NetworkContext>, 
     pub local_port: u8, 
     pub remote_peer: Node,
+    pub remote_addr: SocketAddr,
     pub network_id: U256, 
     pub sink: Option<BoxSink<Packet, io::Error>>
 }
@@ -124,15 +125,14 @@ pub struct GenericSession {
 }
 
 impl GenericSession {
-    pub fn new(opts: NewSessionOptions) -> Result<GenericSession, io::Error> {
+    pub fn new(opts: NewSessionOptions) -> GenericSession {
 
-        let sess = GenericSession {
+		GenericSession {
             context: opts.context,
             local_port: opts.local_port,
             done: Cell::new(None),
-            remote_peer: opts.remote_peer.clone(),
-            remote_addr: opts.remote_peer.endpoint.as_socketaddr()
-                .ok_or(io::Error::new(io::ErrorKind::InvalidData, "remote endpoint address is unresolvable"))?,
+            remote_peer: opts.remote_peer,
+            remote_addr: opts.remote_addr,
             sink: Cell::new(opts.sink),
             remote_port: 255,
             network_id: opts.network_id,
@@ -143,9 +143,7 @@ impl GenericSession {
             current_job: RefCell::new(None),
             strikes: Cell::new(0),
             abuses: Cell::new(0)
-        };
-
-        Ok(sess)
+        }
     }
 
     fn send_packet(&self, pl: Packet) {

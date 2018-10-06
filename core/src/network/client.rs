@@ -174,15 +174,30 @@ impl Client {
         let SocketPacket(addr, p) = d;
 
         if p.port == 255 {
-            if let Message::Introduce { ref node, ref network_id, .. } = p.payload.msg {
+            if let Message::Introduce { node, network_id, .. } = p.payload.msg.clone() {
                 // new session?
-                if let Some(ref shard) = *self.context.get_shard_by_id(network_id) {
-                    let r = shard.open_session(node.clone(), None, false);
-                    if let Ok(addr) = r {
-                        shard.process_packet(&p.payload, &addr);
-
-                        info!("[UDP] New contact opened from {}", node.endpoint);
-                    }
+                if let Some(ref shard) = *self.context.get_shard_by_id(&network_id) {
+					
+					let ctx = self.context.clone();
+					let node2 = node.clone();
+                    let f = shard.open_session(node, None, false).then(move |r| {
+						
+						if let Err(_) = r {
+							// TODO: Do something here
+							return Err(())
+						}
+						
+						let addr = r.unwrap();
+						
+						if let Some(ref shard) = *ctx.get_shard_by_id(&network_id) {
+							shard.process_packet(&p.payload, &addr);
+							info!("[UDP] New contact opened from {}", node2.endpoint);
+						}
+						
+						Ok(())
+					});
+					
+					self.context.event_loop.spawn(f);
                 }
                 else {
                     debug!("Invalid network ID received in join for network: {}", network_id);
@@ -207,21 +222,31 @@ impl Client {
 
     fn tcp_process_packet(this: &Rc<Client>, p: Packet, stream: Box<Stream<Item=Packet, Error=io::Error>>, sink: BoxSink<Packet, io::Error>) {
         // check for introduce packet
-        if let Message::Introduce { ref node, ref network_id, .. } = p.msg {
+        if let Message::Introduce { node, network_id, .. } = p.msg.clone() {
             // new session?
-            let idx = this.context.resolve_port(network_id);
+            let idx = this.context.resolve_port(&network_id);
             if let Some(ref shard) = *this.context.get_shard(idx) {
-                if let Ok(raddr) = shard.open_session(node.clone(), Some(sink), false) {
+				
+				let ctx = this.context.clone();
+				let f = shard.open_session(node.clone(), None, false).then(move |r| {
+					
+					if let Err(_) = r {
+						// TODO: Do something here
+						return Err(())
+					}
+					
+					let addr = r.unwrap();
+					if let Some(ref shard) = *ctx.get_shard_by_id(&network_id) {
+						shard.process_packet(&p, &addr);
+						info!("[TCP] New contact opened from {}", node.endpoint);
+					}
 
-                    // still need to give it the introduce packet
-                    shard.process_packet(&p, &raddr);
-
-                    info!("[TCP] New contact opened from {}", node.endpoint);
                     // handle packets
-                    let t = Rc::clone(this);
+                    let t = Rc::clone(&ctx);
                     let f = stream.for_each(move |p| {
-                        if let Some(ref shard) = *t.context.get_shard(idx) {
-                            shard.process_packet(&p, &raddr);
+						// have to resolve the shard yet again :)
+                        if let Some(ref shard) = *t.get_shard(idx) {
+                            shard.process_packet(&p, &addr);
                         }
 
                         future::ok(())
@@ -230,8 +255,12 @@ impl Client {
                         future::ok(())
                     });
 
-                    this.context.event_loop.spawn(f);
-                }
+                    ctx.event_loop.spawn(f);
+					
+					Ok(())
+				});
+				
+				this.context.event_loop.spawn(f);
             }
             else {
                 debug!("Invalid network ID received in join for network: {}", network_id);
@@ -316,11 +345,18 @@ impl Client {
                     ClientMsg::AddNode(network_id, node) => {
                         let p = this.context.resolve_port(&network_id);
                         if p < 255  {
-                            let r = this.context.get_shard(p).as_ref().unwrap()
-                                .open_session(node, None, true);
-                            if let Err(_) = r {
-                                warn!("Could not add node to connection list: is the hostname correct/resolvable?");
-                            }
+                            let f = this.context.get_shard(p).as_ref().unwrap()
+                                .open_session(node, None, true)
+                                .then(move |r| {
+									// TODO: Return an actual response
+									if let Err(_) = r {
+										warn!("Could not add node to connection list: is the hostname correct/resolvable?");
+									}
+									
+									Ok(())
+								});
+							
+							this.context.event_loop.spawn(f);
                         }
 
                         future::ok(())

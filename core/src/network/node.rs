@@ -1,18 +1,26 @@
-use dns_lookup::lookup_host;
 use serde_json;
 use std::cmp::*;
 use std::fmt;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Read, Write, Error};
+use std::io::{Read, Write, Error, ErrorKind};
 use std::error::Error as BaseError;
-use std::net::{SocketAddr,IpAddr};
+use std::ffi::CString;
+use std::ptr;
+use std::mem;
+use std::net::{SocketAddr,IpAddr,Ipv4Addr,Ipv6Addr};
 use std::path::*;
 use std::str::FromStr;
+
+use futures::prelude::*;
+use futures::future;
+
+use libc;
 
 use env::get_storage_dir;
 use hash::hash_pub_key;
 use primitives::U160;
+use worker::WORKER;
 
 #[derive(Clone, Serialize, PartialEq, Eq, Deserialize, Hash)]
 pub enum Protocol {
@@ -44,17 +52,47 @@ impl NodeEndpoint {
         }
     }
 
-    pub fn as_socketaddr(self) -> Option<SocketAddr> {
-        // DNS resolve if necessary
-        let ip = match self.host.parse::<IpAddr>() {
-            Ok(ip) => Some(ip),
-            Err(_) => lookup_host(self.host.as_str())
-                .ok()
-                .map(|r| r.first().cloned())
-                .unwrap_or(None)
-        };
-
-        ip.map(|p| SocketAddr::new(p, self.port))
+    pub fn as_socketaddr(self) -> Box<Future<Item=SocketAddr, Error=Error>> {
+		
+		if let Ok(ip) = self.host.parse::<IpAddr>() {
+			return Box::new(future::ok(SocketAddr::new(ip, self.port)))
+		}
+		
+		let c_host = CString::new(self.host.clone());
+		if c_host.is_err() {
+			// there was a null byte in the hostname
+			return Box::new(future::err(Error::new(ErrorKind::AddrNotAvailable, "Hostname includes invalid character")));
+		}
+		
+		// must be spawned on a worker thread because getaddrinfo() is a blocking call
+		Box::new(WORKER.spawn_fn(move || {
+			let addr: Result<IpAddr, Error> = unsafe {
+				let mut res = ptr::null_mut();
+				let hn = c_host.unwrap();
+				if libc::getaddrinfo(hn.as_ptr(), ptr::null(), &mem::zeroed(), &mut res) == 0 {
+					// we have at least one address; for now take only a single address
+					let ai: libc::addrinfo = *res;
+					let sa_family: libc::sa_family_t = *(ai.ai_addr as *const u16);
+					
+					let ret = match sa_family as i32 {
+						// remember, we have to swap bytes to big endian
+						libc::AF_INET => Ok(IpAddr::V4(Ipv4Addr::from((*(ai.ai_addr as *const libc::sockaddr_in)).sin_addr.s_addr.to_be()))),
+						libc::AF_INET6 => Ok(IpAddr::V6(Ipv6Addr::from((*(ai.ai_addr as *const libc::sockaddr_in6)).sin6_addr.s6_addr))),
+						// unrecognized protocol?
+						_ => Err(Error::new(ErrorKind::Other, "Unrecognized protocol"))
+					};
+					
+					libc::freeaddrinfo(res);
+					
+					ret
+				}
+				else {
+					Err(Error::new(ErrorKind::AddrNotAvailable, format!("No IPs found for hostname: {:?}", hn)))
+				}
+			};
+			
+			Box::new(future::result(addr))
+		}).map(move |p| SocketAddr::new(p, self.port)))
     }
 }
 
