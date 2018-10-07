@@ -58,15 +58,21 @@ impl CheckersGame {
         let raw_events = self.rk.get_plot_events(location, 0)?;
 
         let mut events = Vec::new();
-        for (_tick, raw_event_list) in raw_events {
-            debug_assert_eq!(raw_event_list.len(), 1);
+        for (tick, raw_event_list) in raw_events {
+            debug_assert!(raw_event_list.len() == 1 || tick == 0);
             events.push(bincode::deserialize(&raw_event_list[0])?);
         } Ok(events)
     }
 
     /// Wrap a checkers event in a txn and submit it to record keeper.
     pub fn play(&self, location: PlotID, event: checkers::Event) -> Result<(), Error> {
-        let tick = self.get_moves(location)?.len() as u64;
+        let tick = if let checkers::Event::Join(..) = event {
+			0
+		}
+		else {
+			self.get_moves(location)?.len() as u64
+		};
+        
         debug!("Playing {:?} on turn {}", event, tick);
         let change = Change::PlotEvent(PlotEvent{
             from: location,

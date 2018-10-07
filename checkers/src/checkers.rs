@@ -61,8 +61,14 @@ impl Direction {
 /// The base game events for checkers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Event {
+	/// Initializes a new game on an empty plot, first player is white, last is black. One slot must be the player's ID,
+	/// but the other can be set to "0" to leave an opening for a join (see below)
     Start(U160, U160),
+    /// Fill an empty slot in a started game which does not have a second player filled in already
+    Join(U160),
+    /// Set the specified checkers piece to be located in the direction specified
     Move(u8, Direction),
+    /// Like move, but jumps over all the given pieces
     Jump(u8, Vec<Direction>)
 } impl CoreEvent for Event {}
 
@@ -295,7 +301,8 @@ impl Board {
 
                 Ok(())
             },
-            Event::Start(..) => Err(GameAlreadyStarted)
+            Event::Start(..) => Err(GameAlreadyStarted),
+            Event::Join(..) => Err(GameAlreadyStarted),
         }
     }
 

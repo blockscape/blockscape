@@ -48,6 +48,7 @@ impl RPCHandler for CheckersRPC {
         d.add_method_with_meta("get_checkers_board", Self::get_checkers_board);
         d.add_method_with_meta("play_checkers", Self::play_checkers);
         d.add_method_with_meta("new_checkers_game", Self::new_checkers_game);
+        d.add_method_with_meta("join_checkers_game", Self::join_checkers_game);
         d.add_method_with_meta("register_my_player", Self::register_my_player);
         d.add_method_with_meta("get_my_player", Self::get_my_player);
 
@@ -107,15 +108,22 @@ impl CheckersRPC {
 
     fn new_checkers_game(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
         let p_arr = parse_args_simple(params, 3..4)?;
-
         let pid = read_plot_id(&p_arr[0..2])?;
-
         let other_player: U160 = p_arr[2].parse().map_err(|_| Error::invalid_params("Could not parse other player!"))?;
 
         let event = checkers::Event::Start(self.my_player_hash, other_player);
 
         to_rpc_res(self.game.play(pid, event).map_err(map_rk_err))
     }
+    
+    fn join_checkers_game(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
+		let p_arr = parse_args_simple(params, 2..3)?;
+		let pid = read_plot_id(&p_arr[0..2])?;
+		let event = checkers::Event::Join(self.my_player_hash);
+		
+		// find the empty slot
+		to_rpc_res(self.game.play(pid, event).map_err(map_rk_err))
+	}
 
     fn get_my_player(&self, _params: Params, _meta: SocketMetadata) -> RpcResult {
         to_rpc_res(Ok(JU160::from(self.my_player_hash)))
