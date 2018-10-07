@@ -17,6 +17,9 @@ use network::node::Node;
 use network::session::{Session,GenericSession};
 use network::shard::ShardInfo;
 
+use worker::WORKER;
+use worker::QUEUED_WORKER;
+
 pub const PROTOCOL_VERSION: u16 = 1;
 
 /// How much of the ping value to retain. The current value keeps a weighted average over 10 minutes
@@ -257,7 +260,7 @@ impl Packet {
             Message::NewTransaction(ref txn) => {
                 let d = txn.clone();
                 let rk = Arc::clone(&sess.get_context().rk);
-                sess.get_context().event_loop.spawn(sess.get_context().rk.get_worker().spawn_fn(move || {
+                sess.get_context().event_loop.spawn(WORKER.spawn_fn(move || {
                     rk.add_pending_txn(d, true)
                 }).map(|_| ()).or_else(|err| {
                     // react for this node's records here if they are bad
@@ -286,7 +289,7 @@ impl Packet {
                 let rk = Arc::clone(&sess.get_context().rk);
                 let lcontext = Rc::clone(&sess.get_context());
                 let network_id = sess.get_network_id().clone();
-                sess.get_context().event_loop.spawn(sess.get_context().rk.get_worker().spawn_fn(move || {
+                sess.get_context().event_loop.spawn(WORKER.spawn_fn(move || {
                     rk.add_block(&d, true)
                 }).map(|_| ()).or_else(move |err| {
                     // react for this node's records here if they are bad
@@ -352,7 +355,7 @@ impl Packet {
                 let rk = Arc::clone(&sess.get_context().rk);
                 let wsess = Rc::downgrade(sess);
                 let seq = self.seq;
-                sess.get_context().event_loop.spawn(sess.get_context().rk.get_priority_worker().spawn_fn(move || {
+                sess.get_context().event_loop.spawn(QUEUED_WORKER.spawn_fn(move || {
                     let bp = rk.get_blocks_between(&lbh, &tbh, MAX_PACKET_SIZE)?;
 
                     if bp.is_empty() {
@@ -406,7 +409,7 @@ impl Packet {
                 let rk = Arc::clone(&sess.get_context().rk);
                 let wsess = Rc::downgrade(sess);
                 let seq = self.seq;
-                sess.get_context().event_loop.spawn(sess.get_context().rk.get_priority_worker().spawn_fn(move || {
+                sess.get_context().event_loop.spawn(QUEUED_WORKER.spawn_fn(move || {
                     let mut blocks: Vec<Block> = Vec::new();
                     let mut txns: Vec<Txn> = Vec::new();
 
@@ -456,7 +459,7 @@ impl Packet {
                 let rk2 = Arc::clone(&sess.get_context().rk);
                 let raw_pkg = raw_pkg.clone();
                 let to = to.clone();
-                let f1 = sess.get_context().rk.get_priority_worker().spawn_fn(move || {
+                let f1 = QUEUED_WORKER.spawn_fn(move || {
                     BlockPackage::unzip(&raw_pkg)
                         .map_err(|e| (e, rk.get_current_block_hash()))
                 });
@@ -477,7 +480,7 @@ impl Packet {
                             }
 
                             // now that we have unpacked, actually import the data
-                            let f = lcontext.rk.get_priority_worker().spawn_fn(move || {
+                            let f = QUEUED_WORKER.spawn_fn(move || {
                                 rk2.import_pkg(pkg).map_err(|e| (e, rk2.get_current_block_hash()))
                             }).then(move |res| {
                                 match res {

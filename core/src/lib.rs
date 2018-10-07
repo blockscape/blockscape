@@ -23,6 +23,9 @@ extern crate num_cpus;
 extern crate parking_lot;
 
 #[macro_use]
+extern crate lazy_static;
+
+#[macro_use]
 extern crate serde_derive;
 
 #[macro_use]
@@ -30,6 +33,8 @@ extern crate log;
 
 #[macro_use]
 mod util;
+
+pub mod worker;
 
 pub mod base16;
 pub mod bin;

@@ -15,6 +15,8 @@ use blockscape_core::record_keeper::RecordEvent;
 use blockscape_core::primitives::*;
 use blockscape_core::network::client::ClientMsg;
 
+use blockscape_core::worker::QUEUED_WORKER;
+
 /// A quick shorthand for testing the enum type of an object
 macro_rules! matches(
     ($e:expr, $p:pat) => (
@@ -93,7 +95,7 @@ pub fn start_forging(context: &Rc<Context>, handler: &Handle, network_id: U256, 
                     Ok(Either::B((block, _))) => {
                         let context_rk = Arc::clone(&context4.rk);
 
-                        handler4.spawn(context4.rk.get_priority_worker().spawn_fn(move || {
+                        handler4.spawn(QUEUED_WORKER.spawn_fn(move || {
                             let r = context_rk.add_block(&block, true);
                             if let Ok(_) = r {
                                 println!("FORGE: Submitted {} was accepted!", block.calculate_hash());

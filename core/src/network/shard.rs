@@ -98,7 +98,6 @@ impl ShardInfo {
             }
         }
 
-        let mut removed_nodes: Vec<U160> = Vec::new();
         {
             let nrepo = self.node_repo.borrow();
             let mut queue = Vec::new();
@@ -129,31 +128,36 @@ impl ShardInfo {
             // pull from the connection queue
 
             for peer in queue.into_iter() {
-                match self.open_session(peer.clone(), None, true) {
-                    Ok(sopt) => {
-                        info!("New contact opened to {} ({})", peer.endpoint, sopt);
-                    },
-                    Err(_) => {
-                        removed_nodes.push(peer.get_hash_id());
-                    }
-                };
-            }
-        }
+				
+				let ctx = Rc::clone(&self.context);
+				let network_id = self.network_id.clone();
+				let local_peer = peer.clone();
+				let f = self.open_session(peer.clone(), None, true)
+				.then(move |r| {
+					if let Ok(sopt) = r {
+						info!("New contact opened to {} ({})", local_peer.endpoint, sopt);
+					}
+					else if let Some(ref shard) = *ctx.get_shard_by_id(&network_id) {
+						// remove node because it is broken DNS
+						let mut repo = shard.node_repo.borrow_mut();
+						debug!("Remove broken node from repo: {:?}", r);
+						repo.remove(&local_peer.get_hash_id());
 
-        if !removed_nodes.is_empty() {
-            let mut nrepo = self.node_repo.borrow_mut();
-            for r in removed_nodes {
-                debug!("Remove broken node from repo: {:?}", r);
-                nrepo.remove(&r);
-            }
+						// TODO: debounce this
+						let r = repo.save(format!("{}", network_id).as_str());
 
-            let r = nrepo.save(format!("{}", self.network_id).as_str());
-
-            if r.is_err() {
-                warn!("Failed to save nodes to file: {:?}", r.unwrap_err());
-            }
-            else {
-                debug!("Saved {} nodes from repo", r.unwrap());
+						if r.is_err() {
+							warn!("Failed to save nodes to file: {:?}", r.unwrap_err());
+						}
+						else {
+							debug!("Saved {} nodes from repo", r.unwrap());
+						}
+					}
+					
+					Ok(())
+				});
+				
+				self.context.event_loop.spawn(f);
             }
         }
 
@@ -242,12 +246,12 @@ impl ShardInfo {
         }
     }
 
-    pub fn open_session(&self, peer: Node, strm: Option<BoxSink<Packet, io::Error>>, introduce: bool) -> Result<SocketAddr, ()> {
+    pub fn open_session(&self, peer: Node, strm: Option<BoxSink<Packet, io::Error>>, introduce: bool) -> Box<Future<Item=SocketAddr, Error=io::Error>> {
 
         // check matching remote endpoints
         if self.sessions.borrow().values().find(|s| s.get_remote_node().endpoint == peer.endpoint).is_some() {
             // already connected
-            return Err(())
+            return Box::new(future::err(io::Error::new(io::ErrorKind::AlreadyExists, "Already connected on same network_id")));
         }
 
         // check matching peer ids
@@ -255,57 +259,62 @@ impl ShardInfo {
         if hid != U160_ZERO {
             if self.sessions.borrow().values().find(|s| s.get_remote_node().get_hash_id() == hid).is_some() {
                 // already connected
-                return Err(())
+                return Box::new(future::err(io::Error::new(io::ErrorKind::AlreadyExists, "Same peer id connected on same network_id")));
             }
         }
         
         let strm_is_none = strm.is_none();
         
-        let mut opts = NewSessionOptions {
-            context: Rc::clone(&self.context), 
-            local_port: self.port, 
-            remote_peer: peer.clone(), 
-            network_id: self.network_id, 
-            sink: strm // TODO: 
-        };
-        
-        if peer.endpoint.protocol == Protocol::Tcp && strm_is_none {
-			let sa = peer.endpoint.as_socketaddr().ok_or(())?;
-			let sar = sa.clone();
-			let ctx = Rc::clone(&self.context);
-			let network_id = self.network_id.clone();
-			self.context.event_loop.spawn(TcpStream::connect(&sa, &self.context.event_loop).then(move |r| {
-				match r {
-					// TODO: Something better than a warning here would be nice
-					Err(err) => warn!("Could not open TCP connection to peer: {:?}", err),
-					Ok(s) => {
-						let (ttx, trx) = s.framed(TCPCodec).split();
-						
-						opts.sink = Some(Box::new(ttx));
-						
-						let sess = GenericSession::new(opts);
-						
-						if let Ok(s) = sess {
+        // lets get the peer address resolved
+        let ctx = Rc::clone(&self.context);
+        let network_id = self.network_id.clone();
+        let port = self.port;
+        Box::new(peer.endpoint.clone().as_socketaddr().then(move |r| {
+			if r.is_err() {
+				return r;
+			}
+			
+			let addr = r.unwrap();
+			
+			let mut opts = NewSessionOptions {
+				context: Rc::clone(&ctx), 
+				local_port: port, 
+				remote_peer: peer.clone(), 
+				remote_addr: addr.clone(),
+				network_id: network_id, 
+				sink: strm
+			};
+			
+			if peer.endpoint.protocol == Protocol::Tcp && strm_is_none {
+				let ctx2 = Rc::clone(&ctx);
+				ctx.event_loop.spawn(TcpStream::connect(&addr.clone(), &ctx.event_loop).then(move |r| {
+					match r {
+						// TODO: Something better than a warning here would be nice
+						Err(err) => warn!("Could not open TCP connection to peer: {:?}", err),
+						Ok(s) => {
+							let (ttx, trx) = s.framed(TCPCodec).split();
 							
-							if let Some(ref shard) = *ctx.get_shard_by_id(&network_id) {
-								if shard.sessions.borrow().contains_key(&s.get_remote_addr()) {
+							opts.sink = Some(Box::new(ttx));
+							
+							let sess = GenericSession::new(opts);
+							
+							if let Some(ref shard) = *ctx2.get_shard_by_id(&network_id) {
+								if shard.sessions.borrow().contains_key(&addr) {
 									// already connected
 									return Err(())
 								}
 
 								// we have to send an introduce if we were not given a socket, logically
-								s.send_introduce();
+								sess.send_introduce();
 
-								let raddr = s.get_remote_addr().clone();
-
-								shard.peer_ids.borrow_mut().insert(s.get_remote_node().get_hash_id());
-								shard.sessions.borrow_mut().insert(raddr.clone(), Rc::new(s));
+								shard.peer_ids.borrow_mut().insert(sess.get_remote_node().get_hash_id());
+								shard.sessions.borrow_mut().insert(addr.clone(), Rc::new(sess));
 								
-								let ctx2 = Rc::clone(&ctx);
+								let ctx3 = Rc::clone(&ctx2);
 							
-								ctx.event_loop.spawn(trx.for_each(move |p| {
-									if let Some(ref shard) = *ctx2.get_shard_by_id(&network_id) {
-										shard.process_packet(&p, &raddr);
+								ctx2.event_loop.spawn(trx.for_each(move |p| {
+									if let Some(ref shard) = *ctx3.get_shard(port) {
+										shard.process_packet(&p, &addr);
 									}
 
 									future::ok(())
@@ -316,47 +325,36 @@ impl ShardInfo {
 							}
 							else {
 								warn!("Shard appears to be closed. Cancelling session...");
-								s.close();
+								sess.close();
 							}
 						}
-						else {
-							// should basically never happen
-							warn!("Could not resolve hostname after already resolved");
-						}
-					}
-				};
+					};
+					
+					Ok(())
+				}));
 				
-				Ok(())
-			}));
-			
-			Ok(sar)
-		}
-		else {
-			// ready to connect
-			let sess = GenericSession::new(opts);
-
-			if let Ok(s) = sess {
-
-				if self.sessions.borrow().contains_key(&s.get_remote_addr()) {
-					// already connected
-					return Err(())
-				}
-
-				if introduce {
-					s.send_introduce();
-				}
-
-				let raddr = s.get_remote_addr().clone();
-
-				self.peer_ids.borrow_mut().insert(s.get_remote_node().get_hash_id());
-				self.sessions.borrow_mut().insert(raddr.clone(), Rc::new(s));
-
-				Ok(raddr)
+				Ok(addr)
 			}
 			else {
-				Err(())
+				// ready to connect
+				let sess = GenericSession::new(opts);
+
+				if introduce {
+					sess.send_introduce();
+				}
+
+				if let Some(ref shard) = *ctx.get_shard_by_id(&network_id) {
+					shard.peer_ids.borrow_mut().insert(sess.get_remote_node().get_hash_id());
+					shard.sessions.borrow_mut().insert(addr.clone(), Rc::new(sess));
+				}
+				else {
+					warn!("Shard appears to be closed. Cancelling session...");
+					sess.close();
+				}
+
+				Ok(addr)
 			}
-		}
+		}))
     }
 
     /// Try to give the provided job to a randomly selected node in the network
