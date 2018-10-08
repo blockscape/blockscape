@@ -5,6 +5,7 @@ image: dcr.buyme360.com/plu-capstone/rust:latest
 variables:
   IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
   ARM_IMAGE_TAG: $CI_REGISTRY_IMAGE/arm:$CI_COMMIT_REF_SLUG
+  CHECKERS_BOT_IMAGE_TAG: $CI_REGISTRY_IMAGE/checkers-bot:$CI_COMMIT_REF_SLUG
   DOCKER_HOST: tcp://localhost:2375
   CARGO_HOME: $CI_PROJECT_DIR/cargo
 
@@ -34,6 +35,15 @@ build:
     expire_in: 2 days
 
   # depending on your build setup it's most likely a good idea to cache outputs to reduce the build time
+
+build-checkers-bot:
+  stage: build
+  image: dcr.buyme360.com/devops/docker:latest
+  script:
+    - cd checkers-bot
+    - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
+    - docker build -t $CHECKERS_BOT_IMAGE_TAG --build-arg RELEASE=release --build-arg PRODUCT=checkers .
+    - docker push $CHECKERS_BOT_IMAGE_TAG
 
 #build_arm:
 #  image: dcr.buyme360.com/plu-capstone/rust/arm:latest

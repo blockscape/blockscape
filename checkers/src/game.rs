@@ -2,7 +2,7 @@ use checkers;
 use std::sync::Arc;
 use parking_lot::RwLock;
 use blockscape_core::record_keeper::{RecordKeeper, GameStateCache, Error, PlotID, PlotEvent};
-use blockscape_core::primitives::{Txn, Mutation, Change};
+use blockscape_core::primitives::{Txn, Mutation, Change, U160_ZERO};
 use std::collections::BTreeSet;
 use blockscape_core::bin::*;
 use blockscape_core::time::Time;
@@ -59,8 +59,34 @@ impl CheckersGame {
 
         let mut events = Vec::new();
         for (tick, raw_event_list) in raw_events {
-            debug_assert!(raw_event_list.len() == 1 || tick == 0);
-            events.push(bincode::deserialize(&raw_event_list[0])?);
+			
+			if tick == 0 && raw_event_list.len() == 2 {
+				// compress join and start together
+				// (this is wierd but other methods depend on one tick per move so yea)
+				if let checkers::Event::Start(p1, p2) = bincode::deserialize(&raw_event_list[0])? {
+					if let checkers::Event::Join(player) = bincode::deserialize(&raw_event_list[1])? {
+						if p1 == U160_ZERO {
+							events.push(checkers::Event::Start(player, p2))
+						}
+						else if p2 == U160_ZERO {
+							events.push(checkers::Event::Start(p1, player))
+						}
+						else {
+							unreachable!();
+						}
+					}
+					else {
+						unreachable!();
+					}
+				}
+				else {
+					unreachable!();
+				}
+			}
+			else {
+				debug_assert!(raw_event_list.len() == 1 || tick == 0);
+				events.push(bincode::deserialize(&raw_event_list[0])?);
+			}
         } Ok(events)
     }
 

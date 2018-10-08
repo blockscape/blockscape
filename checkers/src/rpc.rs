@@ -70,9 +70,29 @@ impl CheckersRPC {
         let p_arr = parse_args_simple(params, 2..3)?;
 
         let pid = read_plot_id(&p_arr[0..2])?;
+        
+        let events = self.game.get_moves(pid).map_err(|_| Error::internal_error())?;
+        
+        let status = if events.is_empty() {
+			"not started"
+		}
+		else if events.len() >= 2 {
+			"active"
+		}
+		else if let checkers::Event::Start(p1, p2) = events[0] {
+			if p1 == U160_ZERO || p2 == U160_ZERO {
+				"waiting for join"
+			}
+			else {
+				"active"
+			}
+		}
+		else {
+			unreachable!();
+		};
 
         // TODO: take into account move number
-        to_rpc_res(self.game.get_board(pid, None).map(|b| format!("{}", b)).map_err(|_| Error::internal_error()))
+        to_rpc_res(self.game.get_board(pid, None).map(|b| format!("STATUS: {}\n{}", status, b)).map_err(|_| Error::internal_error()))
     }
 
     fn play_checkers(&self, params: Params, _meta: SocketMetadata) -> RpcResult {
