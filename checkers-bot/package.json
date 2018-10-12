@@ -4,6 +4,7 @@
   "description": "A robot which pretends to play a game of checkers with another robot or human player",
   "main": "index.js",
   "scripts": {
+    "start": "node index.js",
     "test": "mocha"
   },
   "repository": {
@@ -18,6 +19,7 @@
   "license": "GPL-3.0-or-later",
   "dependencies": {
     "async": "^2.6.1",
+    "jayson": "^2.0.6",
     "lodash": "^4.17.11"
   }
 }
