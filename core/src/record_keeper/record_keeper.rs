@@ -830,16 +830,17 @@ impl<DB: Database> RecordKeeperImpl<DB> {
     /// Check if a txn is valid given access to the database and pending txns. Will construct a
     /// DBState with all txns applied.
     fn is_valid_txn_given_lock(&self, db: &dyn Database, pending: &HashMap<U256, (Time, Txn)>, txn: &Txn) -> Result<(), Error> {
-        let state = {
-            let mut state = DBState::new(db);
-            for (time, txn) in pending.values() {
-                state.add_txn(txn, *time)?;
-            } state
-        };
+        let state = DBState::new(db);
 
         self.is_valid_txn_given_state(&state, txn)?;
-
+        
+        // make one big mutation. if the mutation is invalid, then the new txn is what caused it to be invalid
         let mut mutation = Vec::new();
+        for (_, txn) in pending.values() {
+            for change in txn.mutation.changes.iter().cloned() {
+                mutation.push((change, txn.creator));
+            }
+        }
         for change in txn.mutation.changes.iter().cloned() {
             mutation.push((change, txn.creator));
         }
