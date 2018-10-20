@@ -1,11 +1,14 @@
 //const assert = require('assert');
 
-//const _ = require('lodash');
+const _ = require('lodash');
 const async = require('async');
 
 const jayson = require('jayson/promise');
 
 const MAX_PLAY_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+
+// global variable
+var my_player = null;
 
 // jsonrpc client for blockscape
 var client = jayson.client.http({
@@ -22,7 +25,7 @@ function idx_to_xy(idx) {
 
 /// causes the function to delay in async/await code
 function sleep(time) {
-    return new Promise((resolve) => setTimeout(() => resolve(), time));
+    return new Promise((resolve) => setTimeout(resolve, time));
 }
 
 /// Runs the get_checkers_board rpc method, converting the board into
@@ -39,12 +42,15 @@ async function get_checkers_board(idx) {
     let ret = {};
     
     ret.status = lines.shift().match(/status: (.*)/i)[1];
+    ret.players = [];
+    ret.players.push(lines.shift().match(/player 1: (.*)/i)[1]);
+    ret.players.push(lines.shift().match(/player 2: (.*)/i)[1]);
     
     ret.board = [];
     for(let line of lines) {
         if(line[2] != '|')
             continue;
-        ret.board.push(line.substr(3, line.length - 1).replace(/ /g, ''));
+        ret.board.push(line.substr(3, line.length - 1).replace(/\s/g, ''));
     }
     
     return ret;
@@ -189,7 +195,7 @@ function autodial(start_at) {
                     console.log(err);
                     return reject(err);
                 }
-				
+                
                 console.log('Completed autodial (new index is', idx, ')');
                 //assert((await get_checkers_board(idx)).status != 'active', 'Should be an uninitialized checkers board');
                 resolve(idx);
@@ -209,9 +215,30 @@ async function bid(idx) {
             let args = idx_to_xy(idx);
             args.push('0');
             try {
-                await client.request('new_checkers_game', args);
-                console.log('Created new game:', idx);
-                return [idx, true, res.board];
+                let r = await client.request('new_checkers_game', args);
+                
+                if(!r.error) {
+                    console.log('Created new game:', idx);
+                    
+                    // wait for status to be ready to play
+                    let game = res;
+                    while(game.status != 'active') {
+                        console.log('Waiting for player to join game', idx);
+                        await sleep(2000);
+                        game = await get_checkers_board(idx);
+                        
+                        if(game.players[0] != my_player) {
+                            console.log('Game was stolen by another... rebidding...');
+                            return await bid(idx);
+                        }
+                    }
+                    
+                    // game should be ready to be played for now
+                    return [idx, true, res.board];   
+                }
+                else {
+                    console.log('Failed to start game: ', r.error);
+                }
             }
             catch(err) {
                 // ignore error for now (TODO: Could cause problems)
@@ -223,8 +250,31 @@ async function bid(idx) {
         
         if(res.status == 'waiting for join') {
             try {
-                await client.request('join_checkers_game', idx_to_xy(idx));
-                console.log('Joined game:', idx);
+                let r = await client.request('join_checkers_game', idx_to_xy(idx));
+                
+                if(!r.error) {
+                    console.log('Joined game:', idx);
+                    
+                    // wait for the first player to make the move (this also ensures we are the ones playing the game)
+                    // wait for status to be ready to play
+                    let orig_board = res.board;
+                    let game = res;
+                    while(game.board != orig_board) {
+                        console.log('Waiting for player to join game', idx);
+                        await sleep(2000);
+                        game = await get_checkers_board(idx);
+                        
+                        if(game.players[1] != my_player) {
+                            console.log('Game was stolen by another... rebidding...');
+                            idx++;
+                            return await bid(idx);
+                        }
+                    }
+                }
+                else {
+                    console.log('Failed to join game: ', r.error);
+                }
+                
                 return [idx, false, res.board];
             }
             catch(err) {
@@ -236,25 +286,48 @@ async function bid(idx) {
     }
 }
 
+async function connect_and_register() {
+    // make sure player is registered (for now ignore errors if they happen)
+    let attempt = 0;
+    while(attempt < 10) {
+        try {
+            let pid = await client.request('register_my_player', []);
+            if(pid.result) {
+                console.log('Registered as player', pid.result);
+            }
+            else {
+                
+                pid = await client.request('get_my_player', []);
+                
+                if(!pid.result) {
+                    console.log('CRITICAL: Failed to load player information', pid.error);
+                    return null;
+                }
+            }
+            
+            my_player = pid;
+            
+            console.log('Waiting to allow block sync for registration...');
+            await sleep(30000);
+            
+            return pid.result;
+            
+        } catch(err) {
+            console.error('WARN: Connection failed:', err);
+            await sleep(1000);
+        }
+    }
+}
+
 async function main_loop() {
 
     console.log('Blockscape Checkers Bot Started');
+    
+    if(!(my_player = await connect_and_register())) {
+        return;
+    }
 
     let pos = 0;
-
-    // make sure player is registered (for now ignore errors if they happen)
-    try {
-        let pid = await client.request('register_my_player', []);
-        if(pid.result) {
-            console.log('Registered as player', pid.result);
-        }
-        else {
-            console.log('WARN: Failed to register player (might already be registered):', pid.error);
-        }
-    } catch(err) {
-        console.error('Connection failed:', err);
-    }
-    
     while(true) {
         // find a game to play
         pos = await autodial(pos);
@@ -269,8 +342,23 @@ async function main_loop() {
         // play loop
         do {
             if(play_now) {
-                
                 // select a random, valid move
+                let xy = idx_to_xy(pos);
+                
+                let move = _.sample(available_moves);
+                available_moves.unshift(xy[1]);
+                available_moves.unshift(xy[0]);
+                
+                // should just be able to play it like this
+                console.log('Play: ', move.join(' '));
+                try {
+                    await client.request('play_checkers', move);
+                }
+                catch(err) {
+                    console.error('Failed to play move:', err);
+                    // game over for right now
+                    continue;
+                }
             }
             else
                 play_now = true;
@@ -288,6 +376,8 @@ async function main_loop() {
             available_moves = get_available_moves(new_board);
             prev_board = new_board;
         } while(available_moves.length);
+        
+        console.log('Game seems to be over! Moving on...');
     }
 }
 

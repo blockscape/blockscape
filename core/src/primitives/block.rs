@@ -109,7 +109,7 @@ impl Block {
         while len > 1 {
             let mut h: Vec<U256> = Vec::new();
             
-            for i in Range(0, len, 2) {
+            for i in Range(0, len - 1, 2) {
                 h.push( merge_hashes(&hashes[i], &hashes[i+1]) );
             } if (len % 2) == 1 { //if an odd number, we will have a tailing hash we need to include
                 h.push(hashes[len - 1])
@@ -184,4 +184,34 @@ impl Into<Block> for JBlock {
             txns: self.txns.into_iter().map(|h| h.into()).collect()
         }
     }
+}
+
+#[test]
+fn calculate_merkle_root() {
+    
+    let mut bts = BTreeSet::new();
+    // 0 txns
+    assert_eq!(Block::calculate_merkle_root(&bts), U256_ZERO);
+    
+    bts.insert(U256::from(32));
+    // 1 txn
+    assert_eq!(Block::calculate_merkle_root(&bts), U256::from(32));
+    // 2 txns
+    bts.insert(U256_ZERO);
+    let of2 = Block::calculate_merkle_root(&bts);
+    assert_ne!(of2, U256::from(32));
+    assert_ne!(of2, U256_ZERO);
+    bts.insert(U256::from(100));
+    // 3 txns
+    let of3 = Block::calculate_merkle_root(&bts);
+    assert_ne!(of3, of2);
+    bts.insert(U256::from(200));
+    // 4 txns
+    let of4 = Block::calculate_merkle_root(&bts);
+    assert_ne!(of4, of3);
+    assert_ne!(of4, of2);
+    bts.insert(U256::from(300));
+    // 5 txns
+    let of5 = Block::calculate_merkle_root(&bts);
+    assert_ne!(of5, of4);
 }

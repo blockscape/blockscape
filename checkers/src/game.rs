@@ -2,7 +2,7 @@ use checkers;
 use std::sync::Arc;
 use parking_lot::RwLock;
 use blockscape_core::record_keeper::{RecordKeeper, GameStateCache, Error, PlotID, PlotEvent};
-use blockscape_core::primitives::{Txn, Mutation, Change, U160_ZERO};
+use blockscape_core::primitives::{Txn, Mutation, Change, U160_ZERO, U160};
 use std::collections::BTreeSet;
 use blockscape_core::bin::*;
 use blockscape_core::time::Time;
@@ -51,42 +51,58 @@ impl CheckersGame {
             ).unwrap();
         } Ok(board)
     }
+    
+    /// Will return the actual players of the game at a given plot ID. If a slot is not filled,
+    /// it will be marked by U160_ZERO
+    pub fn get_players(&self, location: PlotID) -> Result<(U160, U160), Error> {
+        let events = self.rk.get_plot_events(location, 0)?.get(&0).cloned();
+        
+        if events.is_none() {
+            return Ok((U160_ZERO, U160_ZERO));
+        }
+        
+        let events = events.unwrap();
+        if events.len() >= 2 {
+            if let checkers::Event::Start(p1, p2) = bincode::deserialize(&events[0])? {
+                if let checkers::Event::Join(player) = bincode::deserialize(&events[1])? {
+                    if p1 == U160_ZERO {
+                        Ok((player, p2))
+                    }
+                    else if p2 == U160_ZERO {
+                        Ok((p1, player))
+                    }
+                    else {
+                        unreachable!();
+                    }
+                }
+                else {
+                    unreachable!();
+                }
+            }
+            else {
+                unreachable!();
+            }
+        }
+        else {
+            if let checkers::Event::Start(p1, p2) = bincode::deserialize(&events[0])? {
+                Ok((p1, p2))
+            }
+            else {
+                unreachable!();
+            }
+        }
+    }
 
     /// Will return the set of all actions on a game board that are known (sorted by ascending
     /// tick). Will return an empty list if no game has been started on the given plot.
+    /// NOTE: Players registered in first (start) turn are not guarenteed. For that, use get_players
     pub fn get_moves(&self, location: PlotID) -> Result<Vec<checkers::Event>, Error> {
         let raw_events = self.rk.get_plot_events(location, 0)?;
 
         let mut events = Vec::new();
         for (tick, raw_event_list) in raw_events {
-			
-			if tick == 0 && raw_event_list.len() == 2 {
-				// compress join and start together
-				// (this is wierd but other methods depend on one tick per move so yea)
-				if let checkers::Event::Start(p1, p2) = bincode::deserialize(&raw_event_list[0])? {
-					if let checkers::Event::Join(player) = bincode::deserialize(&raw_event_list[1])? {
-						if p1 == U160_ZERO {
-							events.push(checkers::Event::Start(player, p2))
-						}
-						else if p2 == U160_ZERO {
-							events.push(checkers::Event::Start(p1, player))
-						}
-						else {
-							unreachable!();
-						}
-					}
-					else {
-						unreachable!();
-					}
-				}
-				else {
-					unreachable!();
-				}
-			}
-			else {
-				debug_assert!(raw_event_list.len() == 1 || tick == 0);
-				events.push(bincode::deserialize(&raw_event_list[0])?);
-			}
+            debug_assert!(raw_event_list.len() == 1 || tick == 0);
+            events.push(bincode::deserialize(&raw_event_list[0])?);
         } Ok(events)
     }
 

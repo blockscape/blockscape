@@ -15,7 +15,7 @@ services:
         networks:
             - net
 
-        command: /blockscape -h blockscape_2 -F # --seed-node blockscape_1:35653
+        command: /blockscape -h blockscape_2 -F  --rpcbind 0.0.0.0 # --seed-node blockscape_1:35653
 
     blockscape_3:
         image: dcr.buyme360.com/plu-capstone/blockscape:latest
@@ -24,6 +24,30 @@ services:
             - net
 
         command: /bin/bash -c 'sleep 20 && /blockscape -h blockscape_3 --seed-node blockscape_1:35653 -F'
+
+    blockscape_checkers_bot_1:
+        image: dcr.buyme360.com/plu-capstone/blockscape/checkers-bot:daniel-spike
+
+        networks:
+            - net
+
+        environment:
+            BLOCKSCAPE_HOST: blockscape_1
+
+        depends_on:
+            - blockscape_2
+
+    blockscape_checkers_bot_2:
+        image: dcr.buyme360.com/plu-capstone/blockscape/checkers-bot:daniel-spike
+
+        networks:
+            - net
+
+        environment:
+            BLOCKSCAPE_HOST: blockscape_2
+
+        depends_on:
+            - blockscape_2
 
     blockscape_explorer:
         image: dcr.buyme360.com/plu-capstone/blockscape-explorer:master
