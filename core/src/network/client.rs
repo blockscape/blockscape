@@ -1,8 +1,3 @@
-use bincode;
-use openssl::pkey::PKey;
-use std::cell::*;
-
-use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -12,44 +7,32 @@ use std::thread;
 use std::time::Duration;
 
 use futures::prelude::*;
+use futures::sink::BoxSink;
 use futures::sync::*;
 use futures::sync::mpsc::{UnboundedSender, unbounded};
 use futures::future;
-use futures::unsync;
+
+use openssl::pkey::PKey;
 
 use tokio_core::reactor::*;
-use tokio_core::net::{UdpSocket, UdpCodec};
+use tokio_core::net::{TcpListener, UdpSocket};
+// needed for "framed"
+use tokio_io::AsyncRead;
 
-use env::get_client_name;
-use network::context::*;
-use network::node::{Node, NodeRepository, NodeEndpoint, LocalNode};
-//use network::ntp;
-use network::session;
-use network::session::{SessionInfo, SocketPacket, Message};
-use network::shard::{ShardInfo};
 use primitives::U256;
 use record_keeper::{RecordKeeper, RecordEvent};
 use signer::generate_private_key;
 use util::QuitSignal;
 
-/// Defines the kind of interaction this node will take with a particular shard
-pub enum ShardMode {
-    /// Full participation, operating in block mining, full work processing, full authority
-    Primary,
-    /// This is a long term connection and we still validate and sync on this shard, but less processing, primarily just validation
-    Auxillery,
-    /// Used when connecting to a shard to only get information from authoritative network sources. Good for when a player views a arbitrary shard
-    /// for gameplay. 
-    QueryOnly
-}
-
-//const NODE_SCAN_INTERVAL: u64 = 30000; // every 30 seconds
-const NODE_CHECK_INTERVAL: u64 = 5000; // every 5 seconds
-//const NODE_NTP_INTERVAL: u64 = 20 * 60000; // every 20 minutes
-
-/// The maximum amount of data that can be in a single message object (the object itself can still be in split into pieces at the datagram level)
-/// Right now it is set to 64k, which is the highest number supported by kernel fragmentation right now.
-pub const MAX_PACKET_SIZE: usize = 64 * 1000;
+use network::context::*;
+use network::node::{Node, NodeEndpoint, Protocol};
+use network::job::NetworkJob;
+//use network::ntp;
+use network::protocol::*;
+use network::session::SessionInfo;
+use network::shard::ShardMode;
+use network::tcp::TCPCodec;
+use network::udp::UDPCodec;
 
 pub trait BroadcastReceiver {
     /// Returns a unique identifier to separate events for this broadcast ID. Must be unique per application.
@@ -104,11 +87,13 @@ impl ClientConfig {
             seed_nodes: vec![
                 NodeEndpoint {
                     host: String::from("seed-1.blockscape"),
-                    port: 35653
+                    port: 35653,
+                    protocol: Protocol::Udp
                 },
                 NodeEndpoint {
                     host: String::from("seed-2.blockscape"),
-                    port: 35653
+                    port: 35653,
+                    protocol: Protocol::Udp
                 }
             ],
             min_nodes: 8,
@@ -167,88 +152,16 @@ impl Statistics {
     }
 }
 
-/// A data structure which is passed into session handlers while packets are being processed and during certain events.
-/// The inclusion of this data allows for reactions to be taken by core as appropriate
-pub struct NetworkActions<'a> {
-
-    /// The network client instance for certain generative calls
-    pub nc: &'a Client,
-
-    /// Nodes which can be connected to which were recently supplied
-    pub connect_peers: HashMap<U256, Vec<Node>>,
-
-    /// Packets which should be sent
-    pub send_packets: Vec<SocketPacket>
-}
-
-impl<'a> NetworkActions<'a> {
-    pub fn new(nc: &'a Client) -> NetworkActions<'a> {
-        NetworkActions {
-            nc: nc,
-            connect_peers: HashMap::new(),
-            send_packets: Vec::new()
-        }
-    }
-}
-
-struct P2PCodec;
-
-impl UdpCodec for P2PCodec {
-    type In = SocketPacket;
-    type Out = SocketPacket;
-
-    fn decode(&mut self, src: &SocketAddr, buf: &[u8]) -> io::Result<Self::In> {
-        Ok(SocketPacket(src.clone(), bincode::deserialize(buf).map_err(|_| io::ErrorKind::Other)?))
-    }
-
-    fn encode(&mut self, msg: Self::Out, buf: &mut Vec<u8>) -> SocketAddr {
-        buf.extend(bincode::serialize(&msg.1, bincode::Infinite).unwrap());
-
-        msg.0
-    }
-}
-
 pub struct Client {
-
     /// Shared data for all network building blocks
     context: Rc<NetworkContext>,
-
-    /// Data structures associated with shard-specific information
-    shards: [RefCell<Option<ShardInfo>>; 255],
-
-    /// All the currently active jobs are kept here. For augmentation.
-    jobs: RefCell<Vec<Weak<NetworkJob>>>,
-
-    curr_port: Cell<u8>,
-
-    num_shards: Cell<u8>,
 }
 
 impl Client {
-    fn new(config: ClientConfig, rk: Arc<RecordKeeper>, core: &Core, chain_tx: unsync::mpsc::UnboundedSender<(Rc<NetworkJob>, Option<U256>)>) -> Client {
-        let pkeyder = config.private_key.public_key_to_der().expect("Could not convert node key to der!");
-        let epoint = NodeEndpoint { host: config.hostname.clone(), port: config.port };
+    fn new(config: ClientConfig, rk: Arc<RecordKeeper>, core: &Core) -> Client {
         
         Client {
-            context: Rc::new(NetworkContext {
-                rk: Arc::clone(&rk),
-                config: config,
-                my_node: Node {
-                    key: pkeyder, // TODO: Should be public key only!
-                    version: session::PROTOCOL_VERSION,
-                    endpoint: epoint,
-                    name: get_client_name()
-                },
-                event_loop: core.handle(), 
-                sink: Cell::new(None),
-                job_targets: chain_tx,
-                received_broadcasts: RefCell::new(HashMap::new()),
-                broadcast_receivers: init_array!(Cell<Option<Arc<BroadcastReceiver + Send + Sync>>>, 256, Cell::new(None))
-            }),
-            shards: init_array!(RefCell<Option<ShardInfo>>, 255, RefCell::new(None)),
-            jobs: RefCell::new(Vec::new()),
-            num_shards: Cell::new(0),
-            curr_port: Cell::new(0),
+            context: Rc::new(NetworkContext::new(config, rk, core))
         }
     }
 
@@ -256,103 +169,35 @@ impl Client {
         self.context.broadcast_receivers[id as usize].set(Some(receiver));
     }
 
-    /// Connect to the specified shard by shard ID. On success, returns the number of pending connections (the number of nodes)
-    /// A result value of 0 does not indicate failure; it simply means that we need some time to gain connections within the net.
-    /// Be patient.
-    pub fn attach_network(&self, network_id: U256, mode: ShardMode) -> Result<usize, ()> {
-
-        if self.num_shards.get() > 128 {
-            // we risk overwhelming the ports
-            return Err(());
-        }
-
-        // first, setup the node repository
-        let repo = self.load_node_repo(network_id);
-        let node_count = repo.len();
-
-        debug!("Attached network repo size: {}", node_count);
-
-        // find a suitable port
-        let mut port;
-        loop {
-            port = (self.curr_port.replace((self.curr_port.get() + 1) % 255)) as u8;
-
-            // make sure the port is not taken (this should almost always take one try)
-            if self.shards[port as usize].borrow().is_none() {
-                break;
-            }
-        }
-
-        // we can now get going
-        let si = ShardInfo::new(network_id, port, mode, Rc::clone(&self.context), repo);
-
-        let mut shard = self.shards[port as usize].borrow_mut();
-        *shard = Some(si);
-
-        // TODO: Constant?
-        if node_count >= 2 {
-            // we can start connecting to nodes immediately
-            let mut actions = NetworkActions::new(self);
-            let r = shard.borrow().as_ref().unwrap().node_scan(8, &mut actions);
-
-            self.context.send_packets(actions.send_packets);
-            Ok(r)
-        }
-        else {
-            // we need to resolve our way over to this shard (TODO)
-            Ok(0)
-        }
-    }
-
-    pub fn detach_network(&self, network_id: &U256) -> bool {
-        self.detach_network_port(self.resolve_port(network_id))
-    }
-
-    fn detach_network_port(&self, idx: u8) -> bool {
-        debug!("Detach network port: {}", idx);
-
-        let mut sh = self.shards[idx as usize].borrow_mut();
-        if let None = *sh {
-            return false;
-        }
-
-        let mut actions = NetworkActions::new(self);
-
-        sh.as_ref().unwrap().close(&mut actions);
-        *sh = None;
-
-        true
-    }
-
-    fn resolve_port(&self, network_id: &U256) -> u8 {
-        for i in 0..255 {
-            let shard = self.shards[i].borrow();
-            if let Some(ref sh) = *shard {
-                if sh.get_network_id() == network_id {
-                    return i as u8;
-                }
-            }
-        }
-
-        255
-    }
-
-    fn process_packet(&self, d: SocketPacket) -> Box<Future<Item=(), Error=io::Error>> {
+    fn udp_process_packet(&self, d: SocketPacket) -> Box<Future<Item=(), Error=io::Error>> {
         // send packet to the correct shard
         let SocketPacket(addr, p) = d;
-        
-        let mut actions = NetworkActions::new(self);
 
         if p.port == 255 {
-            if let Message::Introduce { ref node, ref network_id, .. } = p.payload.msg {
+            if let Message::Introduce { node, network_id, .. } = p.payload.msg.clone() {
                 // new session?
-                let idx = self.resolve_port(network_id);
-                if let Some(ref shard) = *self.shards[idx as usize].borrow() {
-                    if let Ok(addr) = shard.open_session(Arc::new(node.clone()), Some(&p.payload), &mut actions) {
-                        info!("New contact opened from {}", addr);
-
-
-                    }
+                if let Some(ref shard) = *self.context.get_shard_by_id(&network_id) {
+					
+					let ctx = self.context.clone();
+					let node2 = node.clone();
+                    let f = shard.open_session(node, None, false).then(move |r| {
+						
+						if let Err(_) = r {
+							// TODO: Do something here
+							return Err(())
+						}
+						
+						let addr = r.unwrap();
+						
+						if let Some(ref shard) = *ctx.get_shard_by_id(&network_id) {
+							shard.process_packet(&p.payload, &addr);
+							info!("[UDP] New contact opened from {}", node2.endpoint);
+						}
+						
+						Ok(())
+					});
+					
+					self.context.event_loop.spawn(f);
                 }
                 else {
                     debug!("Invalid network ID received in join for network: {}", network_id);
@@ -362,35 +207,68 @@ impl Client {
                 debug!("Received non-introduce first packet on generic port: {:?}", p);
             }
         }
-        else if let Some(ref shard) = *self.shards[p.port as usize].borrow() {
+        else if let Some(ref shard) = *self.context.get_shard(p.port) {
 
-            shard.process_packet(&p.payload, &addr, &mut actions);
+            shard.process_packet(&p.payload, &addr);
         }
         else {
             // bogus network ID received, ignore
             // TODO: A good debug print here might also print the packet
             debug!("Received unregistered network port packet: {}", p.port);
         }
-
-        // finally, any new nodes to connect to?
-        for (network_id, peers) in actions.connect_peers.iter() {
-            for peer in peers {
-                // for right now, only save for nodes of open networks
-                let port = self.resolve_port(network_id) as usize;
-                if port != 255 {
-                    // add to the connect queue of the network
-                    // a successful connection will result in the node being added to the permanent db
-                    if let Some(ref s) = *self.shards[port].borrow() {
-                        s.add_connect_queue(Arc::new(peer.clone()));
-                    }
-                }
-            }
-        }
-
-        // send packets
-        self.context.send_packets(actions.send_packets);
         
         Box::new(future::ok(()))
+    }
+
+    fn tcp_process_packet(this: &Rc<Client>, p: Packet, stream: Box<Stream<Item=Packet, Error=io::Error>>, sink: BoxSink<Packet, io::Error>) {
+        // check for introduce packet
+        if let Message::Introduce { node, network_id, .. } = p.msg.clone() {
+            // new session?
+            let idx = this.context.resolve_port(&network_id);
+            if let Some(ref shard) = *this.context.get_shard(idx) {
+				
+				let ctx = this.context.clone();
+				let f = shard.open_session(node.clone(), None, false).then(move |r| {
+					
+					if let Err(_) = r {
+						// TODO: Do something here
+						return Err(())
+					}
+					
+					let addr = r.unwrap();
+					if let Some(ref shard) = *ctx.get_shard_by_id(&network_id) {
+						shard.process_packet(&p, &addr);
+						info!("[TCP] New contact opened from {}", node.endpoint);
+					}
+
+                    // handle packets
+                    let t = Rc::clone(&ctx);
+                    let f = stream.for_each(move |p| {
+						// have to resolve the shard yet again :)
+                        if let Some(ref shard) = *t.get_shard(idx) {
+                            shard.process_packet(&p, &addr);
+                        }
+
+                        future::ok(())
+                    }).or_else(|err| {
+                        warn!("Socket decode failed: {:?}", err);
+                        future::ok(())
+                    });
+
+                    ctx.event_loop.spawn(f);
+					
+					Ok(())
+				});
+				
+				this.context.event_loop.spawn(f);
+            }
+            else {
+                debug!("Invalid network ID received in join for network: {}", network_id);
+            }
+        }
+        else {
+            debug!("Received non-introduce first packet on new TCP connection: {:?}", p);
+        }
     }
 
     /// Spawns the threads and puts the networking into a full working state
@@ -401,22 +279,55 @@ impl Client {
             info!("Network Handler thread ready");
 
             let mut core = Core::new().expect("Could not create network reactor core");
-            let (nout, nin) = UdpSocket::bind(&config.bind_addr, &core.handle()).expect("Could not bind P2P socket!").framed(P2PCodec).split();
+            let (unout, unin) = UdpSocket::bind(&config.bind_addr, &core.handle()).expect("Could not bind P2P UDP socket!")
+                .framed(UDPCodec).split();
 
-            let (chain_tx, chain_rx) = unsync::mpsc::unbounded();
+            let tnin = TcpListener::bind(&config.bind_addr, &core.handle()).expect("Could not bind P2P TCP socket!").incoming();
 
             let (rktx, rkrx) = mpsc::channel(10);
             rk.register_record_listener(rktx);
 
-            let t = Rc::new(Client::new(config, rk, &core, chain_tx));
+            let t = Rc::new(Client::new(config, rk, &core));
 
-            t.context.sink.set(Some(Box::new(nout)));
+            t.context.sink.set(Some(Box::new(unout)));
 
             //let this = Rc::clone(&t);
 
+            let this = Rc::clone(&t);
+            let udp_listener = unin.for_each(move |p| {
+                this.udp_process_packet(p);
+
+                future::ok(())
+            }).or_else(|e| {
+
+                warn!("Failed to listen to packets: {}", e);
+
+                future::err(())
+            });
+            
             let mut this = Rc::clone(&t);
-            let packet_listener = nin.for_each(move |p| {
-                this.process_packet(p);
+            let tcp_listener = tnin.for_each(move |(strm, addr)| {
+				debug!("Accept from {}", addr);
+
+                // read what should be an introduce packet
+                let (ttx, trx) = strm.framed(TCPCodec).split();
+                let this2 = Rc::clone(&this);
+                let f = trx.into_future().then(move |r| {
+                    match r {
+                        Ok((Some(p), trx)) => {
+                            Client::tcp_process_packet(&this2, p, Box::new(trx), Box::new(ttx));
+                            Ok::<(), ()>(())
+                        },
+
+                        _ => {
+                            debug!("TCP Connection closed before introduce");
+                            Err::<(), ()>(())
+                        }
+                    }
+
+                });
+
+                this.context.event_loop.spawn(f);
 
                 future::ok(())
             }).or_else(|e| {
@@ -432,30 +343,57 @@ impl Client {
                     ClientMsg::GetStatistics(r) => future::result(r.send(this.get_stats()).map_err(|_| ())),
                     ClientMsg::GetPeerInfo(r) => future::result(r.send(this.get_peer_info()).map_err(|_| ())),
                     ClientMsg::AddNode(network_id, node) => {
-                        let p = this.resolve_port(&network_id);
+                        let p = this.context.resolve_port(&network_id);
                         if p < 255  {
-                            this.shards[p as usize].borrow().as_ref().unwrap().add_connect_queue(Arc::new(node));                        }
+                            let f = this.context.get_shard(p).as_ref().unwrap()
+                                .open_session(node, None, true)
+                                .then(move |r| {
+									// TODO: Return an actual response
+									if let Err(_) = r {
+										warn!("Could not add node to connection list: is the hostname correct/resolvable?");
+									}
+									
+									Ok(())
+								});
+							
+							this.context.event_loop.spawn(f);
+                        }
 
                         future::ok(())
                     },
                     ClientMsg::DropNode(network_id, _) => {
-                        let p = this.resolve_port(&network_id);
+                        let p = this.context.resolve_port(&network_id);
                         if p < 255 {
                             // not implemented
                         }
 
                         future::ok(())
                     },
-                    ClientMsg::AttachNetwork(network_id, mode) => future::result(this.attach_network(network_id, mode).map(|_| ())),
+                    ClientMsg::AttachNetwork(network_id, mode) => future::result(NetworkContext::attach_network(&this.context, network_id, mode).map(|_| ())),
                     ClientMsg::DetachNetwork(network_id) => {
-                        this.detach_network(&network_id);
+                        this.context.detach_network(&network_id);
 
                         future::ok(())
                     },
 
-                    ClientMsg::ShouldForge(_network_id, r) => {
-                        this.clear_weak_jobs();
-                        future::result(r.send(this.jobs.borrow().is_empty()).map_err(|_| ()))
+                    ClientMsg::ShouldForge(network_id, r) => {
+                        // must be connected to at least one node on the selected network (possibly for a period of time)
+                        // must not be synchronizing
+
+                        // this should only be called in response to a new block being processed so we can be sure that
+                        // no block is forged before then, or else it is risky.
+                        if let Some(ref shard) = *this.context.get_shard_by_id(&network_id) {
+                            if let Err(_) = r.send(shard.get_session_count() > 0 && !NetworkJob::chain_sync_exists()) {
+								// ignore
+							}
+                        }
+                        else {
+                            if let Err(_) = r.send(false) {
+								// ignore
+							}
+                        }
+
+                        future::ok(())
                     },
 
                     ClientMsg::SendBroadcast(network_id, id, payload) => {
@@ -469,11 +407,9 @@ impl Client {
                         let msg = Message::Broadcast(id, payload);
 
                         // get shard of ID
-                        let p = this.resolve_port(&network_id);
+                        let p = this.context.resolve_port(&network_id);
                         if p < 255 {
-                            let mut actions = NetworkActions::new(this.as_ref());
-                            this.shards[p as usize].borrow().as_ref().unwrap().reliable_flood(msg, &mut actions);
-                            this.context.send_packets(actions.send_packets);
+                            this.context.get_shard(p).as_ref().unwrap().reliable_flood(msg);
                         }
 
                         future::ok(())
@@ -489,59 +425,6 @@ impl Client {
                 this.context.event_loop.spawn(f);
 
                 future::ok(())
-            });
-
-            this = Rc::clone(&t);
-            let chain_handler = chain_rx.for_each(move |(j, augmenter)| {
-
-                // perform job merging if possible, break if we succeeed
-                if let Some(h) = augmenter {
-                    this.clear_weak_jobs();
-
-                    let mut jobs = this.jobs.borrow_mut();
-                    let mut found = false;
-                    let mut x = 0;
-                    while x < jobs.len() {
-                        let oje = jobs[x].upgrade().unwrap(); // guarenteed since we clear weak jobs earlier
-                        if oje.get_target() == h {
-                            // change the existing job rather than creating a new one.
-                            debug!("Augment Existing Job: {}", oje.get_target());
-                            oje.augment(j.get_target());
-                            found = true;
-                            break;
-                        }
-                        else if Rc::ptr_eq(&j, &oje) {
-                            // previous job resubmitted due to failure/continued processing
-                            jobs.swap_remove(x);
-                            break;
-                        }
-                        else if j.get_target() == oje.get_target() && !Rc::ptr_eq(&j, &oje) {
-                            // duplicate jobs
-                            found = true;
-                            break;
-                        }
-
-                        x += 1;
-                    }
-
-                    if found {
-
-                        debug!("Augment/Duplicate Job: Target {}", j.get_target());
-                        return Ok::<(), ()>(());
-                    }
-                }
-
-                if let Some(ref shard) = *this.shards[this.resolve_port(&j.network_id) as usize].borrow() {
-                    debug!("Assign Job: {}", j.get_target());
-                    if !shard.assign_job(&j) {
-                        warn!("Could not assign job in network: {}", j.network_id);
-                    }
-                    else {
-                        this.jobs.borrow_mut().push(Rc::downgrade(&j))
-                    }
-                }
-
-                Ok::<(), ()>(())
             });
 
             /*let ntpTask = Interval::new_at(Instant::now(), Duration::from_millis(NODE_NTP_INTERVAL))?
@@ -562,15 +445,11 @@ impl Client {
                 .expect("Cannot start network timer!")
                 .for_each(move |_| {
                     for i in 0..255 {
-                        if let Some(ref s) = *this.shards[i].borrow() {
-
-                            let mut actions = NetworkActions::new(this.as_ref());
+                        if let Some(ref s) = *this.context.get_shard(i) {
 
                             debug!("Node scan started");
-                            s.node_scan(this.context.config.min_nodes as usize, &mut actions);
-                            s.check_sessions(&mut actions);
-
-                            this.context.send_packets(actions.send_packets);
+                            s.node_scan(this.context.config.min_nodes as usize);
+                            s.check_sessions();
                         }
                     }
 
@@ -585,27 +464,22 @@ impl Client {
             this = Rc::clone(&t);
             let rk_task = rkrx.for_each(move |e| {
                 match e {
+                    // otherwise do not propogate anything
                     RecordEvent::NewBlock {block, fresh: true, ..} => {
-                        let shard = this.shards[this.resolve_port(&block.shard) as usize].borrow();
-
-                        if let Some(ref s) = *shard {
-                            let mut actions = NetworkActions::new(this.as_ref());
-                            s.reliable_flood(Message::NewBlock(block), &mut actions);
-                            this.context.send_packets(actions.send_packets);
+                        let p = this.context.resolve_port(&block.shard);
+                        if p < 255 {
+                            this.context.get_shard(p).as_ref().unwrap()
+                                .reliable_flood(Message::NewBlock(block));
                         }
-                        // otherwise do not propogate anything
+                        
                     },
+                    // otherwise do not propogate anything
                     RecordEvent::NewTxn {txn, fresh: true} => {
                         // TODO: When we have the ability to tell which network a txn is on, apply to the correct net
                         // for now we assume genesis
-                        let shard = this.shards[0].borrow();
-
-                        if let Some(ref s) = *shard {
-                            let mut actions = NetworkActions::new(this.as_ref());
-                            s.reliable_flood(Message::NewTransaction(txn), &mut actions);
-                            this.context.send_packets(actions.send_packets);
+                        if let Some(ref s) = *this.context.get_shard(0) {
+                            s.reliable_flood(Message::NewTransaction(txn));
                         }
-                        // otherwise do not propogate anything
                         
                     },
                     _ => {}
@@ -615,15 +489,15 @@ impl Client {
             });
 
             t.context.event_loop.spawn(msg_handler);
-            t.context.event_loop.spawn(chain_handler);
-            t.context.event_loop.spawn(packet_listener);
+            t.context.event_loop.spawn(udp_listener);
+            t.context.event_loop.spawn(tcp_listener);
             //handle.spawn(ntpTask);
             t.context.event_loop.spawn(session_check_task);
             t.context.event_loop.spawn(rk_task);
 
             this = Rc::clone(&t);
             core.run(quit).and_then(|_| {
-                this.close();
+                this.context.close();
 
                 Ok(())
             }).unwrap(); // technically can never happen
@@ -634,31 +508,11 @@ impl Client {
         Ok((tx, t))
     }
 
-    /// End all network resources and prepare for program close
-    /// You are still responsible for joining to the network threads to make sure they close properly
-    pub fn close(&self) {
-
-        debug!("Closing network...");
-
-        // detach all networks
-        for i in 0..255 {
-            let exists = self.shards[i].borrow().is_some();
-
-            if exists {
-                self.detach_network_port(i as u8);
-            }
-        }
-    }
-
     pub fn get_nodes_from_repo(&self, network_id: &U256, skip: usize, count: usize) -> Vec<Node> {
-        let port = self.resolve_port(&network_id);
+        let port = self.context.resolve_port(&network_id);
         if port != 255 {
-
-            let shard = self.shards[port as usize].borrow();
-
-            if let Some(ref s) = *shard {
-                return s.get_nodes_from_repo(skip, count);
-            }
+            self.context.get_shard(port).borrow().as_ref().unwrap()
+                .get_nodes_from_repo(skip, count);
         }
 
         Vec::new()
@@ -666,14 +520,10 @@ impl Client {
 
     pub fn get_shard_peer_info(&self, network_id: &U256) -> Vec<SessionInfo> {
 
-        let port = self.resolve_port(network_id);
+        let port = self.context.resolve_port(network_id);
         if port != 255 {
-
-            let shard = self.shards[port as usize].borrow();
-
-            if let Some(ref s) = *shard {
-                return s.get_session_info();
-            }
+            self.context.get_shard(port).borrow().as_ref().unwrap()
+                .get_session_info();
         }
 
         Vec::new()
@@ -684,7 +534,7 @@ impl Client {
         let mut p = Vec::new();
 
         for i in 0..255 {
-            if let Some(ref s) = *self.shards[i].borrow() {
+            if let Some(ref s) = *self.context.get_shard(i) {
                 p.append(&mut s.get_session_info());
             }
         }
@@ -696,13 +546,10 @@ impl Client {
 
         let mut stats = Statistics::new();
 
-        //stats.rx = self.rx.load(Relaxed) as u64;
-        //stats.tx = self.tx.load(Relaxed) as u64;
-
         for i in 0..255 {
-            if let Some(ref s) = *self.shards[i].borrow() {
+            if let Some(ref s) = *self.context.get_shard(i) {
                 stats.attached_networks += 1;
-                stats.connected_peers += s.session_count() as u32;
+                stats.connected_peers += s.get_session_count() as u32;
             }
         }
 
@@ -719,33 +566,5 @@ impl Client {
 
     pub fn get_handle(&self) -> Handle {
         self.context.event_loop.clone()
-    }
-
-    /// Initialize a node repository from file given the ID
-    /// NOTE: This is pretty slow, consider using sparingly
-    fn load_node_repo(&self, network_id: U256) -> NodeRepository {
-        let mut repo = NodeRepository::new();
-
-        let res = repo.load(network_id.to_string().as_str());
-        
-        if res.is_ok() && res.unwrap() == 0 {
-            // add seed nodes
-            repo.build(&self.context.config.seed_nodes.iter().cloned().map(|ep| LocalNode::new(Node::new(ep))).collect());
-        }
-
-        repo
-    }
-
-    fn clear_weak_jobs(&self) {
-        let mut x = 0;
-        let mut jobs = self.jobs.borrow_mut();
-        while x < jobs.len() {
-            if jobs[x].upgrade().is_none() {
-                jobs.swap_remove(x);
-            }
-            else {
-                x += 1;
-            }
-        }
     }
 }

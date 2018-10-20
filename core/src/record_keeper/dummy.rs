@@ -3,9 +3,8 @@ use primitives::{U256, U160, U256_ZERO, Txn, Block, BlockHeader, HasBlockHeader}
 use std::collections::{HashMap, BTreeSet, BTreeMap, HashSet};
 use std::sync::Arc;
 use std::sync::{RwLock,Mutex};
-use futures_cpupool;
 use primitives::{RawEvents};
-use super::{RecordKeeper, PoolHolder, RecordKeeperStatistics, Error, LogicError, PlotID};
+use super::{RecordKeeper, RecordKeeperStatistics, Error, LogicError, PlotID};
 use super::BlockPackage;
 use time::Time;
 
@@ -57,18 +56,6 @@ impl DummyRecordKeeper {
             pending_txns: RwLock::new(HashMap::new()),
             best_block: RwLock::new(node),
         }
-    }
-}
-
-/// TODO: Find a way to optimize out
-impl PoolHolder for DummyRecordKeeper {
-    fn get_worker(&self) -> &futures_cpupool::CpuPool {
-        panic!("Should not be using the worker for dummy RK!")
-    }
-
-    /// Get the CPU pool worker for high-priority tasks.
-    fn get_priority_worker(&self) -> &futures_cpupool::CpuPool {
-        panic!("Should not be using the worker for dummy RK!")
     }
 }
 

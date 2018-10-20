@@ -15,6 +15,8 @@ use blockscape_core::record_keeper::RecordEvent;
 use blockscape_core::primitives::*;
 use blockscape_core::network::client::ClientMsg;
 
+use blockscape_core::worker::QUEUED_WORKER;
+
 /// A quick shorthand for testing the enum type of an object
 macro_rules! matches(
     ($e:expr, $p:pat) => (
@@ -26,7 +28,7 @@ macro_rules! matches(
 );
 
 /// Using the given network ID, starts a mining/forging instance to attempt to sign a block for acceptance into the network.
-pub fn start_forging(context: &Rc<Context>, handler: &Handle, _network_id: U256) {
+pub fn start_forging(context: &Rc<Context>, handler: &Handle, network_id: U256, force: bool) {
 
     let (tx, rx) = mpsc::channel(10);
 
@@ -55,7 +57,8 @@ pub fn start_forging(context: &Rc<Context>, handler: &Handle, _network_id: U256)
 
         // should we be forging atm?
         let fun = move |should: Result<bool, futures::Canceled>| {
-            if !should.unwrap_or(false) {
+            if !force && !should.unwrap_or(false) {
+                warn!("Forger is waiting for chain to sync...");
                 return Box::new(future::ok::<(), ()>(()));
             }
 
@@ -92,7 +95,7 @@ pub fn start_forging(context: &Rc<Context>, handler: &Handle, _network_id: U256)
                     Ok(Either::B((block, _))) => {
                         let context_rk = Arc::clone(&context4.rk);
 
-                        handler4.spawn(context4.rk.get_priority_worker().spawn_fn(move || {
+                        handler4.spawn(QUEUED_WORKER.spawn_fn(move || {
                             let r = context_rk.add_block(&block, true);
                             if let Ok(_) = r {
                                 println!("FORGE: Submitted {} was accepted!", block.calculate_hash());
@@ -119,7 +122,7 @@ pub fn start_forging(context: &Rc<Context>, handler: &Handle, _network_id: U256)
         };
 
         let (tx, rx) = oneshot::channel();
-        context2.network.unbounded_send(ClientMsg::ShouldForge(U256_ZERO, tx)).expect("Could not send message to network");
+        context2.network.unbounded_send(ClientMsg::ShouldForge(network_id, tx)).expect("Could not send message to network");
         handler2.spawn(rx.into_future().then(fun));
 
         Box::new(future::ok::<(), ()>(()))
