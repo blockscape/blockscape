@@ -17,7 +17,7 @@ impl Player {
     #[inline]
     pub fn from_turn(turn: u64) -> Result<Player, Error> {
         match turn {
-            0 => Err(Error::InvalidPlay),
+            0 | 1 => Err(Error::InvalidPlay),
             t @ _ if t % 2 == 0 => Ok(Player::Red),
             _ => Ok(Player::Black)
         }
@@ -335,10 +335,10 @@ mod tests {
     fn from_turn() {
         use super::Player;
         assert!(Player::from_turn(0).is_err());
-        assert_eq!(Player::from_turn(1).unwrap(), Player::Red);
-        assert_eq!(Player::from_turn(2).unwrap(), Player::Black);
-        assert_eq!(Player::from_turn(3).unwrap(), Player::Red);
-        assert_eq!(Player::from_turn(4).unwrap(), Player::Black);
+        assert!(Player::from_turn(1).is_err());
+        assert_eq!(Player::from_turn(2).unwrap(), Player::Red);
+        assert_eq!(Player::from_turn(3).unwrap(), Player::Black);
+        assert_eq!(Player::from_turn(4).unwrap(), Player::Red);
     }
 
     #[test]
