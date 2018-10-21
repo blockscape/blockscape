@@ -18,7 +18,7 @@ impl Player {
     pub fn from_turn(turn: u64) -> Result<Player, Error> {
         match turn {
             0 => Err(Error::InvalidPlay),
-            t @ _ if t % 2 == 1 => Ok(Player::Red),
+            t @ _ if t % 2 == 0 => Ok(Player::Red),
             _ => Ok(Player::Black)
         }
     }

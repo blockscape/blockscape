@@ -50,7 +50,7 @@ async function get_checkers_board(idx) {
     for(let line of lines) {
         if(line[2] != '|')
             continue;
-        ret.board.push(line.substr(3, line.length - 1).replace(/\s/g, ''));
+        ret.board.push(line.substring(3, line.length - 1).replace(/\s/g, ''));
     }
     
     return ret;
@@ -71,7 +71,7 @@ function delta_to_dir(dx, dy) {
 
 function xy_to_checkers_coord(x, y) {
     let cols = 'abcdefgh';
-    return cols[x] + y.toString();
+    return cols[x] + (y + 1).toString();
 }
 
 /// Investigate the possibility of moving the given checkers piece in the specified direction.
@@ -82,10 +82,13 @@ function xy_to_checkers_coord(x, y) {
 /// Returns the number of new moves added
 function consider_move(moves, board, x, y, dx, dy, jump_path, hit_path, orig_x, orig_y) {
     
-    if(board[y][x] == 'b' && y < 0)
+    if(board[y][x] == '.' && !jump_path)
+        throw 'WARN: Consider_move called on empty board location: ' + xy_to_checkers_coord(x, y);
+    
+    if(board[y][x] == 'b' && dy < 0)
         return 0;
     
-    if(board[y][x] == 'r' && y > 0)
+    if(board[y][x] == 'r' && dy > 0)
         return 0;
     
     if(x + dx < 0 || x + dx >= board[y].length || y + dy < 0 || y + dy >= board.length) {
@@ -96,21 +99,24 @@ function consider_move(moves, board, x, y, dx, dy, jump_path, hit_path, orig_x, 
     let ny = y + 2 * dy;
     
     let is_empty = board[y + dy][x + dx] == '.';
+    let is_mine = board[y][x].toLowerCase() == board[y + dy][x + dx].toLowerCase();
     
     if(!jump_path && is_empty) {
         moves.push([xy_to_checkers_coord(x, y), 'move', delta_to_dir(dx, dy)]);
         return 1;
     }
-    else if(!is_empty && nx >= 0 && nx < board[y].length && ny >= 0 && ny < board.length) {
+    else if(!is_empty && !is_mine && 
+        nx >= 0 && nx < board[y].length && ny >= 0 && ny < board.length &&
+        board[ny][nx] == '.') {
         // try jumping
         // make sure we are not jumping over somewhere that has already been hit
-        if(hit_path && hit_path.indexOf(xy_to_checkers_coord(x + dx, y + dy)))
+        if(hit_path && hit_path.indexOf(xy_to_checkers_coord(x + dx, y + dy)) == -1)
             return 0;
         
         let added = 0;
         // 'slice' below makes a clone of the array references before we add our items
-        jump_path = jump_path.slice(0) || [];
-        hit_path = hit_path.slice(0) || [];
+        jump_path = jump_path ? _.clone(jump_path) : [];
+        hit_path = hit_path ? _.clone(hit_path) : [];
         jump_path.push(delta_to_dir(dx, dy));
         hit_path.push(xy_to_checkers_coord(x + dx, y + dy));
         
@@ -121,8 +127,8 @@ function consider_move(moves, board, x, y, dx, dy, jump_path, hit_path, orig_x, 
         
         added += consider_move(moves, board, nx, ny, nx + 2, ny + 2, jump_path, hit_path, orig_x, orig_y);
         added += consider_move(moves, board, nx, ny, nx - 2, ny + 2, jump_path, hit_path, orig_x, orig_y);
-        added += consider_move(moves, board, nx, ny, nx + 2, ny - 2, jump_path, orig_x, orig_y);
-        added += consider_move(moves, board, nx, ny, nx - 2, ny - 2, jump_path, orig_x, orig_y);
+        added += consider_move(moves, board, nx, ny, nx + 2, ny - 2, jump_path, hit_path, orig_x, orig_y);
+        added += consider_move(moves, board, nx, ny, nx - 2, ny - 2, jump_path, hit_path, orig_x, orig_y);
         
         if(!added) {
             moves.push([xy_to_checkers_coord(orig_x, orig_y), 'jump'].concat(jump_path));
@@ -137,16 +143,25 @@ function consider_move(moves, board, x, y, dx, dy, jump_path, hit_path, orig_x, 
 
 /// Using the given board, calculate all possible valid moves
 /// An item in the array of the return value can be used directly as an RPC call
-function get_available_moves(board) {
+function get_available_moves(board, is_red) {
+    
+    console.log('GET AVAILABLE MOVES AS RED:', is_red);
+    console.log(board);
     
     let moves = [];
     
     for(let y = 0;y < board.length;y++) {
         for(let x = 0;x < board[y].length;x++) {
-            consider_move(moves, board, y, x,  1, -1);
-            consider_move(moves, board, y, x,  1,  1);
-            consider_move(moves, board, y, x, -1, -1);
-            consider_move(moves, board, y, x, -1,  1);
+            
+            if(
+                ((board[y][x] == 'R' || board[y][x] == 'r') && is_red) ||
+                ((board[y][x] == 'B' || board[y][x] == 'b') && !is_red)
+            ) {
+                consider_move(moves, board, x, y,  1, -1);
+                consider_move(moves, board, x, y,  1,  1);
+                consider_move(moves, board, x, y, -1, -1);
+                consider_move(moves, board, x, y, -1,  1);   
+            }
         }
     }
     
@@ -234,7 +249,7 @@ async function bid(idx) {
                     }
                     
                     // game should be ready to be played for now
-                    return [idx, true, res.board];   
+                    return [idx, res.board, true];   
                 }
                 else {
                     console.log('Failed to start game: ', r.error);
@@ -259,8 +274,8 @@ async function bid(idx) {
                     // wait for status to be ready to play
                     let orig_board = res.board;
                     let game = res;
-                    while(game.board != orig_board) {
-                        console.log('Waiting for player to join game', idx);
+                    while(_.isEqual(game.board, orig_board)) {
+                        console.log('Waiting for opponents first move...');
                         await sleep(2000);
                         game = await get_checkers_board(idx);
                         
@@ -270,12 +285,12 @@ async function bid(idx) {
                             return await bid(idx);
                         }
                     }
+                
+                    return [idx, game.board, false];
                 }
                 else {
                     console.log('Failed to join game: ', r.error);
                 }
-                
-                return [idx, false, res.board];
             }
             catch(err) {
                 // ignore error for now (TODO: Could cause problems)
@@ -336,32 +351,33 @@ async function main_loop() {
         let r = await bid(pos);
         
         pos = r[0];
-        let play_now = r[1];    
-        let prev_board = r[2];
-        let available_moves = [];
+        let prev_board = r[1];
+        let is_red = r[2];
+        let available_moves = get_available_moves(prev_board, is_red);
         // play loop
         do {
-            if(play_now) {
-                // select a random, valid move
-                let xy = idx_to_xy(pos);
+            // select a random, valid move
+            let xy = idx_to_xy(pos);
+            
+            console.log('Selecting from', available_moves.length, 'moves');
+            let move = _.sample(available_moves);
+            move.unshift(xy[1]);
+            move.unshift(xy[0]);
+            
+            // should just be able to play it like this
+            console.log('Play: ', move.join(' '));
+            try {
+                let r = await client.request('play_checkers', move);
+                if(r.error)
+                    throw r.error;
                 
-                let move = _.sample(available_moves);
-                available_moves.unshift(xy[1]);
-                available_moves.unshift(xy[0]);
-                
-                // should just be able to play it like this
-                console.log('Play: ', move.join(' '));
-                try {
-                    await client.request('play_checkers', move);
-                }
-                catch(err) {
-                    console.error('Failed to play move:', err);
-                    // game over for right now
-                    continue;
-                }
+                prev_board = (await get_checkers_board(pos)).board;
             }
-            else
-                play_now = true;
+            catch(err) {
+                console.error('Failed to play move:', err);
+                // game over for right now
+                break;
+            }
             
             let start_wait = Date.now();
             let new_board = null;
@@ -369,11 +385,16 @@ async function main_loop() {
             // wait for a move on the board
             do {
                 await sleep(1000);
-                new_board = await get_checkers_board(pos);
-            } while(new_board == prev_board && Date.now() - start_wait > MAX_PLAY_TIMEOUT);
+                new_board = (await get_checkers_board(pos)).board;
+            } while(_.isEqual(new_board, prev_board) && Date.now() - start_wait < MAX_PLAY_TIMEOUT);
+            
+            if(Date.now() - start_wait >= MAX_PLAY_TIMEOUT) {
+                console.error('Timed out waiting for other player move!');
+                continue;
+            }
             
             // refresh available moves
-            available_moves = get_available_moves(new_board);
+            available_moves = get_available_moves(new_board, is_red);
             prev_board = new_board;
         } while(available_moves.length);
         

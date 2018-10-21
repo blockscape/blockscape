@@ -55,16 +55,15 @@ impl CheckersGame {
     /// Will return the actual players of the game at a given plot ID. If a slot is not filled,
     /// it will be marked by U160_ZERO
     pub fn get_players(&self, location: PlotID) -> Result<(U160, U160), Error> {
-        let events = self.rk.get_plot_events(location, 0)?.get(&0).cloned();
+        let events = self.rk.get_plot_events(location, 0)?;
         
-        if events.is_none() {
+        if !events.contains_key(&0) {
             return Ok((U160_ZERO, U160_ZERO));
         }
         
-        let events = events.unwrap();
-        if events.len() >= 2 {
-            if let checkers::Event::Start(p1, p2) = bincode::deserialize(&events[0])? {
-                if let checkers::Event::Join(player) = bincode::deserialize(&events[1])? {
+        if events.contains_key(&1) {
+            if let checkers::Event::Start(p1, p2) = bincode::deserialize(&events.get(&0).unwrap()[0])? {
+                if let checkers::Event::Join(player) = bincode::deserialize(&events.get(&1).unwrap()[0])? {
                     if p1 == U160_ZERO {
                         Ok((player, p2))
                     }
@@ -84,7 +83,7 @@ impl CheckersGame {
             }
         }
         else {
-            if let checkers::Event::Start(p1, p2) = bincode::deserialize(&events[0])? {
+            if let checkers::Event::Start(p1, p2) = bincode::deserialize(&events.get(&0).unwrap()[0])? {
                 Ok((p1, p2))
             }
             else {
@@ -95,24 +94,27 @@ impl CheckersGame {
 
     /// Will return the set of all actions on a game board that are known (sorted by ascending
     /// tick). Will return an empty list if no game has been started on the given plot.
-    /// NOTE: Players registered in first (start) turn are not guarenteed. For that, use get_players
+    /// NOTE: Does not include Start and Join events
     pub fn get_moves(&self, location: PlotID) -> Result<Vec<checkers::Event>, Error> {
-        let raw_events = self.rk.get_plot_events(location, 0)?;
+        let raw_events = self.rk.get_plot_events(location, 2)?;
 
         let mut events = Vec::new();
-        for (tick, raw_event_list) in raw_events {
-            debug_assert!(raw_event_list.len() == 1 || tick == 0);
+        for (_, raw_event_list) in raw_events {
+            debug_assert!(raw_event_list.len() == 1);
             events.push(bincode::deserialize(&raw_event_list[0])?);
         } Ok(events)
     }
 
     /// Wrap a checkers event in a txn and submit it to record keeper.
     pub fn play(&self, location: PlotID, event: checkers::Event) -> Result<(), Error> {
-        let tick = if let checkers::Event::Join(..) = event {
-			0
+        // tick is always 2 + the number of moves recorded
+        let tick = if let checkers::Event::Start(..) = event {
+            0
+        } else if let checkers::Event::Join(..) = event {
+			1
 		}
 		else {
-			self.get_moves(location)?.len() as u64
+			2 + self.get_moves(location)?.len() as u64
 		};
         
         debug!("Playing {:?} on turn {}", event, tick);

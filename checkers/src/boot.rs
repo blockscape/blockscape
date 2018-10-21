@@ -1,6 +1,5 @@
 use clap::{Arg, ArgGroup, ArgMatches, App};
 use openssl::pkey::PKey;
-use std::collections::BTreeSet;
 use std::str::FromStr;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -196,8 +195,8 @@ pub fn make_genesis() -> (Block, Vec<Txn>) {
         signature: Bin::new(),
     };
 
-    let mut txns = BTreeSet::new();
-    txns.insert(txn.calculate_hash());
+    let mut txns = Vec::new();
+    txns.push(txn.calculate_hash());
     let merkle_root = Block::calculate_merkle_root(&txns);
 
     let b = Block {

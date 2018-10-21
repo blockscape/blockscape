@@ -3,7 +3,6 @@ use hash::{hash_obj, merge_hashes};
 use primitives::{U256, JU256, U256_ZERO};
 use range::Range;
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
 use std::ops::{Deref, DerefMut};
 use time::Time;
 
@@ -42,7 +41,7 @@ impl BlockHeader {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Block {
     pub header: BlockHeader,
-    pub txns: BTreeSet<U256>,
+    pub txns: Vec<U256>,
 }
 
 pub trait HasBlockHeader {
@@ -99,7 +98,7 @@ impl Ord for Block {
 
 impl Block {
     /// Calculate the merkle root of a set of transactions.
-    pub fn calculate_merkle_root(txn_set: &BTreeSet<U256>) -> U256 {
+    pub fn calculate_merkle_root(txn_set: &Vec<U256>) -> U256 {
         // What we want to do, is calculate the hash of each two hashes in series, and then form a
         // list of those, repeat until we end up with a single hash.
         
@@ -139,7 +138,7 @@ pub struct JBlockHeader {
 #[derive(Serialize, Deserialize)]
 pub struct JBlock {
     header: JBlockHeader,
-    txns: BTreeSet<JU256>
+    txns: Vec<JU256>
 }
 
 impl From<BlockHeader> for JBlockHeader {
@@ -189,28 +188,28 @@ impl Into<Block> for JBlock {
 #[test]
 fn calculate_merkle_root() {
     
-    let mut bts = BTreeSet::new();
+    let mut bts = Vec::new();
     // 0 txns
     assert_eq!(Block::calculate_merkle_root(&bts), U256_ZERO);
     
-    bts.insert(U256::from(32));
+    bts.push(U256::from(32));
     // 1 txn
     assert_eq!(Block::calculate_merkle_root(&bts), U256::from(32));
     // 2 txns
-    bts.insert(U256_ZERO);
+    bts.push(U256_ZERO);
     let of2 = Block::calculate_merkle_root(&bts);
     assert_ne!(of2, U256::from(32));
     assert_ne!(of2, U256_ZERO);
-    bts.insert(U256::from(100));
+    bts.push(U256::from(100));
     // 3 txns
     let of3 = Block::calculate_merkle_root(&bts);
     assert_ne!(of3, of2);
-    bts.insert(U256::from(200));
+    bts.push(U256::from(200));
     // 4 txns
     let of4 = Block::calculate_merkle_root(&bts);
     assert_ne!(of4, of3);
     assert_ne!(of4, of2);
-    bts.insert(U256::from(300));
+    bts.push(U256::from(300));
     // 5 txns
     let of5 = Block::calculate_merkle_root(&bts);
     assert_ne!(of5, of4);

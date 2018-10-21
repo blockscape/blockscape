@@ -1,7 +1,6 @@
 use bincode;
 use compress::{compress, decompress};
 use primitives::{Block, BlockHeader, Txn, U256};
-use std::collections::BTreeSet;
 use std::collections::HashMap;
 use super::database::Database;
 use super::Error;
@@ -125,7 +124,7 @@ impl BlockPackage {
                 let txn_list = txn_list.into_iter()
                     .filter_map(|txn_id| txns.get(txn_id as usize))
                     .map(|t| t.0 )
-                    .collect::<BTreeSet<U256>>();
+                    .collect::<Vec<U256>>();
                 
                 Block{header, txns: txn_list}
             }).collect::<Vec<Block>>();
