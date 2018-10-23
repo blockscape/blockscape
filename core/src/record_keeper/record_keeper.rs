@@ -1,6 +1,6 @@
 use bin::Bin;
 use primitives::{JU256, U256, U160, U160_ZERO, U256_ZERO, Txn, Block, BlockHeader, HasBlockHeader, Change, ListenerPool};
-use std::collections::{HashMap, BTreeSet, BTreeMap, HashSet};
+use std::collections::{HashMap, BTreeMap, HashSet};
 use std::path::PathBuf;
 use parking_lot::{RwLock, Mutex};
 use primitives::{RawEvents, event, Mutation};
@@ -69,8 +69,8 @@ pub trait RecordKeeper: Send + Sync {
     /// 1. The proof of work/proof of stake mechanism has not been completed
     /// 2. The signature has not been applied to the block
     fn create_block(&self) -> Result<Block, Error> {
-
-        let txns: BTreeSet<U256> = BTreeSet::new();
+        
+        let txns = Vec::new();
 
         let block = Block {
             header: BlockHeader {
@@ -288,7 +288,7 @@ impl<DB: Database> RecordKeeper for RecordKeeperImpl<DB> {
         let cbh = db.get_current_block_header()?;
         let cbh_h = cbh.calculate_hash();
 
-        let txns: BTreeSet<U256> = pending_txns.keys().cloned().collect();
+        let txns = pending_txns.keys().cloned().collect();
 
         let block = Block {
             header: BlockHeader {
@@ -800,16 +800,17 @@ impl<DB: Database> RecordKeeperImpl<DB> {
     /// Check if a txn is valid given access to the database and pending txns. Will construct a
     /// DBState with all txns applied.
     fn is_valid_txn_given_lock(&self, db: &dyn Database, pending: &HashMap<U256, (Time, Txn)>, txn: &Txn) -> Result<(), Error> {
-        let state = {
-            let mut state = DBState::new(db);
-            for (time, txn) in pending.values() {
-                state.add_txn(txn, *time)?;
-            } state
-        };
+        let state = DBState::new(db);
 
         self.is_valid_txn_given_state(&state, txn)?;
-
+        
+        // make one big mutation. if the mutation is invalid, then the new txn is what caused it to be invalid
         let mut mutation = Vec::new();
+        for (_, txn) in pending.values() {
+            for change in txn.mutation.changes.iter().cloned() {
+                mutation.push((change, txn.creator));
+            }
+        }
         for change in txn.mutation.changes.iter().cloned() {
             mutation.push((change, txn.creator));
         }

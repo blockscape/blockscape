@@ -6,3 +6,4 @@ core.iml
 .idea
 client.iml
 checkers.iml
+node_modules

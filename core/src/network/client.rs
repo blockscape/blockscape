@@ -228,7 +228,7 @@ impl Client {
             if let Some(ref shard) = *this.context.get_shard(idx) {
 				
 				let ctx = this.context.clone();
-				let f = shard.open_session(node.clone(), None, false).then(move |r| {
+				let f = shard.open_session(node.clone(), Some(sink), false).then(move |r| {
 					
 					if let Err(_) = r {
 						// TODO: Do something here

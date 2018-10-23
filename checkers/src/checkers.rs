@@ -17,8 +17,8 @@ impl Player {
     #[inline]
     pub fn from_turn(turn: u64) -> Result<Player, Error> {
         match turn {
-            0 => Err(Error::InvalidPlay),
-            t @ _ if t % 2 == 1 => Ok(Player::Red),
+            0 | 1 => Err(Error::InvalidPlay),
+            t @ _ if t % 2 == 0 => Ok(Player::Red),
             _ => Ok(Player::Black)
         }
     }
@@ -61,8 +61,14 @@ impl Direction {
 /// The base game events for checkers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Event {
+	/// Initializes a new game on an empty plot, first player is white, last is black. One slot must be the player's ID,
+	/// but the other can be set to "0" to leave an opening for a join (see below)
     Start(U160, U160),
+    /// Fill an empty slot in a started game which does not have a second player filled in already
+    Join(U160),
+    /// Set the specified checkers piece to be located in the direction specified
     Move(u8, Direction),
+    /// Like move, but jumps over all the given pieces
     Jump(u8, Vec<Direction>)
 } impl CoreEvent for Event {}
 
@@ -295,7 +301,8 @@ impl Board {
 
                 Ok(())
             },
-            Event::Start(..) => Err(GameAlreadyStarted)
+            Event::Start(..) => Err(GameAlreadyStarted),
+            Event::Join(..) => Err(GameAlreadyStarted),
         }
     }
 
@@ -328,10 +335,10 @@ mod tests {
     fn from_turn() {
         use super::Player;
         assert!(Player::from_turn(0).is_err());
-        assert_eq!(Player::from_turn(1).unwrap(), Player::Red);
-        assert_eq!(Player::from_turn(2).unwrap(), Player::Black);
-        assert_eq!(Player::from_turn(3).unwrap(), Player::Red);
-        assert_eq!(Player::from_turn(4).unwrap(), Player::Black);
+        assert!(Player::from_turn(1).is_err());
+        assert_eq!(Player::from_turn(2).unwrap(), Player::Red);
+        assert_eq!(Player::from_turn(3).unwrap(), Player::Black);
+        assert_eq!(Player::from_turn(4).unwrap(), Player::Red);
     }
 
     #[test]

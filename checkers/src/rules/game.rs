@@ -32,19 +32,19 @@ impl MutationRule for Game {
         let mut cache = self.0.write();
         for (event, _player) in events {
             let (start_tick, mut board) =
-                if event.tick == 0 {
+                if event.tick < 2 {
                     // can ignore game setup events here
                     continue;
                 } else {
                     // retrieve the board from before this turn
                     cache.latest(event.from, Some(event.tick - 1))
                     .map(|(t, b)| (t, b.clone()))
-                    .unwrap_or((0, checkers::Board::default()))
+                    .unwrap_or((2, checkers::Board::default()))
                 };
 
             // Get the board up to our current location (if needed)
             // Should land at one tick prior to `event.tick`
-            debug_assert!(start_tick < event.tick);
+            debug_assert!(start_tick <= event.tick);
             if (start_tick + 1) < event.tick {
                 // we can assume these will all work because they have been deemed valid already.
                 let old_events = state.get_plot_events(event.from, start_tick + 1)?;

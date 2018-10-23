@@ -1,6 +1,6 @@
 use bin::Bin;
 use primitives::{U256, U160, U256_ZERO, Txn, Block, BlockHeader, HasBlockHeader};
-use std::collections::{HashMap, BTreeSet, BTreeMap, HashSet};
+use std::collections::{HashMap, BTreeMap, HashSet};
 use std::sync::Arc;
 use std::sync::{RwLock,Mutex};
 use primitives::{RawEvents};
@@ -36,10 +36,10 @@ impl DummyRecordKeeper {
                     timestamp: Time::from_milliseconds(0),
                     shard: U256_ZERO,
                     prev: U256_ZERO,
-                    merkle_root: Block::calculate_merkle_root(&BTreeSet::new()),
+                    merkle_root: Block::calculate_merkle_root(&Vec::new()),
                     blob: Bin::new()
                 },
-                txns: BTreeSet::new()
+                txns: Vec::new()
             },
             height: 1,
             children: Mutex::new(Vec::new())
@@ -82,7 +82,7 @@ impl RecordKeeper for DummyRecordKeeper {
         let cbh = self.get_current_block_header()?;
         let cbh_h = cbh.calculate_hash();
 
-        let txns: BTreeSet<U256> = self.pending_txns.read().unwrap().keys().cloned().collect();
+        let txns = self.pending_txns.read().unwrap().keys().cloned().collect();
 
         let block = Block {
             header: BlockHeader {

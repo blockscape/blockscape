@@ -58,7 +58,11 @@ pub struct ShardInfo {
     last_peer_idx: Cell<usize>,
 
     /// Collection of nodes which can be connected to this on this network
-    node_repo: RefCell<NodeRepository>
+    node_repo: RefCell<NodeRepository>,
+    
+    /// If no nodes are connected, the broadcast could be lost before it reaches another node.
+    /// We store unsent broadcasts here so we can ensure they are eventually sent.
+    unsent_broadcasts: RefCell<Vec<Message>>
 }
 
 impl ShardInfo {
@@ -71,7 +75,8 @@ impl ShardInfo {
             sessions: RefCell::new(HashMap::new()),
             peer_ids: RefCell::new(HashSet::new()),
             last_peer_idx: Cell::new(0),
-            node_repo: RefCell::new(repo)
+            node_repo: RefCell::new(repo),
+            unsent_broadcasts: RefCell::new(Vec::new())
         }
     }
 
@@ -423,6 +428,13 @@ impl ShardInfo {
                 if let Ok(sess) = Rc::try_unwrap(sessions.remove(&sa).unwrap()) {
                     let sess = sess.handle_introduce(p, addr);
                     info!("Remote peer {} has changed connection configuration!", hid);
+                    
+                    let mut unsent_broadcasts = self.unsent_broadcasts.borrow_mut();
+                    
+                    // drain our broadcasts on this node
+                    for msg in unsent_broadcasts.drain(..) {
+                        sess.send(msg, true);
+                    }
 
                     sessions.insert(sess.get_remote_addr().clone(), Rc::new(sess));
                 }
@@ -458,11 +470,18 @@ impl ShardInfo {
     }
 
     pub fn reliable_flood(&self, msg: Message) {
-        self.sessions.borrow().values().for_each(|s| {
-            if s.is_introduced() && s.is_done().is_none() {
-                s.send(msg.clone(), true);
-            }
-        });
+        
+        let sessions = self.sessions.borrow();
+        if sessions.is_empty() {
+            self.unsent_broadcasts.borrow_mut().push(msg);
+        }
+        else {
+            sessions.values().for_each(|s| {
+                if s.is_introduced() && s.is_done().is_none() {
+                    s.send(msg.clone(), true);
+                }
+            });
+        }
     }
 
     pub fn get_network_id(&self) -> &U256 {
