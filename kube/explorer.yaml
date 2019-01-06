@@ -21,7 +21,7 @@ data:
   config.json: >
     {
       "rpc": {
-        "host": "client-${CI_COMMIT_REF_SLUG}-0.blockscape",
+        "host": "blockscape-client-${CI_COMMIT_REF_SLUG}-0.blockscape-client-${CI_COMMIT_REF_SLUG}",
         "port": 8356
       }
     }

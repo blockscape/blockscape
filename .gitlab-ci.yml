@@ -136,8 +136,7 @@ deploy:
     - create_kubeconfig
     - kubectl version
     - kubectl get po -n blockscape
-    - apply_template blockscape-client-0.yaml
-    - apply_template blockscape-client-1.yaml
+    - apply_template blockscape-client-ss.yaml
     - apply_template explorer.yaml
     - apply_template ingress.yaml
     #- apply_template certificate.yaml
